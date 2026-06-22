@@ -1,0 +1,12 @@
+{
+  "name": "diniz-leads-olx",
+  "version": "1.0.0",
+  "description": "Recebe leads do Canal Pro e distribui para corretores via WhatsApp",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}
