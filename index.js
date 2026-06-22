@@ -40,26 +40,26 @@ app.post('/lead-canalpro', async (req, res) => {
     console.log('Lead recebido:', JSON.stringify(body, null, 2));
 
     // Extrai dados do lead (formato Canal Pro / Grupo ZAP)
-    const nomeCliente  = body?.lead?.name        || body?.name        || 'Não informado';
-    const foneCliente  = body?.lead?.phone        || body?.phone       || 'Não informado';
-    const emailCliente = body?.lead?.email        || body?.email       || 'Não informado';
-    const imovel       = body?.listing?.title     || body?.title       || 'Não informado';
-    const linkImovel   = body?.listing?.url       || body?.url         || '';
-    const mensagemCliente = body?.lead?.message   || body?.message     || '';
+    const nomeCliente     = body?.lead?.name      || body?.name      || 'Não informado';
+    const foneCliente     = body?.lead?.phone      || body?.phone     || 'Não informado';
+    const emailCliente    = body?.lead?.email      || body?.email     || 'Não informado';
+    const imovel          = body?.listing?.title   || body?.title     || 'Não informado';
+    const linkImovel      = body?.listing?.url     || body?.url       || '';
+    const mensagemCliente = body?.lead?.message    || body?.message   || '';
 
     // Seleciona corretor da vez (round-robin)
     const corretor = CORRETORES[indexAtual];
     indexAtual = (indexAtual + 1) % CORRETORES.length;
 
-    // Monta mensagem para o corretor
-    const texto = `🏠 *Novo Lead - Canal Pro*\n\n` +
-      `👤 *Cliente:* ${nomeCliente}\n` +
-      `📞 *Telefone:* ${foneCliente}\n` +
-      `📧 *E-mail:* ${emailCliente}\n` +
-      (mensagemCliente ? `💬 *Mensagem:* ${mensagemCliente}\n` : '') +
-      `\n🏡 *Imóvel:* ${imovel}\n` +
-      (linkImovel ? `🔗 ${linkImovel}\n` : '') +
-      `\n⚡ Atendimento atribuído a você, ${corretor.nome}. Entre em contato!`;
+    // Monta mensagem no formato padrão Diniz Imóveis
+    const texto = `Segue um lead que veio através do Canal Pro\n\n` +
+      `CRM : ${imovel}\n` +
+      (linkImovel ? `${linkImovel}\n` : '') +
+      `Nome : ${nomeCliente}\n` +
+      `${foneCliente}\n` +
+      `${emailCliente}\n` +
+      (mensagemCliente ? `OBS: ${mensagemCliente}\n` : `OBS: \n`) +
+      `ENVIADO CORRETOR ${corretor.nome.toUpperCase()}`;
 
     // Envia para o corretor
     await enviarWhatsApp(corretor.fone, texto);
