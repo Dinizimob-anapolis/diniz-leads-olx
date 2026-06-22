@@ -14,7 +14,6 @@ const CORRETORES = [
   { nome: 'Nalcio', fone: '5562982077466' },
 ];
 
-// Índice do próximo corretor (persiste enquanto servidor estiver no ar)
 let indexAtual = 0;
 
 // ─── FUNÇÃO: ENVIAR MENSAGEM WHATSAPP ────────────────────────
@@ -33,35 +32,62 @@ async function enviarWhatsApp(fone, mensagem) {
   return res.json();
 }
 
+// ─── FUNÇÃO: FORMATAR TELEFONE ───────────────────────────────
+function formatarTelefone(ddd, phone) {
+  if (ddd && phone) {
+    const p = phone.replace(/\D/g, '');
+    if (p.length === 9) return `(${ddd}) ${p.slice(0,5)}-${p.slice(5)}`;
+    if (p.length === 8) return `(${ddd}) ${p.slice(0,4)}-${p.slice(4)}`;
+    return `(${ddd}) ${p}`;
+  }
+  return 'Não informado';
+}
+
+// ─── FUNÇÃO: LIMPAR MENSAGEM DO CLIENTE ──────────────────────
+function limparMensagem(msg) {
+  if (!msg) return '';
+  // Remove texto padrão do Grupo ZAP após "A seguir"
+  const corte = msg.indexOf('A seguir, dados para contato');
+  if (corte !== -1) return msg.substring(0, corte).trim();
+  return msg.trim();
+}
+
 // ─── ROTA: WEBHOOK DO CANAL PRO ──────────────────────────────
 app.post('/lead-canalpro', async (req, res) => {
   try {
     const body = req.body;
     console.log('Lead recebido:', JSON.stringify(body, null, 2));
 
-    // Extrai dados do lead (formato Canal Pro / Grupo ZAP)
-    const nomeCliente     = body?.lead?.name      || body?.name      || 'Não informado';
-    const foneCliente     = body?.lead?.phone      || body?.phone     || 'Não informado';
-    const emailCliente    = body?.lead?.email      || body?.email     || 'Não informado';
-    const imovel          = body?.listing?.title   || body?.title     || 'Não informado';
-    const linkImovel      = body?.listing?.url     || body?.url       || '';
-    const mensagemCliente = body?.lead?.message    || body?.message   || '';
+    // Filtro: ignora aluguel
+    const transactionType = body?.transactionType || '';
+    if (transactionType === 'RENT') {
+      console.log('Lead de aluguel ignorado.');
+      return res.status(200).json({ ok: true, msg: 'Lead de aluguel ignorado' });
+    }
+
+    // Extrai dados
+    const codigoImovel = body?.clientListingId || 'Não informado';
+    const nomeCliente  = body?.name            || 'Não informado';
+    const emailCliente = body?.email           || 'Não informado';
+    const ddd          = body?.ddd             || '';
+    const phone        = body?.phone           || '';
+    const telefone     = formatarTelefone(ddd, phone);
+    const msgCliente   = limparMensagem(body?.message);
 
     // Seleciona corretor da vez (round-robin)
     const corretor = CORRETORES[indexAtual];
     indexAtual = (indexAtual + 1) % CORRETORES.length;
 
     // Monta mensagem no formato padrão Diniz Imóveis
-    const texto = `Segue um lead que veio através do Canal Pro\n\n` +
-      `CRM : ${imovel}\n` +
-      (linkImovel ? `${linkImovel}\n` : '') +
+    const texto =
+      `Segue um lead que veio através do Canal Pro\n\n` +
+      `CRM : ${codigoImovel}\n` +
       `Nome : ${nomeCliente}\n` +
-      `${foneCliente}\n` +
+      `${telefone}\n` +
       `${emailCliente}\n` +
-      (mensagemCliente ? `OBS: ${mensagemCliente}\n` : `OBS: \n`) +
+      `OBS: ${msgCliente}\n` +
       `ENVIADO CORRETOR ${corretor.nome.toUpperCase()}`;
 
-    // Envia para o corretor
     await enviarWhatsApp(corretor.fone, texto);
 
     console.log(`Lead enviado para ${corretor.nome} (${corretor.fone})`);
