@@ -1,4 +1,5 @@
 const express = require('express');
+const fs = require('fs');
 const app = express();
 app.use(express.json());
 
@@ -7,6 +8,8 @@ const EVOLUTION_URL = 'https://evolution-api-production-5e4f.up.railway.app';
 const EVOLUTION_INSTANCE = 'diniz-leads-olx';
 const EVOLUTION_TOKEN = 'A0929C1CF6C5-4E04-9FFB-3A4B073EE943';
 
+const NUMERO_CONTROLE = '5562994622076'; // Juliane
+
 // Corretores no revezamento (round-robin)
 const CORRETORES = [
   { nome: 'Laís',   fone: '5562992754858' },
@@ -14,7 +17,25 @@ const CORRETORES = [
   { nome: 'Nalcio', fone: '5562982077466' },
 ];
 
-let indexAtual = 0;
+// ─── ÍNDICE PERSISTENTE ──────────────────────────────────────
+const INDEX_FILE = '/tmp/index.json';
+
+function lerIndice() {
+  try {
+    const data = fs.readFileSync(INDEX_FILE, 'utf8');
+    return JSON.parse(data).index || 0;
+  } catch {
+    return 0;
+  }
+}
+
+function salvarIndice(index) {
+  try {
+    fs.writeFileSync(INDEX_FILE, JSON.stringify({ index }));
+  } catch (e) {
+    console.error('Erro ao salvar índice:', e);
+  }
+}
 
 // ─── FUNÇÃO: ENVIAR MENSAGEM WHATSAPP ────────────────────────
 async function enviarWhatsApp(fone, mensagem) {
@@ -46,7 +67,6 @@ function formatarTelefone(ddd, phone) {
 // ─── FUNÇÃO: LIMPAR MENSAGEM DO CLIENTE ──────────────────────
 function limparMensagem(msg) {
   if (!msg) return '';
-  // Remove texto padrão do Grupo ZAP após "A seguir"
   const corte = msg.indexOf('A seguir, dados para contato');
   if (corte !== -1) return msg.substring(0, corte).trim();
   return msg.trim();
@@ -74,11 +94,12 @@ app.post('/lead-canalpro', async (req, res) => {
     const telefone     = formatarTelefone(ddd, phone);
     const msgCliente   = limparMensagem(body?.message);
 
-    // Seleciona corretor da vez (round-robin)
+    // Seleciona corretor da vez (round-robin persistente)
+    const indexAtual = lerIndice();
     const corretor = CORRETORES[indexAtual];
-    indexAtual = (indexAtual + 1) % CORRETORES.length;
+    salvarIndice((indexAtual + 1) % CORRETORES.length);
 
-    // Monta mensagem no formato padrão Diniz Imóveis
+    // Monta mensagem para o corretor
     const texto =
       `Segue um lead que veio através do Canal Pro\n\n` +
       `CRM : ${codigoImovel}\n` +
@@ -88,7 +109,18 @@ app.post('/lead-canalpro', async (req, res) => {
       `OBS: ${msgCliente}\n` +
       `ENVIADO CORRETOR ${corretor.nome.toUpperCase()}`;
 
+    // Envia para o corretor
     await enviarWhatsApp(corretor.fone, texto);
+
+    // Envia cópia para Juliane (controle)
+    const textoControle =
+      `✅ Lead distribuído\n\n` +
+      `CRM : ${codigoImovel}\n` +
+      `Nome : ${nomeCliente}\n` +
+      `${telefone}\n` +
+      `Corretor: ${corretor.nome}`;
+
+    await enviarWhatsApp(NUMERO_CONTROLE, textoControle);
 
     console.log(`Lead enviado para ${corretor.nome} (${corretor.fone})`);
     res.status(200).json({ ok: true, corretor: corretor.nome });
