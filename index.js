@@ -8,8 +8,8 @@ const EVOLUTION_URL = 'https://evolution-api-production-5e4f.up.railway.app';
 const EVOLUTION_INSTANCE = 'diniz-leads-olx';
 const EVOLUTION_TOKEN = 'A0929C1CF6C5-4E04-9FFB-3A4B073EE943';
 
-const JULIANE_LL    = '5562992160458'; // cópia venda + tráfego pago
-const CYDA          = '5562993652226'; // aluguel
+const JULIANE_LL = '5562992160458'; // cópia venda + tráfego pago
+const CYDA       = '5562993652226'; // aluguel
 
 // Corretores no revezamento (round-robin) — apenas venda
 const CORRETORES = [
@@ -142,20 +142,22 @@ app.post('/lead-canalpro', async (req, res) => {
 app.post('/webhook-mensagens', async (req, res) => {
   try {
     const body = req.body;
-    const tipo = body?.event || 'mensagem';
+    console.log('Webhook mensagem recebido:', JSON.stringify(body, null, 2));
 
-    if (tipo !== 'messages.upsert') {
+    const tipo = (body?.event || body?.type || '').toLowerCase();
+
+    // Ignora eventos que não são de mensagens recebidas
+    if (!tipo.includes('message')) {
       return res.status(200).json({ ok: true });
     }
 
-    const msg = body?.data?.message;
-    if (!msg) return res.status(200).json({ ok: true });
-
     // Ignora mensagens enviadas pelo próprio número
-    if (body?.data?.key?.fromMe) return res.status(200).json({ ok: true });
+    const fromMe = body?.data?.key?.fromMe || body?.key?.fromMe || false;
+    if (fromMe) return res.status(200).json({ ok: true });
 
-    const de = body?.data?.key?.remoteJid?.replace('@s.whatsapp.net', '') || 'Desconhecido';
-    const conteudo = msg?.conversation || msg?.extendedTextMessage?.text || '[mídia ou outro tipo]';
+    const de = (body?.data?.key?.remoteJid || body?.key?.remoteJid || 'Desconhecido').replace('@s.whatsapp.net', '').replace('@c.us', '');
+    const msg = body?.data?.message || body?.message || {};
+    const conteudo = msg?.conversation || msg?.extendedTextMessage?.text || msg?.imageMessage?.caption || '[mídia ou outro tipo]';
 
     const texto =
       `📱 Nova mensagem recebida\n\n` +
