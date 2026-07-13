@@ -8,12 +8,14 @@ const EVOLUTION_URL = 'https://evolution-api-production-5e4f.up.railway.app';
 const EVOLUTION_INSTANCE = 'diniz-leads-olx';
 const EVOLUTION_TOKEN = 'A0929C1CF6C5-4E04-9FFB-3A4B073EE943';
 
-const NUMERO_CONTROLE = '5562994622076'; // Juliane
+const JULIANE_LL    = '5562992160458'; // cópia venda + tráfego pago
+const CYDA          = '5562993652226'; // aluguel
 
-// Corretores no revezamento (round-robin)
+// Corretores no revezamento (round-robin) — apenas venda
 const CORRETORES = [
   { nome: 'Laís',   fone: '5562992754858' },
   { nome: 'Nalcio', fone: '5562982077466' },
+  { nome: 'Renata', fone: '5562992670935' },
 ];
 
 // ─── ÍNDICE PERSISTENTE ──────────────────────────────────────
@@ -77,14 +79,7 @@ app.post('/lead-canalpro', async (req, res) => {
     const body = req.body;
     console.log('Lead recebido:', JSON.stringify(body, null, 2));
 
-    // Filtro: ignora aluguel
     const transactionType = body?.transactionType || '';
-    if (transactionType === 'RENT') {
-      console.log('Lead de aluguel ignorado.');
-      return res.status(200).json({ ok: true, msg: 'Lead de aluguel ignorado' });
-    }
-
-    // Extrai dados
     const codigoImovel = body?.clientListingId || 'Não informado';
     const nomeCliente  = body?.name            || 'Não informado';
     const emailCliente = body?.email           || 'Não informado';
@@ -93,12 +88,26 @@ app.post('/lead-canalpro', async (req, res) => {
     const telefone     = formatarTelefone(ddd, phone);
     const msgCliente   = limparMensagem(body?.message);
 
-    // Seleciona corretor da vez (round-robin persistente)
+    if (transactionType === 'RENT') {
+      // Aluguel → Cyda
+      const texto =
+        `Segue um lead de ALUGUEL via Canal Pro\n\n` +
+        `CRM : ${codigoImovel}\n` +
+        `Nome : ${nomeCliente}\n` +
+        `${telefone}\n` +
+        `${emailCliente}\n` +
+        `OBS: ${msgCliente}`;
+
+      await enviarWhatsApp(CYDA, texto);
+      console.log('Lead de aluguel enviado para Cyda');
+      return res.status(200).json({ ok: true, msg: 'Aluguel enviado para Cyda' });
+    }
+
+    // Venda → round-robin corretores
     const indexAtual = lerIndice();
     const corretor = CORRETORES[indexAtual];
     salvarIndice((indexAtual + 1) % CORRETORES.length);
 
-    // Monta mensagem para o corretor
     const texto =
       `Segue um lead que veio através do Canal Pro\n\n` +
       `CRM : ${codigoImovel}\n` +
@@ -108,24 +117,58 @@ app.post('/lead-canalpro', async (req, res) => {
       `OBS: ${msgCliente}\n` +
       `ENVIADO CORRETOR ${corretor.nome.toUpperCase()}`;
 
-    // Envia para o corretor
     await enviarWhatsApp(corretor.fone, texto);
 
-    // Envia cópia para Juliane (controle)
+    // Cópia de controle para Juliane LL
     const textoControle =
-      `✅ Lead distribuído\n\n` +
+      `✅ Lead de venda distribuído\n\n` +
       `CRM : ${codigoImovel}\n` +
       `Nome : ${nomeCliente}\n` +
       `${telefone}\n` +
       `Corretor: ${corretor.nome}`;
 
-    await enviarWhatsApp(NUMERO_CONTROLE, textoControle);
+    await enviarWhatsApp(JULIANE_LL, textoControle);
 
     console.log(`Lead enviado para ${corretor.nome} (${corretor.fone})`);
     res.status(200).json({ ok: true, corretor: corretor.nome });
 
   } catch (err) {
     console.error('Erro ao processar lead:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
+// ─── ROTA: ESPELHO DE MENSAGENS (TRÁFEGO PAGO / OUTRAS) ──────
+app.post('/webhook-mensagens', async (req, res) => {
+  try {
+    const body = req.body;
+    const tipo = body?.event || 'mensagem';
+
+    if (tipo !== 'messages.upsert') {
+      return res.status(200).json({ ok: true });
+    }
+
+    const msg = body?.data?.message;
+    if (!msg) return res.status(200).json({ ok: true });
+
+    // Ignora mensagens enviadas pelo próprio número
+    if (body?.data?.key?.fromMe) return res.status(200).json({ ok: true });
+
+    const de = body?.data?.key?.remoteJid?.replace('@s.whatsapp.net', '') || 'Desconhecido';
+    const conteudo = msg?.conversation || msg?.extendedTextMessage?.text || '[mídia ou outro tipo]';
+
+    const texto =
+      `📱 Nova mensagem recebida\n\n` +
+      `De: ${de}\n` +
+      `Mensagem: ${conteudo}`;
+
+    await enviarWhatsApp(JULIANE_LL, texto);
+
+    console.log(`Mensagem espelhada de ${de} para Juliane LL`);
+    res.status(200).json({ ok: true });
+
+  } catch (err) {
+    console.error('Erro ao espelhar mensagem:', err);
     res.status(500).json({ ok: false, erro: err.message });
   }
 });
