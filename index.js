@@ -8,7 +8,7 @@ const EVOLUTION_URL = 'https://evolution-api-production-5e4f.up.railway.app';
 const EVOLUTION_INSTANCE = 'diniz-leads-olx';
 const EVOLUTION_TOKEN = 'A0929C1CF6C5-4E04-9FFB-3A4B073EE943';
 
-const JULIANE_LL = '5562992160458'; // cópia venda + tráfego pago
+const JULIANE_LL = '5562992166458'; // cópia venda + tráfego pago
 const CYDA       = '5562993652226'; // aluguel
 
 // Corretores no revezamento (round-robin) — apenas venda
@@ -89,7 +89,6 @@ app.post('/lead-canalpro', async (req, res) => {
     const msgCliente   = limparMensagem(body?.message);
 
     if (transactionType === 'RENT') {
-      // Aluguel → Cyda
       const texto =
         `Segue um lead de ALUGUEL via Canal Pro\n\n` +
         `CRM : ${codigoImovel}\n` +
@@ -103,7 +102,6 @@ app.post('/lead-canalpro', async (req, res) => {
       return res.status(200).json({ ok: true, msg: 'Aluguel enviado para Cyda' });
     }
 
-    // Venda → round-robin corretores
     const indexAtual = lerIndice();
     const corretor = CORRETORES[indexAtual];
     salvarIndice((indexAtual + 1) % CORRETORES.length);
@@ -119,7 +117,6 @@ app.post('/lead-canalpro', async (req, res) => {
 
     await enviarWhatsApp(corretor.fone, texto);
 
-    // Cópia de controle para Juliane LL
     const textoControle =
       `✅ Lead de venda distribuído\n\n` +
       `CRM : ${codigoImovel}\n` +
@@ -138,20 +135,12 @@ app.post('/lead-canalpro', async (req, res) => {
   }
 });
 
-// ─── ROTA: ESPELHO DE MENSAGENS (TRÁFEGO PAGO / OUTRAS) ──────
+// ─── ROTA: ESPELHO DE MENSAGENS ──────────────────────────────
 app.post('/webhook-mensagens', async (req, res) => {
   try {
     const body = req.body;
     console.log('Webhook mensagem recebido:', JSON.stringify(body, null, 2));
 
-    const tipo = (body?.event || body?.type || '').toLowerCase();
-
-    // Ignora eventos que não são de mensagens recebidas
-    if (!tipo.includes('message')) {
-      return res.status(200).json({ ok: true });
-    }
-
-    // Ignora mensagens enviadas pelo próprio número
     const fromMe = body?.data?.key?.fromMe || body?.key?.fromMe || false;
     if (fromMe) return res.status(200).json({ ok: true });
 
