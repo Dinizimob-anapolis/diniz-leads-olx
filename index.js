@@ -17,6 +17,7 @@ const CORRETORES = [
   { nome: 'Laís',   fone: '5562992754858' },
   { nome: 'Nalcio', fone: '5562982077466' },
   { nome: 'Renata', fone: '5562992670935' },
+  { nome: 'Junior', fone: '5562981625610' },
 ];
 
 // ─── BANCO DE DADOS (leads distribuídos por texto) ───────────
