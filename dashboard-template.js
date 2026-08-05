@@ -148,11 +148,19 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
   <div class="corretores" id="corretores-strip"></div>
 
+  <div class="panel" style="margin-bottom:28px;">
+    <div class="panel-head">
+      <h2>Campanhas (imóveis)</h2>
+    </div>
+    <div id="campanhas-container" style="padding:16px 22px;"></div>
+  </div>
+
   <div class="panel">
     <div class="panel-head">
       <h2>Atividade recente</h2>
       <div class="filters">
         <select id="filtro-corretor" onchange="renderTabela()"><option value="">Todos os corretores</option></select>
+        <select id="filtro-campanha" onchange="renderTabela()"><option value="">Todas as campanhas</option></select>
         <select id="filtro-status" onchange="renderTabela()">
           <option value="">Todos os status</option>
           <option value="contatou">Contatou</option>
@@ -249,6 +257,31 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       Object.keys(corretoresMap).map(n => \`<option value="\${n}">\${n}</option>\`).join('');
     filtroCorretor.value = atual;
 
+    const campanhasContainer = document.getElementById('campanhas-container');
+    const campanhas = data.porCampanha || [];
+    if (campanhas.length === 0) {
+      campanhasContainer.innerHTML = '<div class="mono">Nenhuma campanha ativa nos últimos 7 dias</div>';
+    } else {
+      campanhasContainer.innerHTML = \`<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:10px;">\` +
+        campanhas.map(c => {
+          const nomeCampanha = [c.imovel_codigo, c.imovel_desc].filter(Boolean).join(' - ') || 'Sem identificação';
+          const pctCamp = c.total > 0 ? Math.round((c.total_contataram / c.total) * 100) : 0;
+          return \`<div style="border:1px solid var(--line); border-radius:8px; padding:12px 14px;">
+            <div style="font-weight:600; font-size:13px; margin-bottom:6px;">\${nomeCampanha}</div>
+            <div class="mono" style="font-size:12px;">\${c.total} lead\${c.total == 1 ? '' : 's'} · \${pctCamp}% contataram</div>
+          </div>\`;
+        }).join('') + '</div>';
+    }
+
+    const filtroCampanha = document.getElementById('filtro-campanha');
+    const campanhaAtual = filtroCampanha.value;
+    filtroCampanha.innerHTML = '<option value="">Todas as campanhas</option>' +
+      campanhas.map(c => {
+        const nomeCampanha = [c.imovel_codigo, c.imovel_desc].filter(Boolean).join(' - ') || 'Sem identificação';
+        return \`<option value="\${c.imovel_codigo || ''}">\${nomeCampanha}</option>\`;
+      }).join('');
+    filtroCampanha.value = campanhaAtual;
+
     renderTabela();
   }
 
@@ -257,6 +290,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     if (!ULTIMO_ESTADO) return;
 
     const filtroCorretor = document.getElementById('filtro-corretor').value;
+    const filtroCampanha = document.getElementById('filtro-campanha').value;
     const filtroStatus = document.getElementById('filtro-status').value;
 
     let linhas = ULTIMO_ESTADO.leads.map(l => ({ tipo: 'lead', ...l }));
@@ -274,6 +308,10 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
     if (filtroCorretor) {
       todos = todos.filter(l => l.tipo === 'lead' && l.corretor === filtroCorretor);
+    }
+
+    if (filtroCampanha) {
+      todos = todos.filter(l => l.tipo === 'lead' && l.imovel_codigo === filtroCampanha);
     }
 
     todos.sort((a, b) => new Date(b.distribuido_em || b.criado_em) - new Date(a.distribuido_em || a.criado_em));
