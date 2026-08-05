@@ -447,6 +447,18 @@ app.get('/api/leads', basicAuth, async (req, res) => {
       ORDER BY total DESC
     `);
 
+    const porCampanhaResult = await pool.query(`
+      SELECT
+        imovel_codigo,
+        imovel_desc,
+        count(*) AS total,
+        count(*) FILTER (WHERE contatou) AS total_contataram
+      FROM leads
+      WHERE distribuido_em > now() - interval '7 days'
+      GROUP BY imovel_codigo, imovel_desc
+      ORDER BY total DESC
+    `);
+
     res.json({
       ok: true,
       leads: leadsResult.rows,
@@ -463,6 +475,7 @@ app.get('/api/leads', basicAuth, async (req, res) => {
           : null,
       },
       porCorretor: porCorretorResult.rows,
+      porCampanha: porCampanhaResult.rows,
     });
   } catch (err) {
     console.error('Erro ao buscar leads:', err);
