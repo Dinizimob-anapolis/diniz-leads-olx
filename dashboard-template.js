@@ -1,509 +1,356 @@
-const express = require('express');
-const fs = require('fs');
-const { Pool } = require('pg');
-const { DASHBOARD_HTML } = require('./dashboard-template');
-const app = express();
-app.use(express.json());
+const DASHBOARD_HTML = `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Diniz Imóveis — Painel de Leads</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
-// ─── CONFIGURAÇÕES ───────────────────────────────────────────
-const EVOLUTION_URL = 'https://evolution-api-production-5e4f.up.railway.app';
-const EVOLUTION_INSTANCE = 'diniz-leads-olx';
-const EVOLUTION_TOKEN = 'A0929C1CF6C5-4E04-9FFB-3A4B073EE943';
-
-const JULIANE_LL = '5562992166458';
-const CYDA       = '5562993652226';
-
-const CORRETORES = [
-  { nome: 'Laís',   fone: '5562992754858' },
-  { nome: 'Nalcio', fone: '5562982077466' },
-  { nome: 'Renata', fone: '5562992670935' },
-  { nome: 'Junior', fone: '5562981625610' },
-];
-
-// ─── BANCO DE DADOS (leads distribuídos por texto) ───────────
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_URL && process.env.DATABASE_URL.includes('railway')
-    ? { rejectUnauthorized: false }
-    : false,
-});
-
-const THROTTLE_AVISO_MS = 6 * 60 * 60 * 1000; // 6 horas
-
-async function initDb() {
-  if (!process.env.DATABASE_URL) {
-    console.warn('⚠️  DATABASE_URL não configurada — recursos de lead router desativados.');
-    return;
+  :root {
+    --bg: #FAF9F6;
+    --bg-card: #FFFFFF;
+    --ink: #24211D;
+    --ink-soft: #6B675F;
+    --line: #E7E3DA;
+    --amber: #B8863B;
+    --amber-soft: #F3E7D2;
+    --ok: #4A7A5E;
+    --ok-soft: #E4EFE7;
+    --warn: #B14B3B;
+    --warn-soft: #F6E4E0;
   }
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS leads (
-      id SERIAL PRIMARY KEY,
-      whatsapp TEXT UNIQUE NOT NULL,
-      nome TEXT,
-      email TEXT,
-      corretor TEXT,
-      imovel_codigo TEXT,
-      imovel_desc TEXT,
-      distribuido_em TIMESTAMPTZ DEFAULT now(),
-      contatou BOOLEAN DEFAULT false,
-      primeiro_contato_em TIMESTAMPTZ,
-      avisado_em TIMESTAMPTZ
-    );
-  `);
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS leads_nao_identificados (
-      id SERIAL PRIMARY KEY,
-      whatsapp TEXT UNIQUE NOT NULL,
-      mensagem TEXT,
-      criado_em TIMESTAMPTZ DEFAULT now(),
-      avisado_em TIMESTAMPTZ
-    );
-  `);
-  console.log('✅ Tabelas do lead router prontas (leads, leads_nao_identificados)');
-}
 
-// ─── ÍNDICE PERSISTENTE ──────────────────────────────────────
-const INDEX_FILE = '/tmp/index.json';
+  * { box-sizing: border-box; }
 
-function lerIndice() {
-  try {
-    const data = fs.readFileSync(INDEX_FILE, 'utf8');
-    return JSON.parse(data).index || 0;
-  } catch { return 0; }
-}
-
-function salvarIndice(index) {
-  try {
-    fs.writeFileSync(INDEX_FILE, JSON.stringify({ index }));
-  } catch (e) { console.error('Erro ao salvar índice:', e); }
-}
-
-// ─── BUFFER DE MENSAGENS (agrupamento 10 min) ────────────────
-const bufferMensagens = {}; // { numero: [{ texto, hora }] }
-let timerResumo = null;
-
-function adicionarAoBuffer(de, conteudo) {
-  if (!bufferMensagens[de]) bufferMensagens[de] = [];
-  bufferMensagens[de].push(conteudo);
-
-  // Inicia o timer se ainda não estiver rodando
-  if (!timerResumo) {
-    timerResumo = setTimeout(enviarResumo, 10 * 60 * 1000); // 10 minutos
-    console.log('Timer de resumo iniciado (10 min)');
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: 'Space Grotesk', sans-serif;
+    -webkit-font-smoothing: antialiased;
   }
-}
 
-async function enviarResumo() {
-  timerResumo = null;
-  const contatos = Object.keys(bufferMensagens);
-  if (contatos.length === 0) return;
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 40px 28px 80px; }
 
-  let texto = `📱 *Resumo de mensagens*\n`;
-  texto += `_Últimos 10 minutos_\n`;
+  header.top {
+    display: flex; align-items: flex-end; justify-content: space-between;
+    margin-bottom: 36px; padding-bottom: 20px; border-bottom: 1px solid var(--line);
+  }
 
-  for (const numero of contatos) {
-    const msgs = bufferMensagens[numero];
-    texto += `\n👤 *${numero}*\n`;
-    for (const msg of msgs) {
-      texto += `• ${msg}\n`;
+  .brand-eyebrow {
+    font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--amber); margin-bottom: 6px;
+  }
+
+  h1 { font-size: 28px; font-weight: 700; margin: 0; letter-spacing: -0.01em; }
+
+  .top-right { text-align: right; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--ink-soft); }
+
+  #refresh-btn {
+    font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 500; color: var(--ink);
+    background: var(--bg-card); border: 1px solid var(--line); border-radius: 6px;
+    padding: 7px 12px; cursor: pointer; transition: border-color 0.15s ease, background 0.15s ease;
+  }
+  #refresh-btn:hover { border-color: var(--amber); background: var(--amber-soft); }
+  #refresh-btn:active { transform: translateY(1px); }
+  #refresh-btn.loading { color: var(--ink-soft); cursor: default; }
+
+  .metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 36px; }
+
+  .metric { background: var(--bg-card); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; }
+  .metric .label { font-size: 12px; color: var(--ink-soft); margin-bottom: 10px; }
+  .metric .value { font-family: 'JetBrains Mono', monospace; font-size: 30px; font-weight: 600; letter-spacing: -0.02em; }
+  .metric .sub { font-size: 12px; color: var(--ink-soft); margin-top: 4px; }
+  .metric.accent .value { color: var(--amber); }
+  .metric.warn-metric .value { color: var(--warn); }
+
+  .corretores { display: flex; gap: 10px; margin-bottom: 28px; flex-wrap: wrap; }
+  .corretor-chip {
+    background: var(--bg-card); border: 1px solid var(--line); border-radius: 8px;
+    padding: 10px 16px; display: flex; align-items: center; gap: 10px; font-size: 13px;
+  }
+  .corretor-chip .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .corretor-chip .count { font-family: 'JetBrains Mono', monospace; font-weight: 600; color: var(--ink-soft); }
+
+  .panel { background: var(--bg-card); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  .panel-head {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 18px 22px; border-bottom: 1px solid var(--line);
+  }
+  .panel-head h2 { font-size: 15px; font-weight: 600; margin: 0; }
+
+  .filters { display: flex; gap: 8px; }
+  select {
+    font-family: 'Space Grotesk', sans-serif; font-size: 12px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--ink); padding: 7px 10px; border-radius: 6px;
+  }
+
+  table { width: 100%; border-collapse: collapse; }
+  thead th {
+    text-align: left; font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--ink-soft); padding: 10px 22px; background: #FCFBF9;
+    border-bottom: 1px solid var(--line);
+  }
+  tbody td { padding: 14px 22px; border-bottom: 1px solid var(--line); font-size: 13.5px; vertical-align: middle; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: #FCFBF9; }
+
+  .lead-name { font-weight: 600; }
+  .lead-meta { color: var(--ink-soft); font-size: 12px; margin-top: 2px; }
+  .mono { font-family: 'JetBrains Mono', monospace; font-size: 12.5px; color: var(--ink-soft); }
+
+  .tag {
+    display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 500;
+    padding: 4px 9px; border-radius: 20px;
+  }
+  .tag-ok { background: var(--ok-soft); color: var(--ok); }
+  .tag-warn { background: var(--warn-soft); color: var(--warn); }
+  .tag-pending { background: var(--amber-soft); color: var(--amber); }
+
+  .corretor-badge { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; font-size: 13px; }
+  .corretor-badge .dot { width: 7px; height: 7px; border-radius: 50%; }
+
+  .time-ago { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--ink-soft); }
+
+  .empty-state { padding: 48px 22px; text-align: center; color: var(--ink-soft); font-size: 13.5px; }
+
+  footer.note { margin-top: 20px; font-size: 11.5px; color: var(--ink-soft); font-family: 'JetBrains Mono', monospace; }
+
+  @media (max-width: 720px) {
+    .metrics { grid-template-columns: repeat(2, 1fr); }
+    thead { display: none; }
+    tbody td { display: block; border: none; padding: 4px 22px; }
+    tbody tr { border-bottom: 1px solid var(--line); padding: 12px 0; display: block; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <div>
+      <div class="brand-eyebrow">Diniz Imóveis · Operação de Leads</div>
+      <h1>Quem tá com qual lead</h1>
+    </div>
+    <div class="top-right">
+      <button id="refresh-btn" onclick="carregarDados()">↻ Atualizar</button>
+      <div id="last-sync" style="margin-top:6px;">Ainda não atualizado</div>
+    </div>
+  </header>
+
+  <div class="metrics">
+    <div class="metric"><div class="label">Leads distribuídos (7 dias)</div><div class="value" id="m-distribuidos">—</div><div class="sub" id="m-distribuidos-sub">&nbsp;</div></div>
+    <div class="metric accent"><div class="label">Entraram em contato</div><div class="value" id="m-contataram">—</div><div class="sub" id="m-contataram-sub">&nbsp;</div></div>
+    <div class="metric warn-metric"><div class="label">Sem corretor identificado</div><div class="value" id="m-semcorretor">—</div><div class="sub">últimas 24h</div></div>
+    <div class="metric"><div class="label">Tempo médio até 1º contato</div><div class="value" id="m-tempo">—</div><div class="sub">da distribuição à resposta</div></div>
+  </div>
+
+  <div class="corretores" id="corretores-strip"></div>
+
+  <div class="panel" style="margin-bottom:28px;">
+    <div class="panel-head">
+      <h2>Campanhas (imóveis)</h2>
+    </div>
+    <div id="campanhas-container" style="padding:16px 22px;"></div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <h2>Atividade recente</h2>
+      <div class="filters">
+        <select id="filtro-corretor" onchange="renderTabela()"><option value="">Todos os corretores</option></select>
+        <select id="filtro-campanha" onchange="renderTabela()"><option value="">Todas as campanhas</option></select>
+        <select id="filtro-status" onchange="renderTabela()">
+          <option value="">Todos os status</option>
+          <option value="contatou">Contatou</option>
+          <option value="aguardando">Aguardando</option>
+          <option value="sem_corretor">Sem corretor</option>
+        </select>
+      </div>
+    </div>
+    <div id="tabela-container">
+      <div class="empty-state">Clique em "Atualizar" pra carregar os leads.</div>
+    </div>
+  </div>
+
+  <footer class="note" id="footer-note">diniz-leads-olx · painel manual — atualiza somente ao clicar</footer>
+
+</div>
+
+<script>
+  const CORES_CORRETOR = ['#B8863B', '#4A7A5E', '#6B5CA5', '#B14B3B', '#3B6EB8'];
+  let ULTIMO_ESTADO = null;
+
+  function corDoCorretor(nome) {
+    if (!nome) return '#B14B3B';
+    let hash = 0;
+    for (let i = 0; i < nome.length; i++) hash = nome.charCodeAt(i) + ((hash << 5) - hash);
+    return CORES_CORRETOR[Math.abs(hash) % CORES_CORRETOR.length];
+  }
+
+  function tempoRelativo(dataIso) {
+    if (!dataIso) return '—';
+    const diffMs = Date.now() - new Date(dataIso).getTime();
+    const min = Math.floor(diffMs / 60000);
+    if (min < 1) return 'agora';
+    if (min < 60) return \`há \${min} min\`;
+    const h = Math.floor(min / 60);
+    const restoMin = min % 60;
+    if (h < 24) return \`há \${h}h \${restoMin.toString().padStart(2, '0')}\`;
+    const d = Math.floor(h / 24);
+    return \`há \${d}d\`;
+  }
+
+  function formatarTempoMedio(segundos) {
+    if (segundos === null || segundos === undefined) return '—';
+    const h = Math.floor(segundos / 3600);
+    const m = Math.floor((segundos % 3600) / 60);
+    if (h === 0) return \`\${m}min\`;
+    return \`\${h}h\${m.toString().padStart(2, '0')}\`;
+  }
+
+  async function carregarDados() {
+    const btn = document.getElementById('refresh-btn');
+    btn.classList.add('loading');
+    btn.textContent = '↻ Atualizando…';
+
+    try {
+      const res = await fetch('/api/leads');
+      if (!res.ok) throw new Error('Falha ao buscar dados (' + res.status + ')');
+      const data = await res.json();
+      ULTIMO_ESTADO = data;
+      renderTudo(data);
+      document.getElementById('last-sync').textContent = 'Última atualização: agora mesmo';
+    } catch (err) {
+      document.getElementById('last-sync').textContent = 'Erro ao atualizar: ' + err.message;
+    } finally {
+      btn.classList.remove('loading');
+      btn.textContent = '↻ Atualizar';
     }
-    delete bufferMensagens[numero];
   }
 
-  await enviarWhatsApp(JULIANE_LL, texto);
-  console.log('Resumo enviado para Juliane LL');
-}
+  function renderTudo(data) {
+    document.getElementById('m-distribuidos').textContent = data.stats.totalDistribuidos;
+    document.getElementById('m-distribuidos-sub').textContent = '+' + data.stats.distribuidos24h + ' nas últimas 24h';
 
-// ─── FUNÇÃO: ENVIAR MENSAGEM WHATSAPP ────────────────────────
-async function enviarWhatsApp(fone, mensagem) {
-  const res = await fetch(`${EVOLUTION_URL}/message/sendText/${EVOLUTION_INSTANCE}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'apikey': EVOLUTION_TOKEN,
-    },
-    body: JSON.stringify({ number: fone, text: mensagem }),
-  });
-  return res.json();
-}
+    document.getElementById('m-contataram').textContent = data.stats.totalContataram;
+    const pct = data.stats.totalDistribuidos > 0
+      ? Math.round((data.stats.totalContataram / data.stats.totalDistribuidos) * 100)
+      : 0;
+    document.getElementById('m-contataram-sub').textContent = pct + '% dos distribuídos';
 
-// ─── FUNÇÃO: FORMATAR TELEFONE ───────────────────────────────
-function formatarTelefone(ddd, phone) {
-  if (ddd && phone) {
-    const p = phone.replace(/\D/g, '');
-    if (p.length === 9) return `(${ddd}) ${p.slice(0,5)}-${p.slice(5)}`;
-    if (p.length === 8) return `(${ddd}) ${p.slice(0,4)}-${p.slice(4)}`;
-    return `(${ddd}) ${p}`;
-  }
-  return 'Não informado';
-}
+    document.getElementById('m-semcorretor').textContent = data.stats.semCorretor24h;
+    document.getElementById('m-tempo').textContent = formatarTempoMedio(data.stats.tempoMedioContatoSegundos);
 
-// ─── FUNÇÃO: LIMPAR MENSAGEM DO CLIENTE ──────────────────────
-function limparMensagem(msg) {
-  if (!msg) return '';
-  const corte = msg.indexOf('A seguir, dados para contato');
-  if (corte !== -1) return msg.substring(0, corte).trim();
-  return msg.trim();
-}
+    const corretoresMap = {};
+    (data.porCorretor || []).forEach(c => { corretoresMap[c.corretor] = c.total; });
 
-// ─── LEAD ROUTER: PARSER DA MENSAGEM DE DISTRIBUIÇÃO ─────────
-// Formato esperado (enviado pelo 84277070 aos corretores):
-//   Segue um novo lead interessado VD01- CASA BAIRRO LUZITANO
-//   nome: Wallace Da Silva Oliveira
-//   email: wallacedextter@gmail.com
-//   whatsapp: +5562992316826
-//   corretor: Laís
-function parseDistribuicao(texto) {
-  if (!texto) return null;
+    const strip = document.getElementById('corretores-strip');
+    strip.innerHTML = Object.keys(corretoresMap).map(nome =>
+      \`<div class="corretor-chip"><span class="dot" style="background:\${corDoCorretor(nome)}"></span>\${nome} <span class="count">\${corretoresMap[nome]}</span></div>\`
+    ).join('') || '<div class="mono">Nenhum lead distribuído ainda</div>';
 
-  // Critério de reconhecimento: precisa ter a palavra "corretor" e um número de telefone
-  // reconhecível no texto. Não depende dos rótulos (nome:, email:, whatsapp:) estarem
-  // escritos certinho — eles variam bastante na prática (ex: "whastapp", "watts", etc.)
-  const corretorMatch = texto.match(/corretor\s*[:\-]?\s*(.+)/i);
-  const whatsappMatch = texto.match(/(?:\+?55\s*)?\(?\d{2}\)?\s*9?\d{4}[-\s]?\d{4}/);
+    const filtroCorretor = document.getElementById('filtro-corretor');
+    const atual = filtroCorretor.value;
+    filtroCorretor.innerHTML = '<option value="">Todos os corretores</option>' +
+      Object.keys(corretoresMap).map(n => \`<option value="\${n}">\${n}</option>\`).join('');
+    filtroCorretor.value = atual;
 
-  if (!corretorMatch || !whatsappMatch) return null;
-
-  const nomeMatch = texto.match(/nome\s*[:\-]?\s*(.+)/i);
-  const emailMatch = texto.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
-
-  const primeiraLinha = texto.split('\n')[0].trim();
-  let imovelDesc = primeiraLinha;
-  const prefixMatch = primeiraLinha.match(/interessado\s+(.+)/i);
-  if (prefixMatch) imovelDesc = prefixMatch[1].trim();
-
-  let imovelCodigo = '';
-  const codigoMatch = imovelDesc.match(/^([A-Z]{2}\d+)\s*-?\s*(.*)$/);
-  if (codigoMatch) {
-    imovelCodigo = codigoMatch[1];
-    imovelDesc = codigoMatch[2].trim();
-  }
-
-  // Normaliza o telefone e garante o código do país (55) na frente
-  let whatsappNormalizado = whatsappMatch[0].replace(/\D/g, '');
-  if (whatsappNormalizado.length <= 11) whatsappNormalizado = '55' + whatsappNormalizado;
-
-  return {
-    nome: nomeMatch ? nomeMatch[1].trim() : 'Sem nome',
-    email: emailMatch ? emailMatch[0] : null,
-    whatsapp: whatsappNormalizado,
-    corretor: corretorMatch[1].trim(),
-    imovelCodigo,
-    imovelDesc,
-  };
-}
-
-async function salvarDistribuicao(dados) {
-  await pool.query(
-    `INSERT INTO leads (whatsapp, nome, email, corretor, imovel_codigo, imovel_desc)
-     VALUES ($1, $2, $3, $4, $5, $6)
-     ON CONFLICT (whatsapp) DO UPDATE SET
-       nome = EXCLUDED.nome,
-       email = EXCLUDED.email,
-       corretor = EXCLUDED.corretor,
-       imovel_codigo = EXCLUDED.imovel_codigo,
-       imovel_desc = EXCLUDED.imovel_desc,
-       distribuido_em = now(),
-       contatou = false,
-       primeiro_contato_em = NULL,
-       avisado_em = NULL`,
-    [dados.whatsapp, dados.nome, dados.email, dados.corretor, dados.imovelCodigo, dados.imovelDesc]
-  );
-  console.log(`Lead distribuído salvo: ${dados.nome} → ${dados.corretor} (${dados.whatsapp})`);
-}
-
-// ─── LEAD ROUTER: IDENTIFICAÇÃO QUANDO O LEAD ESCREVE ────────
-function precisaAvisar(avisadoEm) {
-  if (!avisadoEm) return true;
-  return (Date.now() - new Date(avisadoEm).getTime()) > THROTTLE_AVISO_MS;
-}
-
-async function identificarLead(whatsapp, mensagemTexto) {
-  const leadResult = await pool.query('SELECT * FROM leads WHERE whatsapp = $1', [whatsapp]);
-
-  if (leadResult.rows.length > 0) {
-    const lead = leadResult.rows[0];
-
-    await pool.query(
-      `UPDATE leads SET contatou = true, primeiro_contato_em = COALESCE(primeiro_contato_em, now())
-       WHERE whatsapp = $1`,
-      [whatsapp]
-    );
-
-    if (precisaAvisar(lead.avisado_em)) {
-      const imovel = [lead.imovel_codigo, lead.imovel_desc].filter(Boolean).join(' - ') || 'não informado';
-      const texto =
-        `✅ Lead identificado\n` +
-        `Nome: ${lead.nome}\n` +
-        `WhatsApp: +${whatsapp}\n` +
-        `Corretor: ${lead.corretor}\n` +
-        `Imóvel: ${imovel}`;
-      await enviarWhatsApp(JULIANE_LL, texto);
-      await pool.query('UPDATE leads SET avisado_em = now() WHERE whatsapp = $1', [whatsapp]);
-      console.log(`Juliane avisada: ${lead.nome} → ${lead.corretor}`);
-    }
-    return;
-  }
-
-  // Não encontrado na base de distribuições
-  const naoIdentResult = await pool.query(
-    'SELECT * FROM leads_nao_identificados WHERE whatsapp = $1',
-    [whatsapp]
-  );
-  const existente = naoIdentResult.rows[0];
-
-  if (existente) {
-    await pool.query(
-      'UPDATE leads_nao_identificados SET mensagem = $1 WHERE whatsapp = $2',
-      [mensagemTexto, whatsapp]
-    );
-  } else {
-    await pool.query(
-      'INSERT INTO leads_nao_identificados (whatsapp, mensagem) VALUES ($1, $2)',
-      [whatsapp, mensagemTexto]
-    );
-  }
-
-  if (precisaAvisar(existente?.avisado_em)) {
-    const texto =
-      `⚠️ Lead SEM corretor identificado\n` +
-      `WhatsApp: +${whatsapp}\n` +
-      `Mensagem: "${mensagemTexto}"`;
-    await enviarWhatsApp(JULIANE_LL, texto);
-    await pool.query('UPDATE leads_nao_identificados SET avisado_em = now() WHERE whatsapp = $1', [whatsapp]);
-    console.log(`Juliane avisada: lead sem corretor (${whatsapp})`);
-  }
-}
-
-// ─── ROTA: WEBHOOK DO CANAL PRO ──────────────────────────────
-app.post('/lead-canalpro', async (req, res) => {
-  try {
-    const body = req.body;
-    console.log('Lead recebido:', JSON.stringify(body, null, 2));
-
-    const transactionType = body?.transactionType || '';
-    const codigoImovel = body?.clientListingId || 'Não informado';
-    const nomeCliente  = body?.name            || 'Não informado';
-    const emailCliente = body?.email           || 'Não informado';
-    const ddd          = body?.ddd             || '';
-    const phone        = body?.phone           || '';
-    const telefone     = formatarTelefone(ddd, phone);
-    const msgCliente   = limparMensagem(body?.message);
-
-    if (transactionType === 'RENT') {
-      const texto =
-        `Segue um lead de ALUGUEL via Canal Pro\n\n` +
-        `CRM : ${codigoImovel}\n` +
-        `Nome : ${nomeCliente}\n` +
-        `${telefone}\n` +
-        `${emailCliente}\n` +
-        `OBS: ${msgCliente}`;
-
-      await enviarWhatsApp(CYDA, texto);
-      console.log('Lead de aluguel enviado para Cyda');
-      return res.status(200).json({ ok: true, msg: 'Aluguel enviado para Cyda' });
+    const campanhasContainer = document.getElementById('campanhas-container');
+    const campanhas = data.porCampanha || [];
+    if (campanhas.length === 0) {
+      campanhasContainer.innerHTML = '<div class="mono">Nenhuma campanha ativa nos últimos 7 dias</div>';
+    } else {
+      campanhasContainer.innerHTML = \`<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:10px;">\` +
+        campanhas.map(c => {
+          const nomeCampanha = [c.imovel_codigo, c.imovel_desc].filter(Boolean).join(' - ') || 'Sem identificação';
+          const pctCamp = c.total > 0 ? Math.round((c.total_contataram / c.total) * 100) : 0;
+          return \`<div style="border:1px solid var(--line); border-radius:8px; padding:12px 14px;">
+            <div style="font-weight:600; font-size:13px; margin-bottom:6px;">\${nomeCampanha}</div>
+            <div class="mono" style="font-size:12px;">\${c.total} lead\${c.total == 1 ? '' : 's'} · \${pctCamp}% contataram</div>
+          </div>\`;
+        }).join('') + '</div>';
     }
 
-    const indexAtual = lerIndice();
-    const corretor = CORRETORES[indexAtual];
-    salvarIndice((indexAtual + 1) % CORRETORES.length);
+    const filtroCampanha = document.getElementById('filtro-campanha');
+    const campanhaAtual = filtroCampanha.value;
+    filtroCampanha.innerHTML = '<option value="">Todas as campanhas</option>' +
+      campanhas.map(c => {
+        const nomeCampanha = [c.imovel_codigo, c.imovel_desc].filter(Boolean).join(' - ') || 'Sem identificação';
+        return \`<option value="\${c.imovel_codigo || ''}">\${nomeCampanha}</option>\`;
+      }).join('');
+    filtroCampanha.value = campanhaAtual;
 
-    const texto =
-      `Segue um lead que veio através do Canal Pro\n\n` +
-      `CRM : ${codigoImovel}\n` +
-      `Nome : ${nomeCliente}\n` +
-      `${telefone}\n` +
-      `${emailCliente}\n` +
-      `OBS: ${msgCliente}\n` +
-      `ENVIADO CORRETOR ${corretor.nome.toUpperCase()}`;
-
-    await enviarWhatsApp(corretor.fone, texto);
-
-    const textoControle =
-      `✅ Lead de venda distribuído\n\n` +
-      `CRM : ${codigoImovel}\n` +
-      `Nome : ${nomeCliente}\n` +
-      `${telefone}\n` +
-      `Corretor: ${corretor.nome}`;
-
-    await enviarWhatsApp(JULIANE_LL, textoControle);
-
-    console.log(`Lead enviado para ${corretor.nome} (${corretor.fone})`);
-    res.status(200).json({ ok: true, corretor: corretor.nome });
-
-  } catch (err) {
-    console.error('Erro ao processar lead:', err);
-    res.status(500).json({ ok: false, erro: err.message });
+    renderTabela();
   }
-});
 
-// ─── ROTA: ESPELHO DE MENSAGENS + LEAD ROUTER ────────────────
-app.post('/webhook-mensagens', async (req, res) => {
-  try {
-    const body = req.body;
+  function renderTabela() {
+    const container = document.getElementById('tabela-container');
+    if (!ULTIMO_ESTADO) return;
 
-    const fromMe = body?.data?.key?.fromMe || body?.key?.fromMe || false;
-    const jid = body?.data?.key?.remoteJid || body?.key?.remoteJid || '';
+    const filtroCorretor = document.getElementById('filtro-corretor').value;
+    const filtroCampanha = document.getElementById('filtro-campanha').value;
+    const filtroStatus = document.getElementById('filtro-status').value;
 
-    // Ignora mensagens de grupo
-    if (jid.includes('@g.us')) {
-      console.log('Mensagem de grupo ignorada');
-      return res.status(200).json({ ok: true });
+    let linhas = ULTIMO_ESTADO.leads.map(l => ({ tipo: 'lead', ...l }));
+    let naoIdent = ULTIMO_ESTADO.naoIdentificados.map(n => ({ tipo: 'nao_identificado', ...n }));
+
+    let todos = [...linhas, ...naoIdent];
+
+    if (filtroStatus === 'sem_corretor') {
+      todos = naoIdent;
+    } else if (filtroStatus === 'contatou') {
+      todos = linhas.filter(l => l.contatou);
+    } else if (filtroStatus === 'aguardando') {
+      todos = linhas.filter(l => !l.contatou);
     }
 
-    const de = jid.replace('@s.whatsapp.net', '').replace('@c.us', '');
-    const msg = body?.data?.message || body?.message || {};
-    const conteudo = msg?.conversation || msg?.extendedTextMessage?.text || msg?.imageMessage?.caption || '[mídia]';
+    if (filtroCorretor) {
+      todos = todos.filter(l => l.tipo === 'lead' && l.corretor === filtroCorretor);
+    }
 
-    if (fromMe) {
-      // Mensagem enviada pelo próprio número 84277070 — pode ser distribuição pra corretor
-      if (process.env.DATABASE_URL) {
-        const distribuicao = parseDistribuicao(conteudo);
-        if (distribuicao) {
-          await salvarDistribuicao(distribuicao);
-          // Espelha a mesma mensagem de distribuição pra Juliane, em tempo real
-          await enviarWhatsApp(JULIANE_LL, `📋 Nova distribuição de lead:\n\n${conteudo}`);
-          console.log(`Distribuição espelhada pra Juliane: ${distribuicao.nome} → ${distribuicao.corretor}`);
-        }
+    if (filtroCampanha) {
+      todos = todos.filter(l => l.tipo === 'lead' && l.imovel_codigo === filtroCampanha);
+    }
+
+    todos.sort((a, b) => new Date(b.distribuido_em || b.criado_em) - new Date(a.distribuido_em || a.criado_em));
+
+    if (todos.length === 0) {
+      container.innerHTML = '<div class="empty-state">Nenhum lead encontrado com esse filtro.</div>';
+      return;
+    }
+
+    const linhasHtml = todos.map(item => {
+      if (item.tipo === 'nao_identificado') {
+        return \`<tr>
+          <td><div class="lead-name">Número não identificado</div><div class="lead-meta mono">+\${item.whatsapp}</div></td>
+          <td class="mono">—</td>
+          <td><span class="tag tag-warn">Sem corretor</span></td>
+          <td><span class="tag tag-warn">● Verificar</span></td>
+          <td class="time-ago">\${tempoRelativo(item.criado_em)}</td>
+        </tr>\`;
       }
-      return res.status(200).json({ ok: true });
-    }
+      const imovel = [item.imovel_codigo, item.imovel_desc].filter(Boolean).join(' · ') || '—';
+      const statusTag = item.contatou
+        ? '<span class="tag tag-ok">● Contatou</span>'
+        : '<span class="tag tag-pending">Aguardando</span>';
+      return \`<tr>
+        <td><div class="lead-name">\${item.nome || 'Sem nome'}</div><div class="lead-meta mono">+\${item.whatsapp}</div></td>
+        <td class="mono">\${imovel}</td>
+        <td><span class="corretor-badge"><span class="dot" style="background:\${corDoCorretor(item.corretor)}"></span>\${item.corretor || '—'}</span></td>
+        <td>\${statusTag}</td>
+        <td class="time-ago">\${tempoRelativo(item.distribuido_em)}</td>
+      </tr>\`;
+    }).join('');
 
-    // Mensagem recebida de fora — mantém o resumo em buffer como já funcionava
-    adicionarAoBuffer(de, conteudo);
-    console.log(`Mensagem de ${de} adicionada ao buffer`);
-
-    // E também identifica se é um lead já distribuído pra algum corretor
-    if (process.env.DATABASE_URL) {
-      await identificarLead(de, conteudo);
-    }
-
-    res.status(200).json({ ok: true });
-
-  } catch (err) {
-    console.error('Erro ao processar mensagem:', err);
-    res.status(500).json({ ok: false, erro: err.message });
+    container.innerHTML = \`<table>
+      <thead><tr><th>Lead</th><th>Imóvel</th><th>Corretor</th><th>Status</th><th>Chegou</th></tr></thead>
+      <tbody>\${linhasHtml}</tbody>
+    </table>\`;
   }
-});
+</script>
+</body>
+</html>`;
 
-// ─── AUTENTICAÇÃO BÁSICA DO PAINEL ───────────────────────────
-function basicAuth(req, res, next) {
-  const user = process.env.DASHBOARD_USER || 'diniz';
-  const pass = process.env.DASHBOARD_PASS;
-
-  if (!pass) {
-    console.warn('⚠️  DASHBOARD_PASS não configurada — painel está SEM proteção por senha.');
-    return next();
-  }
-
-  const auth = req.headers.authorization;
-  if (!auth || !auth.startsWith('Basic ')) {
-    res.set('WWW-Authenticate', 'Basic realm="Painel de Leads"');
-    return res.status(401).send('Autenticação necessária');
-  }
-
-  const [u, p] = Buffer.from(auth.slice(6), 'base64').toString().split(':');
-  if (u === user && p === pass) return next();
-
-  res.set('WWW-Authenticate', 'Basic realm="Painel de Leads"');
-  return res.status(401).send('Credenciais inválidas');
-}
-
-// ─── ROTA: API DE LEADS (alimenta o dashboard) ───────────────
-app.get('/api/leads', basicAuth, async (req, res) => {
-  if (!process.env.DATABASE_URL) {
-    return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
-  }
-  try {
-    const leadsResult = await pool.query(
-      `SELECT whatsapp, nome, email, corretor, imovel_codigo, imovel_desc,
-              distribuido_em, contatou, primeiro_contato_em
-       FROM leads
-       ORDER BY distribuido_em DESC
-       LIMIT 100`
-    );
-
-    const naoIdentResult = await pool.query(
-      `SELECT whatsapp, mensagem, criado_em
-       FROM leads_nao_identificados
-       WHERE criado_em > now() - interval '7 days'
-       ORDER BY criado_em DESC
-       LIMIT 50`
-    );
-
-    const statsResult = await pool.query(`
-      SELECT
-        count(*) FILTER (WHERE distribuido_em > now() - interval '7 days') AS total_distribuidos,
-        count(*) FILTER (WHERE distribuido_em > now() - interval '7 days' AND contatou) AS total_contataram,
-        count(*) FILTER (WHERE distribuido_em > now() - interval '24 hours') AS distribuidos_24h,
-        avg(primeiro_contato_em - distribuido_em)
-          FILTER (WHERE contatou AND distribuido_em > now() - interval '7 days') AS tempo_medio_contato
-      FROM leads
-    `);
-
-    const semCorretor24hResult = await pool.query(`
-      SELECT count(*) AS total
-      FROM leads_nao_identificados
-      WHERE criado_em > now() - interval '24 hours'
-    `);
-
-    const porCorretorResult = await pool.query(`
-      SELECT corretor, count(*) AS total
-      FROM leads
-      WHERE distribuido_em > now() - interval '7 days'
-      GROUP BY corretor
-      ORDER BY total DESC
-    `);
-
-    const porCampanhaResult = await pool.query(`
-      SELECT
-        imovel_codigo,
-        imovel_desc,
-        count(*) AS total,
-        count(*) FILTER (WHERE contatou) AS total_contataram
-      FROM leads
-      WHERE distribuido_em > now() - interval '7 days'
-      GROUP BY imovel_codigo, imovel_desc
-      ORDER BY total DESC
-    `);
-
-    res.json({
-      ok: true,
-      leads: leadsResult.rows,
-      naoIdentificados: naoIdentResult.rows,
-      stats: {
-        totalDistribuidos: parseInt(statsResult.rows[0].total_distribuidos, 10) || 0,
-        totalContataram: parseInt(statsResult.rows[0].total_contataram, 10) || 0,
-        distribuidos24h: parseInt(statsResult.rows[0].distribuidos_24h, 10) || 0,
-        semCorretor24h: parseInt(semCorretor24hResult.rows[0].total, 10) || 0,
-        tempoMedioContatoSegundos: statsResult.rows[0].tempo_medio_contato
-          ? Math.round(statsResult.rows[0].tempo_medio_contato.hours * 3600
-              + statsResult.rows[0].tempo_medio_contato.minutes * 60
-              + (statsResult.rows[0].tempo_medio_contato.seconds || 0))
-          : null,
-      },
-      porCorretor: porCorretorResult.rows,
-      porCampanha: porCampanhaResult.rows,
-    });
-  } catch (err) {
-    console.error('Erro ao buscar leads:', err);
-    res.status(500).json({ ok: false, erro: err.message });
-  }
-});
-
-// ─── ROTA: DASHBOARD ──────────────────────────────────────────
-app.get('/dashboard', basicAuth, (req, res) => {
-  res.send(DASHBOARD_HTML);
-});
-
-// ─── ROTA DE TESTE ───────────────────────────────────────────
-app.get('/', (req, res) => {
-  res.send('✅ Diniz Leads OLX rodando!');
-});
-
-// ─── INICIA SERVIDOR ─────────────────────────────────────────
-const PORT = process.env.PORT || 3001;
-app.listen(PORT, async () => {
-  console.log(`Servidor rodando na porta ${PORT}`);
-  await initDb();
-});
+module.exports = { DASHBOARD_HTML };

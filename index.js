@@ -156,13 +156,16 @@ function limparMensagem(msg) {
 function parseDistribuicao(texto) {
   if (!texto) return null;
 
-  const nomeMatch     = texto.match(/nome:\s*(.+)/i);
-  const emailMatch    = texto.match(/email:\s*(.+)/i);
-  const whatsappMatch = texto.match(/whatsapp:\s*(.+)/i);
-  const corretorMatch = texto.match(/corretor:\s*(.+)/i);
+  // Critério de reconhecimento: precisa ter a palavra "corretor" e um número de telefone
+  // reconhecível no texto. Não depende dos rótulos (nome:, email:, whatsapp:) estarem
+  // escritos certinho — eles variam bastante na prática (ex: "whastapp", "watts", etc.)
+  const corretorMatch = texto.match(/corretor\s*[:\-]?\s*(.+)/i);
+  const whatsappMatch = texto.match(/(?:\+?55\s*)?\(?\d{2}\)?\s*9?\d{4}[-\s]?\d{4}/);
 
-  // Se não tem os quatro campos-chave, não é uma mensagem de distribuição
-  if (!nomeMatch || !whatsappMatch || !corretorMatch) return null;
+  if (!corretorMatch || !whatsappMatch) return null;
+
+  const nomeMatch = texto.match(/nome\s*[:\-]?\s*(.+)/i);
+  const emailMatch = texto.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
 
   const primeiraLinha = texto.split('\n')[0].trim();
   let imovelDesc = primeiraLinha;
@@ -176,11 +179,13 @@ function parseDistribuicao(texto) {
     imovelDesc = codigoMatch[2].trim();
   }
 
-  const whatsappNormalizado = whatsappMatch[1].replace(/\D/g, '');
+  // Normaliza o telefone e garante o código do país (55) na frente
+  let whatsappNormalizado = whatsappMatch[0].replace(/\D/g, '');
+  if (whatsappNormalizado.length <= 11) whatsappNormalizado = '55' + whatsappNormalizado;
 
   return {
-    nome: nomeMatch[1].trim(),
-    email: emailMatch ? emailMatch[1].trim() : null,
+    nome: nomeMatch ? nomeMatch[1].trim() : 'Sem nome',
+    email: emailMatch ? emailMatch[0] : null,
     whatsapp: whatsappNormalizado,
     corretor: corretorMatch[1].trim(),
     imovelCodigo,
@@ -356,6 +361,9 @@ app.post('/webhook-mensagens', async (req, res) => {
         const distribuicao = parseDistribuicao(conteudo);
         if (distribuicao) {
           await salvarDistribuicao(distribuicao);
+          // Espelha a mesma mensagem de distribuição pra Juliane, em tempo real
+          await enviarWhatsApp(JULIANE_LL, `📋 Nova distribuição de lead:\n\n${conteudo}`);
+          console.log(`Distribuição espelhada pra Juliane: ${distribuicao.nome} → ${distribuicao.corretor}`);
         }
       }
       return res.status(200).json({ ok: true });
