@@ -4,6 +4,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Diniz Imóveis — Painel de Leads</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
@@ -62,6 +63,22 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     padding: 7px 12px; cursor: pointer; margin-right: 8px; transition: opacity 0.15s ease;
   }
   #add-lead-btn:hover { opacity: 0.88; }
+
+  #import-btn {
+    font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 500; color: var(--ink);
+    background: var(--bg-card); border: 1px solid var(--line); border-radius: 6px;
+    padding: 7px 12px; cursor: pointer; margin-right: 8px; transition: border-color 0.15s ease, background 0.15s ease;
+  }
+  #import-btn:hover { border-color: var(--amber); background: var(--amber-soft); }
+  #import-btn.loading { color: var(--ink-soft); cursor: default; }
+
+  #sync-btn {
+    font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 500; color: var(--ink);
+    background: var(--bg-card); border: 1px solid var(--line); border-radius: 6px;
+    padding: 7px 12px; cursor: pointer; margin-right: 8px; transition: border-color 0.15s ease, background 0.15s ease;
+  }
+  #sync-btn:hover { border-color: var(--ok); background: var(--ok-soft); }
+  #sync-btn.loading { color: var(--ink-soft); cursor: default; }
 
   .modal-overlay {
     display: none; position: fixed; inset: 0; background: rgba(36, 33, 29, 0.45);
@@ -192,6 +209,9 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       <h1>Quem tá com qual lead</h1>
     </div>
     <div class="top-right">
+      <button id="sync-btn" onclick="sincronizarPlanilha()">⇄ Sincronizar planilha</button>
+      <button id="import-btn" onclick="document.getElementById('arquivo-planilha').click()">⇪ Importar arquivo</button>
+      <input type="file" id="arquivo-planilha" accept=".xlsx,.xls,.csv" style="display:none" onchange="importarPlanilha(this.files[0])">
       <button id="add-lead-btn" onclick="abrirModalLead()">+ Adicionar lead</button>
       <button id="refresh-btn" onclick="carregarDados()">↻ Atualizar</button>
       <div id="last-sync" style="margin-top:6px;">Ainda não atualizado</div>
@@ -332,19 +352,29 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     }
   }
 
-  // Salva um campo editável direto na tabela, sem recarregar tudo
-  async function salvarCampo(id, campo, valor, elemento) {
+  // Salva um campo editável direto na tabela, sem recarregar tudo.
+  // tipo: 'lead' (padrão) ou 'nao_identificado' — este último promove o contato
+  // a lead completo assim que qualquer campo é editado, e recarrega a lista inteira.
+  async function salvarCampo(id, campo, valor, elemento, tipo) {
+    tipo = tipo || 'lead';
+    const url = tipo === 'lead' ? '/api/leads/' + id : '/api/leads-nao-identificados/' + id;
     const dot = elemento.parentElement.querySelector('.saving-dot');
     if (dot) dot.classList.add('show');
     try {
-      const res = await fetch('/api/leads/' + id, {
+      const res = await fetch(url, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ campo, valor }),
       });
-      if (!res.ok) throw new Error('Falha ao salvar');
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error('Falha ao salvar');
 
-      // Atualiza o estado local pra manter os filtros/contadores coerentes sem novo fetch
+      if (tipo === 'nao_identificado') {
+        // Contato promovido a lead completo — some da lista de não identificados
+        await carregarDados();
+        return;
+      }
+
       if (ULTIMO_ESTADO) {
         const lead = ULTIMO_ESTADO.leads.find(l => l.id === id);
         if (lead) lead[campo] = valor;
@@ -356,6 +386,90 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       alert('Não consegui salvar essa alteração. Tenta de novo.');
     } finally {
       if (dot) setTimeout(() => dot.classList.remove('show'), 400);
+    }
+  }
+
+  async function sincronizarPlanilha() {
+    const btn = document.getElementById('sync-btn');
+    btn.classList.add('loading');
+    btn.textContent = '⇄ Sincronizando…';
+
+    try {
+      const res = await fetch('/api/sincronizar-planilha', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.erro || 'Falha ao sincronizar');
+
+      await carregarDados();
+      if (data.inseridos > 0 || data.ignorados > 0) {
+        document.getElementById('last-sync').textContent =
+          \`Sincronizado: +\${data.inseridos} novo\${data.inseridos === 1 ? '' : 's'}\`;
+      }
+    } catch (err) {
+      alert('Não consegui sincronizar com a planilha: ' + err.message);
+    } finally {
+      btn.classList.remove('loading');
+      btn.textContent = '⇄ Sincronizar planilha';
+    }
+  }
+
+  // Reconhece a coluna certa mesmo que o nome varie um pouco (maiúscula, acento, espaço)
+  function acharColuna(linha, possiveisNomes) {
+    const chaves = Object.keys(linha);
+    for (const nomePossivel of possiveisNomes) {
+      const alvo = nomePossivel.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      const chave = chaves.find(k => k.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim() === alvo);
+      if (chave) return linha[chave];
+    }
+    return '';
+  }
+
+  async function importarPlanilha(arquivo) {
+    if (!arquivo) return;
+    const btn = document.getElementById('import-btn');
+    btn.classList.add('loading');
+    btn.textContent = '⇪ Lendo planilha…';
+
+    try {
+      const buffer = await arquivo.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: 'array' });
+      const primeiraAba = workbook.Sheets[workbook.SheetNames[0]];
+      const linhas = XLSX.utils.sheet_to_json(primeiraAba, { defval: '' });
+
+      if (linhas.length === 0) {
+        alert('Não encontrei nenhuma linha nessa planilha.');
+        return;
+      }
+
+      const leads = linhas.map(linha => ({
+        nome: String(acharColuna(linha, ['Nome', 'Cliente', 'Nome do Cliente'])).trim(),
+        whatsapp: String(acharColuna(linha, ['WhatsApp', 'Whatsapp', 'Telefone', 'Fone', 'Celular'])).trim(),
+        origem: String(acharColuna(linha, ['Origem', 'Canal'])).trim() || null,
+        corretor: String(acharColuna(linha, ['Corretor'])).trim() || null,
+        imovelDesc: String(acharColuna(linha, ['Interesse', 'Imovel', 'Imóvel'])).trim() || null,
+      })).filter(l => l.nome && l.whatsapp);
+
+      if (leads.length === 0) {
+        alert('Não consegui identificar as colunas de Nome e WhatsApp nessa planilha. Confere se os nomes das colunas batem com o esperado (Nome, WhatsApp, Origem, Corretor, Interesse).');
+        return;
+      }
+
+      btn.textContent = '⇪ Importando…';
+      const res = await fetch('/api/leads/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ leads }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.erro || 'Falha ao importar');
+
+      alert(\`Importação concluída: \${data.inseridos} lead\${data.inseridos === 1 ? '' : 's'} novo\${data.inseridos === 1 ? '' : 's'} adicionado\${data.inseridos === 1 ? '' : 's'}, \${data.ignorados} já existia\${data.ignorados === 1 ? '' : 'm'} ou estava\${data.ignorados === 1 ? '' : 'm'} incompleto\${data.ignorados === 1 ? '' : 's'}.\`);
+      await carregarDados();
+    } catch (err) {
+      alert('Não consegui importar essa planilha: ' + err.message);
+    } finally {
+      btn.classList.remove('loading');
+      btn.textContent = '⇪ Importar planilha';
+      document.getElementById('arquivo-planilha').value = '';
     }
   }
 
@@ -410,34 +524,6 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     } finally {
       btnSalvar.disabled = false;
       btnSalvar.textContent = 'Salvar lead';
-    }
-  }
-
-  // Salva o corretor de um número "não identificado" (rota separada dos leads normais).
-  // Quando um corretor é escolhido, o contato vira um lead completo — por isso recarrega tudo.
-  async function salvarCorretorNaoIdentificado(id, corretor, elemento) {
-    const dot = elemento.parentElement.querySelector('.saving-dot');
-    if (dot) dot.classList.add('show');
-    try {
-      const res = await fetch('/api/leads-nao-identificados/' + id, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ corretor }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.ok) throw new Error('Falha ao salvar');
-
-      if (data.promovido) {
-        await carregarDados();
-      } else if (ULTIMO_ESTADO) {
-        const item = ULTIMO_ESTADO.naoIdentificados.find(n => n.id === id);
-        if (item) item.corretor = corretor;
-        elemento.classList.toggle('pendente', !corretor);
-      }
-    } catch (err) {
-      alert('Não consegui salvar essa alteração. Tenta de novo.');
-    } finally {
-      if (dot) setTimeout(() => dot.classList.remove('show'), 400);
     }
   }
 
@@ -546,18 +632,34 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
     const linhasHtml = todos.map(item => {
       if (item.tipo === 'nao_identificado') {
-        const corretorSelectNaoIdent = \`<select class="edit-select \${!item.corretor ? 'pendente' : ''}" onchange="salvarCorretorNaoIdentificado(\${item.id}, this.value, this)">
-          <option value="" \${!item.corretor ? 'selected' : ''}>— escolher —</option>
-          \${CORRETORES_DISPONIVEIS.map(c => \`<option value="\${c}" \${item.corretor === c ? 'selected' : ''}>\${c}</option>\`).join('')}
+        const origemSelectNI = \`<select class="edit-select \${!item.origem ? 'pendente' : ''}" onchange="salvarCampo(\${item.id}, 'origem', this.value, this, 'nao_identificado')">
+          <option value="" \${!item.origem ? 'selected' : ''}>— escolher —</option>
+          \${ORIGENS.map(o => \`<option value="\${o}">\${o}</option>\`).join('')}
         </select><span class="saving-dot"></span>\`;
+
+        const corretorSelectNI = \`<select class="edit-select \${!item.corretor ? 'pendente' : ''}" onchange="salvarCampo(\${item.id}, 'corretor', this.value, this, 'nao_identificado')">
+          <option value="" \${!item.corretor ? 'selected' : ''}>— escolher —</option>
+          \${CORRETORES_DISPONIVEIS.map(c => \`<option value="\${c}">\${c}</option>\`).join('')}
+        </select><span class="saving-dot"></span>\`;
+
+        const statusSelectNI = \`<select class="edit-select" onchange="salvarCampo(\${item.id}, 'status', this.value, this, 'nao_identificado')">
+          <option value="" selected disabled>— escolher —</option>
+          \${STATUS_OPCOES.map(s => \`<option value="\${s}">\${s}</option>\`).join('')}
+        </select><span class="saving-dot"></span>\`;
+
+        const visitaCheckNI = \`<div class="edit-check"><input type="checkbox" onchange="salvarCampo(\${item.id}, 'visita', this.checked, this, 'nao_identificado')"></div>\`;
+        const propostaCheckNI = \`<div class="edit-check"><input type="checkbox" onchange="salvarCampo(\${item.id}, 'proposta', this.checked, this, 'nao_identificado')"></div>\`;
+        const vendaCheckNI = \`<div class="edit-check"><input type="checkbox" onchange="salvarCampo(\${item.id}, 'venda', this.checked, this, 'nao_identificado')"></div>\`;
 
         return \`<tr>
           <td><div class="lead-name">Número não identificado</div><div class="lead-meta mono">+\${item.whatsapp}</div></td>
           <td class="mono">—</td>
-          <td>—</td>
-          <td>\${corretorSelectNaoIdent}</td>
-          <td><span class="tag tag-warn">● Verificar</span></td>
-          <td>—</td><td>—</td><td>—</td>
+          <td>\${origemSelectNI}</td>
+          <td>\${corretorSelectNI}</td>
+          <td>\${statusSelectNI}</td>
+          <td>\${visitaCheckNI}</td>
+          <td>\${propostaCheckNI}</td>
+          <td>\${vendaCheckNI}</td>
           <td class="time-ago">\${tempoRelativo(item.criado_em)}</td>
         </tr>\`;
       }
