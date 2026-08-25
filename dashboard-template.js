@@ -413,6 +413,30 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     }
   }
 
+  // Salva o corretor de um número "não identificado" (rota separada dos leads normais)
+  async function salvarCorretorNaoIdentificado(id, corretor, elemento) {
+    const dot = elemento.parentElement.querySelector('.saving-dot');
+    if (dot) dot.classList.add('show');
+    try {
+      const res = await fetch('/api/leads-nao-identificados/' + id, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ corretor }),
+      });
+      if (!res.ok) throw new Error('Falha ao salvar');
+
+      if (ULTIMO_ESTADO) {
+        const item = ULTIMO_ESTADO.naoIdentificados.find(n => n.id === id);
+        if (item) item.corretor = corretor;
+      }
+      elemento.classList.toggle('pendente', !corretor);
+    } catch (err) {
+      alert('Não consegui salvar essa alteração. Tenta de novo.');
+    } finally {
+      if (dot) setTimeout(() => dot.classList.remove('show'), 400);
+    }
+  }
+
   function renderTudo(data) {
     CORRETORES_DISPONIVEIS = data.corretoresDisponiveis || [];
     document.getElementById('m-distribuidos').textContent = data.stats.totalDistribuidos;
@@ -518,11 +542,16 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
     const linhasHtml = todos.map(item => {
       if (item.tipo === 'nao_identificado') {
+        const corretorSelectNaoIdent = \`<select class="edit-select \${!item.corretor ? 'pendente' : ''}" onchange="salvarCorretorNaoIdentificado(\${item.id}, this.value, this)">
+          <option value="" \${!item.corretor ? 'selected' : ''}>— escolher —</option>
+          \${CORRETORES_DISPONIVEIS.map(c => \`<option value="\${c}" \${item.corretor === c ? 'selected' : ''}>\${c}</option>\`).join('')}
+        </select><span class="saving-dot"></span>\`;
+
         return \`<tr>
           <td><div class="lead-name">Número não identificado</div><div class="lead-meta mono">+\${item.whatsapp}</div></td>
           <td class="mono">—</td>
           <td>—</td>
-          <td><span class="tag tag-warn">Sem corretor</span></td>
+          <td>\${corretorSelectNaoIdent}</td>
           <td><span class="tag tag-warn">● Verificar</span></td>
           <td>—</td><td>—</td><td>—</td>
           <td class="time-ago">\${tempoRelativo(item.criado_em)}</td>
