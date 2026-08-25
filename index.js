@@ -21,6 +21,11 @@ const CORRETORES = [
   { nome: 'Junior', fone: '5562981625610' },
 ];
 
+// Nomes extras que aparecem como opção no dropdown de corretor do dashboard,
+// mas NÃO entram na fila de distribuição automática (round-robin) do Canal Pro
+// — pra isso precisaria do telefone de cada um, cadastrado em CORRETORES acima.
+const CORRETORES_EXTRA_DASHBOARD = ['Amanda', 'Juliane', 'Bruno'];
+
 // ─── BANCO DE DADOS (leads distribuídos por texto) ───────────
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -72,10 +77,12 @@ async function initDb() {
       id SERIAL PRIMARY KEY,
       whatsapp TEXT UNIQUE NOT NULL,
       mensagem TEXT,
+      corretor TEXT,
       criado_em TIMESTAMPTZ DEFAULT now(),
       avisado_em TIMESTAMPTZ
     );
   `);
+  await pool.query(`ALTER TABLE leads_nao_identificados ADD COLUMN IF NOT EXISTS corretor TEXT;`);
   console.log('✅ Tabelas do lead router prontas (leads, leads_nao_identificados)');
 }
 
@@ -405,9 +412,10 @@ app.post('/webhook-mensagens', async (req, res) => {
       if (process.env.DATABASE_URL) {
         const distribuicao = parseDistribuicao(conteudo);
         if (distribuicao) {
-          // Distribuição feita pelo WhatsApp da Juliane — origem ainda desconhecida,
-          // fica pendente pra preencher no dashboard (era o canal principal antes do TikTok existir)
-          await salvarDistribuicao(distribuicao, null);
+          // Distribuição feita pelo WhatsApp da Juliane — esse canal é usado pra repassar
+          // leads patrocinados (Insta/Facebook), então assume 'Patrocinado' como origem padrão
+          // quando a mensagem não disser outra origem explicitamente. Segue editável no dashboard.
+          await salvarDistribuicao(distribuicao, 'Patrocinado');
           await enviarWhatsApp(JULIANE_LL, `📋 Nova distribuição de lead:\n\n${conteudo}`);
           console.log(`Distribuição espelhada pra Juliane: ${distribuicao.nome} → ${distribuicao.corretor}`);
         }
@@ -519,7 +527,7 @@ app.get('/api/leads', basicAuth, async (req, res) => {
     );
 
     const naoIdentResult = await pool.query(
-      `SELECT whatsapp, mensagem, criado_em
+      `SELECT id, whatsapp, mensagem, corretor, criado_em
        FROM leads_nao_identificados
        WHERE criado_em > now() - interval '7 days'
        ORDER BY criado_em DESC
@@ -588,7 +596,7 @@ app.get('/api/leads', basicAuth, async (req, res) => {
       porCorretor: porCorretorResult.rows,
       porCampanha: porCampanhaResult.rows,
       porOrigem: porOrigemResult.rows,
-      corretoresDisponiveis: CORRETORES.map(c => c.nome),
+      corretoresDisponiveis: [...CORRETORES.map(c => c.nome), ...CORRETORES_EXTRA_DASHBOARD],
     });
   } catch (err) {
     console.error('Erro ao buscar leads:', err);
@@ -625,6 +633,26 @@ app.post('/api/leads', basicAuth, async (req, res) => {
       return res.status(409).json({ ok: false, erro: 'Já existe um lead com esse WhatsApp' });
     }
     console.error('Erro ao adicionar lead manual:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
+// ─── ROTA: ATRIBUIR CORRETOR A NÚMERO NÃO IDENTIFICADO ───────
+app.patch('/api/leads-nao-identificados/:id', basicAuth, async (req, res) => {
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  }
+  const { id } = req.params;
+  const { corretor } = req.body;
+
+  try {
+    await pool.query(
+      `UPDATE leads_nao_identificados SET corretor = $1 WHERE id = $2`,
+      [corretor || null, id]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Erro ao atribuir corretor:', err);
     res.status(500).json({ ok: false, erro: err.message });
   }
 });
