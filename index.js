@@ -20,6 +20,7 @@ const CORRETORES = [
   { nome: 'Nalcio', fone: '5562982077466' },
   { nome: 'Renata', fone: '5562992670935' },
   { nome: 'Junior', fone: '5562981625610' },
+  { nome: 'Thayná', fone: '5562991749547' },
 ];
 
 // Nomes extras que aparecem como opção no dropdown de corretor do dashboard,
