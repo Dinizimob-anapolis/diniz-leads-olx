@@ -56,6 +56,39 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   #refresh-btn:active { transform: translateY(1px); }
   #refresh-btn.loading { color: var(--ink-soft); cursor: default; }
 
+  #add-lead-btn {
+    font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; color: #fff;
+    background: var(--amber); border: 1px solid var(--amber); border-radius: 6px;
+    padding: 7px 12px; cursor: pointer; margin-right: 8px; transition: opacity 0.15s ease;
+  }
+  #add-lead-btn:hover { opacity: 0.88; }
+
+  .modal-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(36, 33, 29, 0.45);
+    align-items: center; justify-content: center; z-index: 100; padding: 20px;
+  }
+  .modal-overlay.show { display: flex; }
+  .modal {
+    background: var(--bg-card); border-radius: 12px; padding: 26px 28px; width: 100%; max-width: 380px;
+    max-height: 90vh; overflow-y: auto;
+  }
+  .modal h3 { margin: 0 0 18px; font-size: 17px; font-weight: 700; }
+  .modal label { display: block; font-size: 11.5px; color: var(--ink-soft); margin: 12px 0 5px; font-family: 'JetBrains Mono', monospace; text-transform: uppercase; letter-spacing: 0.06em; }
+  .modal input[type="text"], .modal select {
+    width: 100%; font-family: 'Space Grotesk', sans-serif; font-size: 13.5px; color: var(--ink);
+    border: 1px solid var(--line); border-radius: 7px; padding: 9px 11px; background: var(--bg);
+  }
+  .modal input:focus, .modal select:focus { outline: none; border-color: var(--amber); }
+  .modal-erro { color: var(--warn); font-size: 12.5px; margin-top: 10px; min-height: 16px; }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+  .btn-secundario, .btn-primario {
+    font-family: 'Space Grotesk', sans-serif; font-size: 13px; font-weight: 600; border-radius: 7px;
+    padding: 9px 16px; cursor: pointer; border: 1px solid var(--line);
+  }
+  .btn-secundario { background: var(--bg); color: var(--ink-soft); }
+  .btn-primario { background: var(--amber); color: #fff; border-color: var(--amber); }
+  .btn-primario:disabled { opacity: 0.6; cursor: default; }
+
   .metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 36px; }
 
   .metric { background: var(--bg-card); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; }
@@ -159,10 +192,35 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       <h1>Quem tá com qual lead</h1>
     </div>
     <div class="top-right">
+      <button id="add-lead-btn" onclick="abrirModalLead()">+ Adicionar lead</button>
       <button id="refresh-btn" onclick="carregarDados()">↻ Atualizar</button>
       <div id="last-sync" style="margin-top:6px;">Ainda não atualizado</div>
     </div>
   </header>
+
+  <div id="modal-overlay" class="modal-overlay" onclick="if(event.target===this) fecharModalLead()">
+    <div class="modal">
+      <h3>Adicionar lead manualmente</h3>
+      <label>Nome</label>
+      <input type="text" id="novo-nome" placeholder="Nome do cliente">
+      <label>WhatsApp</label>
+      <input type="text" id="novo-whatsapp" placeholder="(62) 99999-9999">
+      <label>Origem</label>
+      <select id="novo-origem">
+        <option value="">— escolher —</option>
+        \${ORIGENS.map(o => \`<option value="\${o}">\${o}</option>\`).join('')}
+      </select>
+      <label>Corretor</label>
+      <select id="novo-corretor"></select>
+      <label>Imóvel de interesse (opcional)</label>
+      <input type="text" id="novo-imovel" placeholder="Ex: Apto 3 quartos Bairro X">
+      <div id="modal-erro" class="modal-erro"></div>
+      <div class="modal-actions">
+        <button class="btn-secundario" onclick="fecharModalLead()">Cancelar</button>
+        <button class="btn-primario" onclick="salvarNovoLead()">Salvar lead</button>
+      </div>
+    </div>
+  </div>
 
   <div class="metrics">
     <div class="metric"><div class="label">Leads distribuídos (7 dias)</div><div class="value" id="m-distribuidos">—</div><div class="sub" id="m-distribuidos-sub">&nbsp;</div></div>
@@ -190,6 +248,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
         <select id="filtro-origem" onchange="renderTabela()">
           <option value="">Todas as origens</option>
           <option value="OLX/Canal Pro">OLX/Canal Pro</option>
+          <option value="Patrocinado">Patrocinado</option>
           <option value="TikTok">TikTok</option>
           <option value="Instagram">Instagram</option>
           <option value="Comentário">Comentário</option>
@@ -203,6 +262,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
           <option value="Em atendimento">Em atendimento</option>
           <option value="Visita agendada">Visita agendada</option>
           <option value="Proposta">Proposta</option>
+          <option value="Sem retorno">Sem retorno</option>
           <option value="Venda">Venda</option>
           <option value="Perdido">Perdido</option>
         </select>
@@ -219,8 +279,9 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
 <script>
   const CORES_CORRETOR = ['#B8863B', '#4A7A5E', '#6B5CA5', '#B14B3B', '#3B6EB8'];
-  const ORIGENS = ['OLX/Canal Pro', 'TikTok', 'Instagram', 'Comentário', 'Outro'];
-  const STATUS_OPCOES = ['Novo', 'Em atendimento', 'Visita agendada', 'Proposta', 'Venda', 'Perdido'];
+  const ORIGENS = ['OLX/Canal Pro', 'Patrocinado', 'TikTok', 'Instagram', 'Comentário', 'Outro'];
+  const STATUS_OPCOES = ['Novo', 'Em atendimento', 'Visita agendada', 'Proposta', 'Sem retorno', 'Venda', 'Perdido'];
+  let CORRETORES_DISPONIVEIS = [];
   let ULTIMO_ESTADO = null;
 
   function corDoCorretor(nome) {
@@ -249,11 +310,6 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     const m = Math.floor((segundos % 3600) / 60);
     if (h === 0) return \`\${m}min\`;
     return \`\${h}h\${m.toString().padStart(2, '0')}\`;
-  }
-
-  function formatarDataInput(dataIso) {
-    if (!dataIso) return '';
-    return new Date(dataIso).toISOString().slice(0, 10);
   }
 
   async function carregarDados() {
@@ -293,7 +349,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
         const lead = ULTIMO_ESTADO.leads.find(l => l.id === id);
         if (lead) lead[campo] = valor;
       }
-      if (campo === 'origem' && elemento.classList) {
+      if ((campo === 'origem' || campo === 'corretor') && elemento.classList) {
         elemento.classList.toggle('pendente', !valor);
       }
     } catch (err) {
@@ -303,7 +359,62 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     }
   }
 
+  function abrirModalLead() {
+    document.getElementById('modal-erro').textContent = '';
+    document.getElementById('novo-nome').value = '';
+    document.getElementById('novo-whatsapp').value = '';
+    document.getElementById('novo-origem').value = '';
+    document.getElementById('novo-imovel').value = '';
+
+    const selectCorretor = document.getElementById('novo-corretor');
+    selectCorretor.innerHTML = CORRETORES_DISPONIVEIS.map(c => \`<option value="\${c}">\${c}</option>\`).join('');
+
+    document.getElementById('modal-overlay').classList.add('show');
+  }
+
+  function fecharModalLead() {
+    document.getElementById('modal-overlay').classList.remove('show');
+  }
+
+  async function salvarNovoLead() {
+    const nome = document.getElementById('novo-nome').value.trim();
+    const whatsapp = document.getElementById('novo-whatsapp').value.trim();
+    const origem = document.getElementById('novo-origem').value;
+    const corretor = document.getElementById('novo-corretor').value;
+    const imovelDesc = document.getElementById('novo-imovel').value.trim();
+    const erroEl = document.getElementById('modal-erro');
+    const btnSalvar = document.querySelector('.btn-primario');
+
+    if (!nome || !whatsapp || !corretor) {
+      erroEl.textContent = 'Preencha nome, WhatsApp e corretor.';
+      return;
+    }
+
+    btnSalvar.disabled = true;
+    btnSalvar.textContent = 'Salvando…';
+    erroEl.textContent = '';
+
+    try {
+      const res = await fetch('/api/leads', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nome, whatsapp, origem, corretor, imovelDesc }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.erro || 'Não consegui salvar');
+
+      fecharModalLead();
+      await carregarDados();
+    } catch (err) {
+      erroEl.textContent = err.message;
+    } finally {
+      btnSalvar.disabled = false;
+      btnSalvar.textContent = 'Salvar lead';
+    }
+  }
+
   function renderTudo(data) {
+    CORRETORES_DISPONIVEIS = data.corretoresDisponiveis || [];
     document.getElementById('m-distribuidos').textContent = data.stats.totalDistribuidos;
     document.getElementById('m-distribuidos-sub').textContent = '+' + data.stats.distribuidos24h + ' nas últimas 24h';
 
@@ -413,7 +524,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
           <td>—</td>
           <td><span class="tag tag-warn">Sem corretor</span></td>
           <td><span class="tag tag-warn">● Verificar</span></td>
-          <td>—</td><td>—</td><td>—</td><td>—</td>
+          <td>—</td><td>—</td><td>—</td>
           <td class="time-ago">\${tempoRelativo(item.criado_em)}</td>
         </tr>\`;
       }
@@ -428,11 +539,15 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
         \${ORIGENS.map(o => \`<option value="\${o}" \${item.origem === o ? 'selected' : ''}>\${o}</option>\`).join('')}
       </select><span class="saving-dot"></span>\`;
 
+      const corretorSelect = \`<select class="edit-select \${!item.corretor ? 'pendente' : ''}" onchange="salvarCampo(\${item.id}, 'corretor', this.value, this)">
+        <option value="" \${!item.corretor ? 'selected' : ''}>— escolher —</option>
+        \${CORRETORES_DISPONIVEIS.map(c => \`<option value="\${c}" \${item.corretor === c ? 'selected' : ''}>\${c}</option>\`).join('')}
+        \${item.corretor && !CORRETORES_DISPONIVEIS.includes(item.corretor) ? \`<option value="\${item.corretor}" selected>\${item.corretor}</option>\` : ''}
+      </select><span class="saving-dot"></span>\`;
+
       const statusSelect = \`<select class="edit-select" onchange="salvarCampo(\${item.id}, 'status', this.value, this)">
         \${STATUS_OPCOES.map(s => \`<option value="\${s}" \${(item.status || 'Novo') === s ? 'selected' : ''}>\${s}</option>\`).join('')}
       </select><span class="saving-dot"></span>\`;
-
-      const ultimoContatoInput = \`<input type="date" class="edit-date" value="\${formatarDataInput(item.ultimo_contato)}" onchange="salvarCampo(\${item.id}, 'ultimo_contato', this.value, this)"><span class="saving-dot"></span>\`;
 
       const visitaCheck = \`<div class="edit-check"><input type="checkbox" \${item.visita ? 'checked' : ''} onchange="salvarCampo(\${item.id}, 'visita', this.checked, this)"></div>\`;
       const propostaCheck = \`<div class="edit-check"><input type="checkbox" \${item.proposta ? 'checked' : ''} onchange="salvarCampo(\${item.id}, 'proposta', this.checked, this)"></div>\`;
@@ -442,9 +557,8 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
         <td><div class="lead-name">\${item.nome || 'Sem nome'}</div><div class="lead-meta mono">+\${item.whatsapp}</div></td>
         <td class="mono">\${imovel}</td>
         <td>\${origemSelect}</td>
-        <td><span class="corretor-badge"><span class="dot" style="background:\${corDoCorretor(item.corretor)}"></span>\${item.corretor || '—'}</span></td>
+        <td>\${corretorSelect}</td>
         <td>\${statusSelect}</td>
-        <td>\${ultimoContatoInput}</td>
         <td>\${visitaCheck}</td>
         <td>\${propostaCheck}</td>
         <td>\${vendaCheck}</td>
@@ -453,7 +567,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     }).join('');
 
     container.innerHTML = \`<table>
-      <thead><tr><th>Lead</th><th>Imóvel</th><th>Origem</th><th>Corretor</th><th>Status</th><th>Último contato</th><th>Visita</th><th>Proposta</th><th>Venda</th><th>Chegou</th></tr></thead>
+      <thead><tr><th>Lead</th><th>Imóvel</th><th>Origem</th><th>Corretor</th><th>Status</th><th>Visita</th><th>Proposta</th><th>Venda</th><th>Chegou</th></tr></thead>
       <tbody>\${linhasHtml}</tbody>
     </table>\`;
   }
