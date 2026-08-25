@@ -31,7 +31,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     -webkit-font-smoothing: antialiased;
   }
 
-  .wrap { max-width: 1180px; margin: 0 auto; padding: 40px 28px 80px; }
+  .wrap { max-width: 1320px; margin: 0 auto; padding: 40px 28px 80px; }
 
   header.top {
     display: flex; align-items: flex-end; justify-content: space-between;
@@ -73,6 +73,13 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   .corretor-chip .dot { width: 8px; height: 8px; border-radius: 50%; }
   .corretor-chip .count { font-family: 'JetBrains Mono', monospace; font-weight: 600; color: var(--ink-soft); }
 
+  .origem-strip { display: flex; gap: 10px; margin-bottom: 28px; flex-wrap: wrap; }
+  .origem-chip {
+    background: var(--bg-card); border: 1px solid var(--line); border-radius: 8px;
+    padding: 10px 16px; display: flex; align-items: center; gap: 10px; font-size: 13px;
+  }
+  .origem-chip .count { font-family: 'JetBrains Mono', monospace; font-weight: 600; color: var(--amber); }
+
   .panel { background: var(--bg-card); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
   .panel-head {
     display: flex; justify-content: space-between; align-items: center;
@@ -80,19 +87,20 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   }
   .panel-head h2 { font-size: 15px; font-weight: 600; margin: 0; }
 
-  .filters { display: flex; gap: 8px; }
-  select {
+  .filters { display: flex; gap: 8px; flex-wrap: wrap; }
+  select, input[type="date"] {
     font-family: 'Space Grotesk', sans-serif; font-size: 12px; border: 1px solid var(--line);
     background: var(--bg); color: var(--ink); padding: 7px 10px; border-radius: 6px;
   }
 
-  table { width: 100%; border-collapse: collapse; }
+  .table-scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; min-width: 1040px; }
   thead th {
     text-align: left; font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.08em;
-    text-transform: uppercase; color: var(--ink-soft); padding: 10px 22px; background: #FCFBF9;
-    border-bottom: 1px solid var(--line);
+    text-transform: uppercase; color: var(--ink-soft); padding: 10px 16px; background: #FCFBF9;
+    border-bottom: 1px solid var(--line); white-space: nowrap;
   }
-  tbody td { padding: 14px 22px; border-bottom: 1px solid var(--line); font-size: 13.5px; vertical-align: middle; }
+  tbody td { padding: 10px 16px; border-bottom: 1px solid var(--line); font-size: 13.5px; vertical-align: middle; }
   tbody tr:last-child td { border-bottom: none; }
   tbody tr:hover { background: #FCFBF9; }
 
@@ -117,11 +125,28 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
   footer.note { margin-top: 20px; font-size: 11.5px; color: var(--ink-soft); font-family: 'JetBrains Mono', monospace; }
 
+  /* ─── Campos editáveis inline ─── */
+  .edit-select, .edit-date {
+    font-family: 'Space Grotesk', sans-serif; font-size: 12.5px; color: var(--ink);
+    background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+    padding: 5px 8px; min-width: 110px; cursor: pointer;
+  }
+  .edit-select.pendente { border-color: var(--amber); background: var(--amber-soft); color: var(--amber); font-weight: 500; }
+  .edit-select:focus, .edit-date:focus { outline: none; border-color: var(--amber); }
+
+  .edit-check { display: flex; align-items: center; justify-content: center; }
+  .edit-check input[type="checkbox"] {
+    width: 17px; height: 17px; cursor: pointer; accent-color: var(--ok);
+  }
+
+  .saving-dot {
+    display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--amber); margin-left: 6px; opacity: 0; transition: opacity 0.15s ease;
+  }
+  .saving-dot.show { opacity: 1; }
+
   @media (max-width: 720px) {
     .metrics { grid-template-columns: repeat(2, 1fr); }
-    thead { display: none; }
-    tbody td { display: block; border: none; padding: 4px 22px; }
-    tbody tr { border-bottom: 1px solid var(--line); padding: 12px 0; display: block; }
   }
 </style>
 </head>
@@ -147,6 +172,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   </div>
 
   <div class="corretores" id="corretores-strip"></div>
+  <div class="origem-strip" id="origem-strip"></div>
 
   <div class="panel" style="margin-bottom:28px;">
     <div class="panel-head">
@@ -161,25 +187,40 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       <div class="filters">
         <select id="filtro-corretor" onchange="renderTabela()"><option value="">Todos os corretores</option></select>
         <select id="filtro-campanha" onchange="renderTabela()"><option value="">Todas as campanhas</option></select>
+        <select id="filtro-origem" onchange="renderTabela()">
+          <option value="">Todas as origens</option>
+          <option value="OLX/Canal Pro">OLX/Canal Pro</option>
+          <option value="TikTok">TikTok</option>
+          <option value="Instagram">Instagram</option>
+          <option value="Comentário">Comentário</option>
+          <option value="Outro">Outro</option>
+          <option value="__pendente">Origem pendente</option>
+        </select>
         <select id="filtro-status" onchange="renderTabela()">
           <option value="">Todos os status</option>
-          <option value="contatou">Contatou</option>
-          <option value="aguardando">Aguardando</option>
           <option value="sem_corretor">Sem corretor</option>
+          <option value="Novo">Novo</option>
+          <option value="Em atendimento">Em atendimento</option>
+          <option value="Visita agendada">Visita agendada</option>
+          <option value="Proposta">Proposta</option>
+          <option value="Venda">Venda</option>
+          <option value="Perdido">Perdido</option>
         </select>
       </div>
     </div>
-    <div id="tabela-container">
+    <div class="table-scroll" id="tabela-container">
       <div class="empty-state">Clique em "Atualizar" pra carregar os leads.</div>
     </div>
   </div>
 
-  <footer class="note" id="footer-note">diniz-leads-olx · painel manual — atualiza somente ao clicar</footer>
+  <footer class="note" id="footer-note">diniz-leads-olx · painel manual — atualiza somente ao clicar · edite Origem, Status, Visita, Proposta e Venda direto na tabela</footer>
 
 </div>
 
 <script>
   const CORES_CORRETOR = ['#B8863B', '#4A7A5E', '#6B5CA5', '#B14B3B', '#3B6EB8'];
+  const ORIGENS = ['OLX/Canal Pro', 'TikTok', 'Instagram', 'Comentário', 'Outro'];
+  const STATUS_OPCOES = ['Novo', 'Em atendimento', 'Visita agendada', 'Proposta', 'Venda', 'Perdido'];
   let ULTIMO_ESTADO = null;
 
   function corDoCorretor(nome) {
@@ -210,6 +251,11 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     return \`\${h}h\${m.toString().padStart(2, '0')}\`;
   }
 
+  function formatarDataInput(dataIso) {
+    if (!dataIso) return '';
+    return new Date(dataIso).toISOString().slice(0, 10);
+  }
+
   async function carregarDados() {
     const btn = document.getElementById('refresh-btn');
     btn.classList.add('loading');
@@ -227,6 +273,33 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     } finally {
       btn.classList.remove('loading');
       btn.textContent = '↻ Atualizar';
+    }
+  }
+
+  // Salva um campo editável direto na tabela, sem recarregar tudo
+  async function salvarCampo(id, campo, valor, elemento) {
+    const dot = elemento.parentElement.querySelector('.saving-dot');
+    if (dot) dot.classList.add('show');
+    try {
+      const res = await fetch('/api/leads/' + id, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ campo, valor }),
+      });
+      if (!res.ok) throw new Error('Falha ao salvar');
+
+      // Atualiza o estado local pra manter os filtros/contadores coerentes sem novo fetch
+      if (ULTIMO_ESTADO) {
+        const lead = ULTIMO_ESTADO.leads.find(l => l.id === id);
+        if (lead) lead[campo] = valor;
+      }
+      if (campo === 'origem' && elemento.classList) {
+        elemento.classList.toggle('pendente', !valor);
+      }
+    } catch (err) {
+      alert('Não consegui salvar essa alteração. Tenta de novo.');
+    } finally {
+      if (dot) setTimeout(() => dot.classList.remove('show'), 400);
     }
   }
 
@@ -256,6 +329,12 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     filtroCorretor.innerHTML = '<option value="">Todos os corretores</option>' +
       Object.keys(corretoresMap).map(n => \`<option value="\${n}">\${n}</option>\`).join('');
     filtroCorretor.value = atual;
+
+    const origemStrip = document.getElementById('origem-strip');
+    const origens = data.porOrigem || [];
+    origemStrip.innerHTML = origens.map(o =>
+      \`<div class="origem-chip">\${o.origem} <span class="count">\${o.total}</span></div>\`
+    ).join('') || '<div class="mono">Nenhuma origem registrada ainda</div>';
 
     const campanhasContainer = document.getElementById('campanhas-container');
     const campanhas = data.porCampanha || [];
@@ -291,6 +370,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
     const filtroCorretor = document.getElementById('filtro-corretor').value;
     const filtroCampanha = document.getElementById('filtro-campanha').value;
+    const filtroOrigem = document.getElementById('filtro-origem').value;
     const filtroStatus = document.getElementById('filtro-status').value;
 
     let linhas = ULTIMO_ESTADO.leads.map(l => ({ tipo: 'lead', ...l }));
@@ -300,10 +380,8 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
     if (filtroStatus === 'sem_corretor') {
       todos = naoIdent;
-    } else if (filtroStatus === 'contatou') {
-      todos = linhas.filter(l => l.contatou);
-    } else if (filtroStatus === 'aguardando') {
-      todos = linhas.filter(l => !l.contatou);
+    } else if (filtroStatus) {
+      todos = linhas.filter(l => (l.status || 'Novo') === filtroStatus);
     }
 
     if (filtroCorretor) {
@@ -312,6 +390,12 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
     if (filtroCampanha) {
       todos = todos.filter(l => l.tipo === 'lead' && l.imovel_codigo === filtroCampanha);
+    }
+
+    if (filtroOrigem === '__pendente') {
+      todos = todos.filter(l => l.tipo === 'lead' && !l.origem);
+    } else if (filtroOrigem) {
+      todos = todos.filter(l => l.tipo === 'lead' && l.origem === filtroOrigem);
     }
 
     todos.sort((a, b) => new Date(b.distribuido_em || b.criado_em) - new Date(a.distribuido_em || a.criado_em));
@@ -326,26 +410,50 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
         return \`<tr>
           <td><div class="lead-name">Número não identificado</div><div class="lead-meta mono">+\${item.whatsapp}</div></td>
           <td class="mono">—</td>
+          <td>—</td>
           <td><span class="tag tag-warn">Sem corretor</span></td>
           <td><span class="tag tag-warn">● Verificar</span></td>
+          <td>—</td><td>—</td><td>—</td><td>—</td>
           <td class="time-ago">\${tempoRelativo(item.criado_em)}</td>
         </tr>\`;
       }
+
       const imovel = [item.imovel_codigo, item.imovel_desc].filter(Boolean).join(' · ') || '—';
       const statusTag = item.contatou
         ? '<span class="tag tag-ok">● Contatou</span>'
         : '<span class="tag tag-pending">Aguardando</span>';
+
+      const origemSelect = \`<select class="edit-select \${!item.origem ? 'pendente' : ''}" onchange="salvarCampo(\${item.id}, 'origem', this.value, this)">
+        <option value="" \${!item.origem ? 'selected' : ''}>— escolher —</option>
+        \${ORIGENS.map(o => \`<option value="\${o}" \${item.origem === o ? 'selected' : ''}>\${o}</option>\`).join('')}
+      </select><span class="saving-dot"></span>\`;
+
+      const statusSelect = \`<select class="edit-select" onchange="salvarCampo(\${item.id}, 'status', this.value, this)">
+        \${STATUS_OPCOES.map(s => \`<option value="\${s}" \${(item.status || 'Novo') === s ? 'selected' : ''}>\${s}</option>\`).join('')}
+      </select><span class="saving-dot"></span>\`;
+
+      const ultimoContatoInput = \`<input type="date" class="edit-date" value="\${formatarDataInput(item.ultimo_contato)}" onchange="salvarCampo(\${item.id}, 'ultimo_contato', this.value, this)"><span class="saving-dot"></span>\`;
+
+      const visitaCheck = \`<div class="edit-check"><input type="checkbox" \${item.visita ? 'checked' : ''} onchange="salvarCampo(\${item.id}, 'visita', this.checked, this)"></div>\`;
+      const propostaCheck = \`<div class="edit-check"><input type="checkbox" \${item.proposta ? 'checked' : ''} onchange="salvarCampo(\${item.id}, 'proposta', this.checked, this)"></div>\`;
+      const vendaCheck = \`<div class="edit-check"><input type="checkbox" \${item.venda ? 'checked' : ''} onchange="salvarCampo(\${item.id}, 'venda', this.checked, this)"></div>\`;
+
       return \`<tr>
         <td><div class="lead-name">\${item.nome || 'Sem nome'}</div><div class="lead-meta mono">+\${item.whatsapp}</div></td>
         <td class="mono">\${imovel}</td>
+        <td>\${origemSelect}</td>
         <td><span class="corretor-badge"><span class="dot" style="background:\${corDoCorretor(item.corretor)}"></span>\${item.corretor || '—'}</span></td>
-        <td>\${statusTag}</td>
+        <td>\${statusSelect}</td>
+        <td>\${ultimoContatoInput}</td>
+        <td>\${visitaCheck}</td>
+        <td>\${propostaCheck}</td>
+        <td>\${vendaCheck}</td>
         <td class="time-ago">\${tempoRelativo(item.distribuido_em)}</td>
       </tr>\`;
     }).join('');
 
     container.innerHTML = \`<table>
-      <thead><tr><th>Lead</th><th>Imóvel</th><th>Corretor</th><th>Status</th><th>Chegou</th></tr></thead>
+      <thead><tr><th>Lead</th><th>Imóvel</th><th>Origem</th><th>Corretor</th><th>Status</th><th>Último contato</th><th>Visita</th><th>Proposta</th><th>Venda</th><th>Chegou</th></tr></thead>
       <tbody>\${linhasHtml}</tbody>
     </table>\`;
   }
