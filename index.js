@@ -718,6 +718,34 @@ app.get('/api/leads', basicAuth, async (req, res) => {
       ORDER BY total DESC
     `);
 
+    // Sem limite de tempo — usado nas abas de "Atividade por corretor", pra bater
+    // com o total real (a lista principal de leads é limitada a 100 linhas, essa não)
+    const porCorretorDetalhadoResult = await pool.query(`
+      SELECT
+        corretor,
+        count(*) AS total,
+        count(*) FILTER (WHERE contatou) AS contataram,
+        count(*) FILTER (WHERE aprovado) AS aprovados,
+        count(*) FILTER (WHERE visita) AS visitas,
+        count(*) FILTER (WHERE proposta) AS propostas,
+        count(*) FILTER (WHERE venda) AS vendas
+      FROM leads
+      WHERE corretor IS NOT NULL
+      GROUP BY corretor
+      ORDER BY total DESC
+    `);
+
+    const totalGeralResult = await pool.query(`
+      SELECT
+        count(*) AS total,
+        count(*) FILTER (WHERE contatou) AS contataram,
+        count(*) FILTER (WHERE aprovado) AS aprovados,
+        count(*) FILTER (WHERE visita) AS visitas,
+        count(*) FILTER (WHERE proposta) AS propostas,
+        count(*) FILTER (WHERE venda) AS vendas
+      FROM leads
+    `);
+
     const porCampanhaResult = await pool.query(`
       SELECT
         imovel_codigo,
@@ -758,6 +786,23 @@ app.get('/api/leads', basicAuth, async (req, res) => {
           : null,
       },
       porCorretor: porCorretorResult.rows,
+      porCorretorDetalhado: porCorretorDetalhadoResult.rows.map(r => ({
+        corretor: r.corretor,
+        total: parseInt(r.total, 10) || 0,
+        contataram: parseInt(r.contataram, 10) || 0,
+        aprovados: parseInt(r.aprovados, 10) || 0,
+        visitas: parseInt(r.visitas, 10) || 0,
+        propostas: parseInt(r.propostas, 10) || 0,
+        vendas: parseInt(r.vendas, 10) || 0,
+      })),
+      totalGeral: {
+        total: parseInt(totalGeralResult.rows[0].total, 10) || 0,
+        contataram: parseInt(totalGeralResult.rows[0].contataram, 10) || 0,
+        aprovados: parseInt(totalGeralResult.rows[0].aprovados, 10) || 0,
+        visitas: parseInt(totalGeralResult.rows[0].visitas, 10) || 0,
+        propostas: parseInt(totalGeralResult.rows[0].propostas, 10) || 0,
+        vendas: parseInt(totalGeralResult.rows[0].vendas, 10) || 0,
+      },
       porCampanha: campanhasAgrupadas,
       porOrigem: porOrigemResult.rows,
       corretoresDisponiveis: [...CORRETORES.map(c => c.nome), ...CORRETORES_EXTRA_DASHBOARD],
