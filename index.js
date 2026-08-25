@@ -200,6 +200,47 @@ async function sincronizarPlanilhaGoogle() {
   return { ok: true, ...resultado };
 }
 
+// Reconhece o código do imóvel (ex: VD01, AP02) dentro do código já salvo ou da descrição,
+// e agrupa por esse código — assim "VD01" e "PATRICIA VD01 - GRAN VENEZA" viram a mesma campanha.
+function extrairCodigoImovel(imovelCodigo, imovelDesc) {
+  const texto = `${imovelCodigo || ''} ${imovelDesc || ''}`.toUpperCase();
+  const match = texto.match(/[A-Z]{2}\d{2,}/);
+  if (match) return match[0];
+  return normalizarTexto(imovelDesc || imovelCodigo || 'sem-identificacao');
+}
+
+function agruparCampanhas(linhas) {
+  const grupos = new Map();
+
+  for (const linha of linhas) {
+    const chave = extrairCodigoImovel(linha.imovel_codigo, linha.imovel_desc);
+    const total = parseInt(linha.total, 10) || 0;
+    const totalContataram = parseInt(linha.total_contataram, 10) || 0;
+
+    if (!grupos.has(chave)) {
+      grupos.set(chave, {
+        imovel_codigo: linha.imovel_codigo,
+        imovel_desc: linha.imovel_desc,
+        total: 0,
+        total_contataram: 0,
+      });
+    }
+
+    const grupo = grupos.get(chave);
+    grupo.total += total;
+    grupo.total_contataram += totalContataram;
+    // Mantém a descrição mais completa (mais longa) como a exibida pro grupo
+    const descAtual = (grupo.imovel_desc || '').length;
+    const descNova = (linha.imovel_desc || '').length;
+    if (descNova > descAtual) {
+      grupo.imovel_codigo = linha.imovel_codigo || grupo.imovel_codigo;
+      grupo.imovel_desc = linha.imovel_desc;
+    }
+  }
+
+  return Array.from(grupos.values()).sort((a, b) => b.total - a.total);
+}
+
 // ─── ÍNDICE PERSISTENTE ──────────────────────────────────────
 const INDEX_FILE = '/tmp/index.json';
 
@@ -683,6 +724,7 @@ app.get('/api/leads', basicAuth, async (req, res) => {
       GROUP BY imovel_codigo, imovel_desc
       ORDER BY total DESC
     `);
+    const campanhasAgrupadas = agruparCampanhas(porCampanhaResult.rows);
 
     const porOrigemResult = await pool.query(`
       SELECT COALESCE(origem, 'Não informado') AS origem, count(*) AS total
@@ -708,7 +750,7 @@ app.get('/api/leads', basicAuth, async (req, res) => {
           : null,
       },
       porCorretor: porCorretorResult.rows,
-      porCampanha: porCampanhaResult.rows,
+      porCampanha: campanhasAgrupadas,
       porOrigem: porOrigemResult.rows,
       corretoresDisponiveis: [...CORRETORES.map(c => c.nome), ...CORRETORES_EXTRA_DASHBOARD],
     });
