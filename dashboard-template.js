@@ -413,7 +413,8 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     }
   }
 
-  // Salva o corretor de um número "não identificado" (rota separada dos leads normais)
+  // Salva o corretor de um número "não identificado" (rota separada dos leads normais).
+  // Quando um corretor é escolhido, o contato vira um lead completo — por isso recarrega tudo.
   async function salvarCorretorNaoIdentificado(id, corretor, elemento) {
     const dot = elemento.parentElement.querySelector('.saving-dot');
     if (dot) dot.classList.add('show');
@@ -423,13 +424,16 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ corretor }),
       });
-      if (!res.ok) throw new Error('Falha ao salvar');
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error('Falha ao salvar');
 
-      if (ULTIMO_ESTADO) {
+      if (data.promovido) {
+        await carregarDados();
+      } else if (ULTIMO_ESTADO) {
         const item = ULTIMO_ESTADO.naoIdentificados.find(n => n.id === id);
         if (item) item.corretor = corretor;
+        elemento.classList.toggle('pendente', !corretor);
       }
-      elemento.classList.toggle('pendente', !corretor);
     } catch (err) {
       alert('Não consegui salvar essa alteração. Tenta de novo.');
     } finally {
