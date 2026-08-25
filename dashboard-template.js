@@ -127,7 +127,10 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   .origem-chip {
     background: var(--bg-card); border: 1px solid var(--line); border-radius: 8px;
     padding: 10px 16px; display: flex; align-items: center; gap: 10px; font-size: 13px;
+    cursor: pointer; transition: border-color 0.15s ease, background 0.15s ease;
   }
+  .origem-chip:hover { border-color: var(--amber); }
+  .origem-chip.active { border-color: var(--amber); background: var(--amber-soft); font-weight: 600; }
   .origem-chip .count { font-family: 'JetBrains Mono', monospace; font-weight: 600; color: var(--amber); }
 
   .corretor-tabs { display: flex; gap: 6px; flex-wrap: wrap; border-bottom: 1px solid var(--line); padding-bottom: 16px; }
@@ -579,25 +582,35 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     const container = document.getElementById('corretor-tab-content');
     if (!ULTIMO_ESTADO) return;
 
-    const leads = ABA_CORRETOR_ATIVA === 'Geral'
-      ? ULTIMO_ESTADO.leads
-      : ULTIMO_ESTADO.leads.filter(l => l.corretor === ABA_CORRETOR_ATIVA);
-
-    const total = leads.length;
-    const aprovados = leads.filter(l => l.aprovado).length;
-    const visitas = leads.filter(l => l.visita).length;
-    const propostas = leads.filter(l => l.proposta).length;
-    const vendas = leads.filter(l => l.venda).length;
-    const contataram = leads.filter(l => l.contatou).length;
+    let dados;
+    if (ABA_CORRETOR_ATIVA === 'Geral') {
+      dados = ULTIMO_ESTADO.totalGeral || { total: 0, contataram: 0, aprovados: 0, visitas: 0, propostas: 0, vendas: 0 };
+    } else {
+      const detalhado = (ULTIMO_ESTADO.porCorretorDetalhado || []).find(c => c.corretor === ABA_CORRETOR_ATIVA);
+      dados = detalhado || { total: 0, contataram: 0, aprovados: 0, visitas: 0, propostas: 0, vendas: 0 };
+    }
 
     container.innerHTML = \`<div class="atividade-balloons">
-      <div class="balloon"><div class="balloon-label">Leads</div><div class="balloon-value">\${total}</div></div>
-      <div class="balloon"><div class="balloon-label">Contataram</div><div class="balloon-value">\${contataram}</div></div>
-      <div class="balloon balloon-accent"><div class="balloon-label">Aprovados</div><div class="balloon-value">\${aprovados}</div></div>
-      <div class="balloon"><div class="balloon-label">Visitas</div><div class="balloon-value">\${visitas}</div></div>
-      <div class="balloon"><div class="balloon-label">Propostas</div><div class="balloon-value">\${propostas}</div></div>
-      <div class="balloon balloon-ok"><div class="balloon-label">Vendas</div><div class="balloon-value">\${vendas}</div></div>
+      <div class="balloon"><div class="balloon-label">Leads</div><div class="balloon-value">\${dados.total}</div></div>
+      <div class="balloon"><div class="balloon-label">Contataram</div><div class="balloon-value">\${dados.contataram}</div></div>
+      <div class="balloon balloon-accent"><div class="balloon-label">Aprovados</div><div class="balloon-value">\${dados.aprovados}</div></div>
+      <div class="balloon"><div class="balloon-label">Visitas</div><div class="balloon-value">\${dados.visitas}</div></div>
+      <div class="balloon"><div class="balloon-label">Propostas</div><div class="balloon-value">\${dados.propostas}</div></div>
+      <div class="balloon balloon-ok"><div class="balloon-label">Vendas</div><div class="balloon-value">\${dados.vendas}</div></div>
     </div>\`;
+  }
+
+  // "Não informado" no balão corresponde à opção especial __pendente do filtro de origem
+  function origemParaFiltro(origemChip) {
+    return origemChip === 'Não informado' ? '__pendente' : origemChip;
+  }
+
+  function filtrarPorOrigem(valorFiltro) {
+    const select = document.getElementById('filtro-origem');
+    // Clicar de novo no mesmo balão já ativo remove o filtro (alterna)
+    select.value = select.value === valorFiltro ? '' : valorFiltro;
+    renderTudo(ULTIMO_ESTADO);
+    document.getElementById('tabela-container').scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
   function renderTudo(data) {
@@ -625,9 +638,12 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
     const origemStrip = document.getElementById('origem-strip');
     const origens = data.porOrigem || [];
-    origemStrip.innerHTML = origens.map(o =>
-      \`<div class="origem-chip">\${o.origem} <span class="count">\${o.total}</span></div>\`
-    ).join('') || '<div class="mono">Nenhuma origem registrada ainda</div>';
+    const filtroOrigemAtual = document.getElementById('filtro-origem').value;
+    origemStrip.innerHTML = origens.map(o => {
+      const valorFiltro = origemParaFiltro(o.origem);
+      const ativo = filtroOrigemAtual === valorFiltro;
+      return \`<div class="origem-chip \${ativo ? 'active' : ''}" onclick="filtrarPorOrigem('\${valorFiltro.replace(/'/g, "\\\\'")}')">\${o.origem} <span class="count">\${o.total}</span></div>\`;
+    }).join('') || '<div class="mono">Nenhuma origem registrada ainda</div>';
 
     const campanhasContainer = document.getElementById('campanhas-container');
     const campanhas = data.porCampanha || [];
