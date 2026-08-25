@@ -32,7 +32,7 @@ const pool = new Pool({
 const THROTTLE_AVISO_MS = 6 * 60 * 60 * 1000; // 6 horas
 
 // Campos do funil que podem ser editados manualmente pelo dashboard
-const CAMPOS_EDITAVEIS = ['origem', 'interesse', 'status', 'ultimo_contato', 'visita', 'proposta', 'venda'];
+const CAMPOS_EDITAVEIS = ['origem', 'corretor', 'interesse', 'status', 'visita', 'proposta', 'venda'];
 
 async function initDb() {
   if (!process.env.DATABASE_URL) {
@@ -175,6 +175,10 @@ function parseDistribuicao(texto) {
   const nomeMatch = texto.match(/nome\s*[:\-]?\s*(.+)/i);
   const emailMatch = texto.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
 
+  // Origem: reconhece se a própria mensagem de distribuição já disser de onde veio o lead
+  // (ex: "origem: TikTok", "canal: Instagram", "veio de: Patrocinado")
+  const origemMatch = texto.match(/(?:origem|canal|veio de)\s*[:\-]?\s*(.+)/i);
+
   const primeiraLinha = texto.split('\n')[0].trim();
   let imovelDesc = primeiraLinha;
   const prefixMatch = primeiraLinha.match(/interessado\s+(.+)/i);
@@ -195,13 +199,16 @@ function parseDistribuicao(texto) {
     email: emailMatch ? emailMatch[0] : null,
     whatsapp: whatsappNormalizado,
     corretor: corretorMatch[1].trim(),
+    origem: origemMatch ? origemMatch[1].trim() : null,
     imovelCodigo,
     imovelDesc,
   };
 }
 
-// origem: string ('OLX/Canal Pro', 'TikTok') ou null (fica pendente pra preencher no dashboard)
-async function salvarDistribuicao(dados, origem = null) {
+// origemPadrao: usada só se a mensagem em si não tiver a origem escrita (dados.origem).
+// Prioridade: origem escrita na própria mensagem > origem padrão do canal > pendente (null)
+async function salvarDistribuicao(dados, origemPadrao = null) {
+  const origem = dados.origem || origemPadrao || null;
   await pool.query(
     `INSERT INTO leads (whatsapp, nome, email, corretor, imovel_codigo, imovel_desc, origem)
      VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -219,6 +226,24 @@ async function salvarDistribuicao(dados, origem = null) {
     [dados.whatsapp, dados.nome, dados.email, dados.corretor, dados.imovelCodigo, dados.imovelDesc, origem]
   );
   console.log(`Lead distribuído salvo: ${dados.nome} → ${dados.corretor} (${dados.whatsapp}) [origem: ${origem || 'pendente'}]`);
+}
+
+// ─── REGISTRO AUTOMÁTICO DE NOVO CONTATO (número do TikTok) ──
+// Diferente do fluxo do Canal Pro/Juliane, esse número não recebe mensagem de
+// distribuição formatada — então todo contato novo já vira uma linha no funil,
+// com origem = 'TikTok' e corretor em branco (editável no dashboard).
+async function registrarLeadAutomatico(whatsapp, nome, mensagem, origemPadrao) {
+  const existente = await pool.query('SELECT id FROM leads WHERE whatsapp = $1', [whatsapp]);
+  if (existente.rows.length > 0) return false; // já está na base, não sobrescreve
+
+  await pool.query(
+    `INSERT INTO leads (whatsapp, nome, corretor, origem, interesse)
+     VALUES ($1, $2, NULL, $3, $4)
+     ON CONFLICT (whatsapp) DO NOTHING`,
+    [whatsapp, nome || 'Sem nome', origemPadrao, mensagem || null]
+  );
+  console.log(`[Auto] Novo contato registrado: ${nome || whatsapp} (${whatsapp}) [origem: ${origemPadrao}]`);
+  return true;
 }
 
 // ─── LEAD ROUTER: IDENTIFICAÇÃO QUANDO O LEAD ESCREVE ────────
@@ -440,9 +465,11 @@ app.post('/webhook-mensagens-tiktok', async (req, res) => {
       return res.status(200).json({ ok: true });
     }
 
-    // Mensagem recebida de fora no número do TikTok — também tenta identificar
+    // Mensagem recebida de fora no número do TikTok — registra como lead automaticamente,
+    // mesmo sem formato de distribuição (esse número não dispara aquela mensagem padrão)
     if (process.env.DATABASE_URL) {
-      await identificarLead(de, conteudo);
+      const pushName = body?.data?.pushName || body?.pushName || null;
+      await registrarLeadAutomatico(de, pushName, conteudo, 'TikTok');
     }
 
     res.status(200).json({ ok: true });
@@ -561,9 +588,43 @@ app.get('/api/leads', basicAuth, async (req, res) => {
       porCorretor: porCorretorResult.rows,
       porCampanha: porCampanhaResult.rows,
       porOrigem: porOrigemResult.rows,
+      corretoresDisponiveis: CORRETORES.map(c => c.nome),
     });
   } catch (err) {
     console.error('Erro ao buscar leads:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
+// ─── ROTA: ADICIONAR LEAD MANUALMENTE ────────────────────────
+// Body esperado: { nome, whatsapp, origem, corretor, imovelDesc (opcional) }
+app.post('/api/leads', basicAuth, async (req, res) => {
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  }
+  const { nome, whatsapp, origem, corretor, imovelDesc } = req.body;
+
+  if (!nome || !whatsapp || !corretor) {
+    return res.status(400).json({ ok: false, erro: 'nome, whatsapp e corretor são obrigatórios' });
+  }
+
+  let whatsappNormalizado = String(whatsapp).replace(/\D/g, '');
+  if (whatsappNormalizado.length <= 11) whatsappNormalizado = '55' + whatsappNormalizado;
+
+  try {
+    const result = await pool.query(
+      `INSERT INTO leads (whatsapp, nome, corretor, imovel_desc, origem)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id`,
+      [whatsappNormalizado, nome, corretor, imovelDesc || null, origem || null]
+    );
+    console.log(`Lead adicionado manualmente: ${nome} → ${corretor} (${whatsappNormalizado})`);
+    res.json({ ok: true, id: result.rows[0].id });
+  } catch (err) {
+    if (err.code === '23505') {
+      return res.status(409).json({ ok: false, erro: 'Já existe um lead com esse WhatsApp' });
+    }
+    console.error('Erro ao adicionar lead manual:', err);
     res.status(500).json({ ok: false, erro: err.message });
   }
 });
