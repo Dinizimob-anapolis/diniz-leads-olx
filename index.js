@@ -358,12 +358,22 @@ function parseDistribuicao(texto) {
   let whatsappNormalizado = whatsappMatch[0].replace(/\D/g, '');
   if (whatsappNormalizado.length <= 11) whatsappNormalizado = '55' + whatsappNormalizado;
 
+  // Origem inferida quando a mensagem não diz explicitamente ("origem:"):
+  // se tiver "CRM" escrito, é lead do OLX/Canal Pro (padrão dessas mensagens);
+  // se tiver só o código do imóvel (ex: VD01) sem CRM, é lead Patrocinado (Insta/Face).
+  let origemInferida = null;
+  if (/\bCRM\b/i.test(texto)) {
+    origemInferida = 'OLX/Canal Pro';
+  } else if (imovelCodigo) {
+    origemInferida = 'Patrocinado';
+  }
+
   return {
     nome: nomeMatch ? nomeMatch[1].trim() : 'Sem nome',
     email: emailMatch ? emailMatch[0] : null,
     whatsapp: whatsappNormalizado,
     corretor: corretorMatch[1].trim(),
-    origem: origemMatch ? origemMatch[1].trim() : null,
+    origem: origemMatch ? origemMatch[1].trim() : origemInferida,
     imovelCodigo,
     imovelDesc,
   };
