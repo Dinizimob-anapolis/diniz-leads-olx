@@ -38,7 +38,7 @@ const pool = new Pool({
 const THROTTLE_AVISO_MS = 6 * 60 * 60 * 1000; // 6 horas
 
 // Campos do funil que podem ser editados manualmente pelo dashboard
-const CAMPOS_EDITAVEIS = ['origem', 'corretor', 'interesse', 'status', 'visita', 'proposta', 'venda'];
+const CAMPOS_EDITAVEIS = ['nome', 'origem', 'corretor', 'interesse', 'status', 'aprovado', 'visita', 'proposta', 'venda', 'imovel_desc'];
 
 async function initDb() {
   if (!process.env.DATABASE_URL) {
@@ -68,6 +68,7 @@ async function initDb() {
       ADD COLUMN IF NOT EXISTS interesse TEXT,
       ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'Novo',
       ADD COLUMN IF NOT EXISTS ultimo_contato DATE,
+      ADD COLUMN IF NOT EXISTS aprovado BOOLEAN DEFAULT false,
       ADD COLUMN IF NOT EXISTS visita BOOLEAN DEFAULT false,
       ADD COLUMN IF NOT EXISTS proposta BOOLEAN DEFAULT false,
       ADD COLUMN IF NOT EXISTS venda BOOLEAN DEFAULT false;
@@ -675,7 +676,7 @@ app.get('/api/leads', basicAuth, async (req, res) => {
     const leadsResult = await pool.query(
       `SELECT id, whatsapp, nome, email, corretor, imovel_codigo, imovel_desc,
               distribuido_em, contatou, primeiro_contato_em,
-              origem, interesse, status, ultimo_contato, visita, proposta, venda
+              origem, interesse, status, ultimo_contato, aprovado, visita, proposta, venda
        FROM leads
        ORDER BY distribuido_em DESC
        LIMIT 100`
@@ -694,6 +695,9 @@ app.get('/api/leads', basicAuth, async (req, res) => {
         count(*) FILTER (WHERE distribuido_em > now() - interval '7 days') AS total_distribuidos,
         count(*) FILTER (WHERE distribuido_em > now() - interval '7 days' AND contatou) AS total_contataram,
         count(*) FILTER (WHERE distribuido_em > now() - interval '24 hours') AS distribuidos_24h,
+        count(*) FILTER (WHERE distribuido_em > now() - interval '7 days' AND aprovado) AS total_aprovados,
+        count(*) FILTER (WHERE distribuido_em > now() - interval '7 days' AND visita) AS total_visitas,
+        count(*) FILTER (WHERE distribuido_em > now() - interval '7 days' AND venda) AS total_vendas,
         avg(primeiro_contato_em - distribuido_em)
           FILTER (WHERE contatou AND distribuido_em > now() - interval '7 days') AS tempo_medio_contato
       FROM leads
@@ -742,6 +746,9 @@ app.get('/api/leads', basicAuth, async (req, res) => {
         totalDistribuidos: parseInt(statsResult.rows[0].total_distribuidos, 10) || 0,
         totalContataram: parseInt(statsResult.rows[0].total_contataram, 10) || 0,
         distribuidos24h: parseInt(statsResult.rows[0].distribuidos_24h, 10) || 0,
+        totalAprovados: parseInt(statsResult.rows[0].total_aprovados, 10) || 0,
+        totalVisitas: parseInt(statsResult.rows[0].total_visitas, 10) || 0,
+        totalVendas: parseInt(statsResult.rows[0].total_vendas, 10) || 0,
         semCorretor24h: parseInt(semCorretor24hResult.rows[0].total, 10) || 0,
         tempoMedioContatoSegundos: statsResult.rows[0].tempo_medio_contato
           ? Math.round(statsResult.rows[0].tempo_medio_contato.hours * 3600
@@ -843,12 +850,26 @@ app.patch('/api/leads-nao-identificados/:id', basicAuth, async (req, res) => {
     }
     const { whatsapp, mensagem } = naoIdentResult.rows[0];
 
+    // Se o campo editado for o próprio 'nome', usa o valor digitado como nome
+    // (em vez do placeholder 'Sem nome') e evita listar a coluna nome duas vezes.
+    const nomeInicial = campo === 'nome' ? valor : 'Sem nome';
+    const colunaExtra = campo === 'nome' ? null : campo;
+
+    const colunas = ['whatsapp', 'nome', 'interesse'];
+    const valores = [whatsapp, nomeInicial, mensagem || null];
+    if (colunaExtra) {
+      colunas.push(colunaExtra);
+      valores.push(valor);
+    }
+    const placeholders = valores.map((_, i) => `$${i + 1}`).join(', ');
+    const setClause = colunaExtra ? `${colunaExtra} = EXCLUDED.${colunaExtra}` : 'nome = EXCLUDED.nome';
+
     const insertResult = await pool.query(
-      `INSERT INTO leads (whatsapp, nome, interesse, ${campo})
-       VALUES ($1, 'Sem nome', $2, $3)
-       ON CONFLICT (whatsapp) DO UPDATE SET ${campo} = EXCLUDED.${campo}
+      `INSERT INTO leads (${colunas.join(', ')})
+       VALUES (${placeholders})
+       ON CONFLICT (whatsapp) DO UPDATE SET ${setClause}
        RETURNING id`,
-      [whatsapp, mensagem || null, valor]
+      valores
     );
     await pool.query('DELETE FROM leads_nao_identificados WHERE id = $1', [id]);
 
