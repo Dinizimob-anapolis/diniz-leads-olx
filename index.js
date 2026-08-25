@@ -638,6 +638,9 @@ app.post('/api/leads', basicAuth, async (req, res) => {
 });
 
 // ─── ROTA: ATRIBUIR CORRETOR A NÚMERO NÃO IDENTIFICADO ───────
+// Ao definir um corretor, o contato "sobe de nível": vira um lead completo
+// (com Origem, Status, Visita, Proposta, Venda editáveis) e some da lista
+// de não identificados.
 app.patch('/api/leads-nao-identificados/:id', basicAuth, async (req, res) => {
   if (!process.env.DATABASE_URL) {
     return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
@@ -646,11 +649,28 @@ app.patch('/api/leads-nao-identificados/:id', basicAuth, async (req, res) => {
   const { corretor } = req.body;
 
   try {
+    if (!corretor) {
+      // Corretor removido/limpo — só atualiza o campo, continua como não identificado
+      await pool.query(`UPDATE leads_nao_identificados SET corretor = NULL WHERE id = $1`, [id]);
+      return res.json({ ok: true, promovido: false });
+    }
+
+    const naoIdentResult = await pool.query('SELECT whatsapp, mensagem FROM leads_nao_identificados WHERE id = $1', [id]);
+    if (naoIdentResult.rows.length === 0) {
+      return res.status(404).json({ ok: false, erro: 'Não encontrado' });
+    }
+    const { whatsapp, mensagem } = naoIdentResult.rows[0];
+
     await pool.query(
-      `UPDATE leads_nao_identificados SET corretor = $1 WHERE id = $2`,
-      [corretor || null, id]
+      `INSERT INTO leads (whatsapp, nome, corretor, interesse)
+       VALUES ($1, 'Sem nome', $2, $3)
+       ON CONFLICT (whatsapp) DO UPDATE SET corretor = EXCLUDED.corretor`,
+      [whatsapp, corretor, mensagem || null]
     );
-    res.json({ ok: true });
+    await pool.query('DELETE FROM leads_nao_identificados WHERE id = $1', [id]);
+
+    console.log(`Contato promovido a lead: ${whatsapp} → ${corretor}`);
+    res.json({ ok: true, promovido: true });
   } catch (err) {
     console.error('Erro ao atribuir corretor:', err);
     res.status(500).json({ ok: false, erro: err.message });
