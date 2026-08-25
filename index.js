@@ -8,6 +8,7 @@ app.use(express.json());
 // ─── CONFIGURAÇÕES ───────────────────────────────────────────
 const EVOLUTION_URL = 'https://evolution-api-production-5e4f.up.railway.app';
 const EVOLUTION_INSTANCE = 'diniz-leads-olx';
+const EVOLUTION_INSTANCE_TIKTOK = 'diniz-tiktok';
 const EVOLUTION_TOKEN = 'A0929C1CF6C5-4E04-9FFB-3A4B073EE943';
 
 const JULIANE_LL = '5562992166458';
@@ -30,6 +31,9 @@ const pool = new Pool({
 
 const THROTTLE_AVISO_MS = 6 * 60 * 60 * 1000; // 6 horas
 
+// Campos do funil que podem ser editados manualmente pelo dashboard
+const CAMPOS_EDITAVEIS = ['origem', 'interesse', 'status', 'ultimo_contato', 'visita', 'proposta', 'venda'];
+
 async function initDb() {
   if (!process.env.DATABASE_URL) {
     console.warn('⚠️  DATABASE_URL não configurada — recursos de lead router desativados.');
@@ -50,6 +54,19 @@ async function initDb() {
       avisado_em TIMESTAMPTZ
     );
   `);
+
+  // ─── Migração: novas colunas do funil completo ─────────────
+  await pool.query(`
+    ALTER TABLE leads
+      ADD COLUMN IF NOT EXISTS origem TEXT,
+      ADD COLUMN IF NOT EXISTS interesse TEXT,
+      ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'Novo',
+      ADD COLUMN IF NOT EXISTS ultimo_contato DATE,
+      ADD COLUMN IF NOT EXISTS visita BOOLEAN DEFAULT false,
+      ADD COLUMN IF NOT EXISTS proposta BOOLEAN DEFAULT false,
+      ADD COLUMN IF NOT EXISTS venda BOOLEAN DEFAULT false;
+  `);
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS leads_nao_identificados (
       id SERIAL PRIMARY KEY,
@@ -86,9 +103,8 @@ function adicionarAoBuffer(de, conteudo) {
   if (!bufferMensagens[de]) bufferMensagens[de] = [];
   bufferMensagens[de].push(conteudo);
 
-  // Inicia o timer se ainda não estiver rodando
   if (!timerResumo) {
-    timerResumo = setTimeout(enviarResumo, 10 * 60 * 1000); // 10 minutos
+    timerResumo = setTimeout(enviarResumo, 10 * 60 * 1000);
     console.log('Timer de resumo iniciado (10 min)');
   }
 }
@@ -115,8 +131,9 @@ async function enviarResumo() {
 }
 
 // ─── FUNÇÃO: ENVIAR MENSAGEM WHATSAPP ────────────────────────
-async function enviarWhatsApp(fone, mensagem) {
-  const res = await fetch(`${EVOLUTION_URL}/message/sendText/${EVOLUTION_INSTANCE}`, {
+// instancia opcional — usa a instância principal por padrão
+async function enviarWhatsApp(fone, mensagem, instancia = EVOLUTION_INSTANCE) {
+  const res = await fetch(`${EVOLUTION_URL}/message/sendText/${instancia}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -147,18 +164,9 @@ function limparMensagem(msg) {
 }
 
 // ─── LEAD ROUTER: PARSER DA MENSAGEM DE DISTRIBUIÇÃO ─────────
-// Formato esperado (enviado pelo 84277070 aos corretores):
-//   Segue um novo lead interessado VD01- CASA BAIRRO LUZITANO
-//   nome: Wallace Da Silva Oliveira
-//   email: wallacedextter@gmail.com
-//   whatsapp: +5562992316826
-//   corretor: Laís
 function parseDistribuicao(texto) {
   if (!texto) return null;
 
-  // Critério de reconhecimento: precisa ter a palavra "corretor" e um número de telefone
-  // reconhecível no texto. Não depende dos rótulos (nome:, email:, whatsapp:) estarem
-  // escritos certinho — eles variam bastante na prática (ex: "whastapp", "watts", etc.)
   const corretorMatch = texto.match(/corretor\s*[:\-]?\s*(.+)/i);
   const whatsappMatch = texto.match(/(?:\+?55\s*)?\(?\d{2}\)?\s*9?\d{4}[-\s]?\d{4}/);
 
@@ -179,7 +187,6 @@ function parseDistribuicao(texto) {
     imovelDesc = codigoMatch[2].trim();
   }
 
-  // Normaliza o telefone e garante o código do país (55) na frente
   let whatsappNormalizado = whatsappMatch[0].replace(/\D/g, '');
   if (whatsappNormalizado.length <= 11) whatsappNormalizado = '55' + whatsappNormalizado;
 
@@ -193,23 +200,25 @@ function parseDistribuicao(texto) {
   };
 }
 
-async function salvarDistribuicao(dados) {
+// origem: string ('OLX/Canal Pro', 'TikTok') ou null (fica pendente pra preencher no dashboard)
+async function salvarDistribuicao(dados, origem = null) {
   await pool.query(
-    `INSERT INTO leads (whatsapp, nome, email, corretor, imovel_codigo, imovel_desc)
-     VALUES ($1, $2, $3, $4, $5, $6)
+    `INSERT INTO leads (whatsapp, nome, email, corretor, imovel_codigo, imovel_desc, origem)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
      ON CONFLICT (whatsapp) DO UPDATE SET
        nome = EXCLUDED.nome,
        email = EXCLUDED.email,
        corretor = EXCLUDED.corretor,
        imovel_codigo = EXCLUDED.imovel_codigo,
        imovel_desc = EXCLUDED.imovel_desc,
+       origem = COALESCE(leads.origem, EXCLUDED.origem),
        distribuido_em = now(),
        contatou = false,
        primeiro_contato_em = NULL,
        avisado_em = NULL`,
-    [dados.whatsapp, dados.nome, dados.email, dados.corretor, dados.imovelCodigo, dados.imovelDesc]
+    [dados.whatsapp, dados.nome, dados.email, dados.corretor, dados.imovelCodigo, dados.imovelDesc, origem]
   );
-  console.log(`Lead distribuído salvo: ${dados.nome} → ${dados.corretor} (${dados.whatsapp})`);
+  console.log(`Lead distribuído salvo: ${dados.nome} → ${dados.corretor} (${dados.whatsapp}) [origem: ${origem || 'pendente'}]`);
 }
 
 // ─── LEAD ROUTER: IDENTIFICAÇÃO QUANDO O LEAD ESCREVE ────────
@@ -245,7 +254,6 @@ async function identificarLead(whatsapp, mensagemTexto) {
     return;
   }
 
-  // Não encontrado na base de distribuições
   const naoIdentResult = await pool.query(
     'SELECT * FROM leads_nao_identificados WHERE whatsapp = $1',
     [whatsapp]
@@ -328,6 +336,20 @@ app.post('/lead-canalpro', async (req, res) => {
 
     await enviarWhatsApp(JULIANE_LL, textoControle);
 
+    // Registra no funil já com a origem conhecida
+    if (process.env.DATABASE_URL) {
+      let whatsappNormalizado = telefone.replace(/\D/g, '');
+      if (whatsappNormalizado.length <= 11) whatsappNormalizado = '55' + whatsappNormalizado;
+      await salvarDistribuicao({
+        whatsapp: whatsappNormalizado,
+        nome: nomeCliente,
+        email: emailCliente,
+        corretor: corretor.nome,
+        imovelCodigo: codigoImovel,
+        imovelDesc: '',
+      }, 'OLX/Canal Pro');
+    }
+
     console.log(`Lead enviado para ${corretor.nome} (${corretor.fone})`);
     res.status(200).json({ ok: true, corretor: corretor.nome });
 
@@ -337,7 +359,7 @@ app.post('/lead-canalpro', async (req, res) => {
   }
 });
 
-// ─── ROTA: ESPELHO DE MENSAGENS + LEAD ROUTER ────────────────
+// ─── ROTA: ESPELHO DE MENSAGENS + LEAD ROUTER (Juliane) ──────
 app.post('/webhook-mensagens', async (req, res) => {
   try {
     const body = req.body;
@@ -345,7 +367,6 @@ app.post('/webhook-mensagens', async (req, res) => {
     const fromMe = body?.data?.key?.fromMe || body?.key?.fromMe || false;
     const jid = body?.data?.key?.remoteJid || body?.key?.remoteJid || '';
 
-    // Ignora mensagens de grupo
     if (jid.includes('@g.us')) {
       console.log('Mensagem de grupo ignorada');
       return res.status(200).json({ ok: true });
@@ -356,12 +377,12 @@ app.post('/webhook-mensagens', async (req, res) => {
     const conteudo = msg?.conversation || msg?.extendedTextMessage?.text || msg?.imageMessage?.caption || '[mídia]';
 
     if (fromMe) {
-      // Mensagem enviada pelo próprio número 84277070 — pode ser distribuição pra corretor
       if (process.env.DATABASE_URL) {
         const distribuicao = parseDistribuicao(conteudo);
         if (distribuicao) {
-          await salvarDistribuicao(distribuicao);
-          // Espelha a mesma mensagem de distribuição pra Juliane, em tempo real
+          // Distribuição feita pelo WhatsApp da Juliane — origem ainda desconhecida,
+          // fica pendente pra preencher no dashboard (era o canal principal antes do TikTok existir)
+          await salvarDistribuicao(distribuicao, null);
           await enviarWhatsApp(JULIANE_LL, `📋 Nova distribuição de lead:\n\n${conteudo}`);
           console.log(`Distribuição espelhada pra Juliane: ${distribuicao.nome} → ${distribuicao.corretor}`);
         }
@@ -369,11 +390,9 @@ app.post('/webhook-mensagens', async (req, res) => {
       return res.status(200).json({ ok: true });
     }
 
-    // Mensagem recebida de fora — mantém o resumo em buffer como já funcionava
     adicionarAoBuffer(de, conteudo);
     console.log(`Mensagem de ${de} adicionada ao buffer`);
 
-    // E também identifica se é um lead já distribuído pra algum corretor
     if (process.env.DATABASE_URL) {
       await identificarLead(de, conteudo);
     }
@@ -382,6 +401,54 @@ app.post('/webhook-mensagens', async (req, res) => {
 
   } catch (err) {
     console.error('Erro ao processar mensagem:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
+// ─── ROTA: WEBHOOK DO NÚMERO DO TIKTOK ───────────────────────
+// Aponte o webhook da instância `diniz-tiktok` na Evolution API pra essa rota.
+// Reaproveita o mesmo parser de distribuição — quando o número do TikTok manda
+// a mensagem de distribuição pro corretor, o sistema já grava o lead com origem = 'TikTok'.
+app.post('/webhook-mensagens-tiktok', async (req, res) => {
+  try {
+    const body = req.body;
+
+    const fromMe = body?.data?.key?.fromMe || body?.key?.fromMe || false;
+    const jid = body?.data?.key?.remoteJid || body?.key?.remoteJid || '';
+
+    if (jid.includes('@g.us')) {
+      console.log('[TikTok] Mensagem de grupo ignorada');
+      return res.status(200).json({ ok: true });
+    }
+
+    const de = jid.replace('@s.whatsapp.net', '').replace('@c.us', '');
+    const msg = body?.data?.message || body?.message || {};
+    const conteudo = msg?.conversation || msg?.extendedTextMessage?.text || msg?.imageMessage?.caption || '[mídia]';
+
+    if (fromMe) {
+      if (process.env.DATABASE_URL) {
+        const distribuicao = parseDistribuicao(conteudo);
+        if (distribuicao) {
+          // Origem já conhecida: veio pelo número do TikTok.
+          // Se quiser diferenciar TikTok / Instagram / Comentário manualmente,
+          // deixe origem = null aqui e ajuste depois pelo dashboard.
+          await salvarDistribuicao(distribuicao, 'TikTok');
+          await enviarWhatsApp(JULIANE_LL, `📋 Nova distribuição de lead (TikTok):\n\n${conteudo}`);
+          console.log(`[TikTok] Distribuição espelhada pra Juliane: ${distribuicao.nome} → ${distribuicao.corretor}`);
+        }
+      }
+      return res.status(200).json({ ok: true });
+    }
+
+    // Mensagem recebida de fora no número do TikTok — também tenta identificar
+    if (process.env.DATABASE_URL) {
+      await identificarLead(de, conteudo);
+    }
+
+    res.status(200).json({ ok: true });
+
+  } catch (err) {
+    console.error('[TikTok] Erro ao processar mensagem:', err);
     res.status(500).json({ ok: false, erro: err.message });
   }
 });
@@ -416,8 +483,9 @@ app.get('/api/leads', basicAuth, async (req, res) => {
   }
   try {
     const leadsResult = await pool.query(
-      `SELECT whatsapp, nome, email, corretor, imovel_codigo, imovel_desc,
-              distribuido_em, contatou, primeiro_contato_em
+      `SELECT id, whatsapp, nome, email, corretor, imovel_codigo, imovel_desc,
+              distribuido_em, contatou, primeiro_contato_em,
+              origem, interesse, status, ultimo_contato, visita, proposta, venda
        FROM leads
        ORDER BY distribuido_em DESC
        LIMIT 100`
@@ -467,6 +535,14 @@ app.get('/api/leads', basicAuth, async (req, res) => {
       ORDER BY total DESC
     `);
 
+    const porOrigemResult = await pool.query(`
+      SELECT COALESCE(origem, 'Não informado') AS origem, count(*) AS total
+      FROM leads
+      WHERE distribuido_em > now() - interval '7 days'
+      GROUP BY origem
+      ORDER BY total DESC
+    `);
+
     res.json({
       ok: true,
       leads: leadsResult.rows,
@@ -484,9 +560,36 @@ app.get('/api/leads', basicAuth, async (req, res) => {
       },
       porCorretor: porCorretorResult.rows,
       porCampanha: porCampanhaResult.rows,
+      porOrigem: porOrigemResult.rows,
     });
   } catch (err) {
     console.error('Erro ao buscar leads:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
+// ─── ROTA: EDITAR CAMPOS MANUAIS DO FUNIL ────────────────────
+// Body esperado: { campo: 'origem', valor: 'TikTok' }
+// campo precisa estar em CAMPOS_EDITAVEIS.
+app.patch('/api/leads/:id', basicAuth, async (req, res) => {
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  }
+  const { id } = req.params;
+  const { campo, valor } = req.body;
+
+  if (!CAMPOS_EDITAVEIS.includes(campo)) {
+    return res.status(400).json({ ok: false, erro: `Campo '${campo}' não é editável` });
+  }
+
+  try {
+    await pool.query(
+      `UPDATE leads SET ${campo} = $1 WHERE id = $2`,
+      [valor, id]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Erro ao editar lead:', err);
     res.status(500).json({ ok: false, erro: err.message });
   }
 });
