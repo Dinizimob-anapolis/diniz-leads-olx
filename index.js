@@ -136,7 +136,7 @@ async function importarLeadsEmLote(leads) {
          VALUES ($1, $2, $3, $4, $5)
          ON CONFLICT (whatsapp) DO NOTHING
          RETURNING id`,
-        [whatsapp, nome, item.corretor || null, item.origem || null, item.imovelDesc || null]
+        [whatsapp, nome, item.corretor || null, item.origem || 'Patrocinado', item.imovelDesc || null]
       );
       if (result.rows.length > 0) inseridos++;
       else ignorados++;
@@ -690,7 +690,7 @@ app.get('/api/leads', basicAuth, async (req, res) => {
               origem, interesse, status, ultimo_contato, aprovado, visita, proposta, venda
        FROM leads
        ORDER BY distribuido_em DESC
-       LIMIT 100`
+       LIMIT 1000`
     );
 
     const naoIdentResult = await pool.query(
