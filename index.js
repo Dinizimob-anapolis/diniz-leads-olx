@@ -1,6 +1,7 @@
 const express = require('express');
 const fs = require('fs');
 const { Pool } = require('pg');
+const { google } = require('googleapis');
 const { DASHBOARD_HTML } = require('./dashboard-template');
 const app = express();
 app.use(express.json());
@@ -84,6 +85,119 @@ async function initDb() {
   `);
   await pool.query(`ALTER TABLE leads_nao_identificados ADD COLUMN IF NOT EXISTS corretor TEXT;`);
   console.log('✅ Tabelas do lead router prontas (leads, leads_nao_identificados)');
+}
+
+// ─── IMPORTAÇÃO EM LOTE (reutilizada pelo upload manual e pela sincronização com Google Sheets) ─
+function normalizarTexto(s) {
+  return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+}
+
+// Reconhece a coluna certa pelo nome do cabeçalho, mesmo com variações (acento, maiúscula, espaço)
+function mapearColunas(headers) {
+  const mapa = {
+    nome: ['nome', 'cliente', 'nome do cliente'],
+    whatsapp: ['whatsapp', 'telefone', 'fone', 'celular'],
+    origem: ['origem', 'canal'],
+    corretor: ['corretor'],
+    imovelDesc: ['interesse', 'imovel', 'imóvel'],
+  };
+  const idx = {};
+  headers.forEach((h, i) => {
+    const hn = normalizarTexto(h);
+    for (const [campo, nomes] of Object.entries(mapa)) {
+      if (nomes.includes(hn) && idx[campo] === undefined) idx[campo] = i;
+    }
+  });
+  return idx;
+}
+
+async function importarLeadsEmLote(leads) {
+  let inseridos = 0;
+  let ignorados = 0;
+  const erros = [];
+
+  for (const item of leads) {
+    const nome = (item.nome || '').trim();
+    const whatsappBruto = (item.whatsapp || '').trim();
+
+    if (!nome || !whatsappBruto) {
+      ignorados++;
+      continue;
+    }
+
+    let whatsapp = whatsappBruto.replace(/\D/g, '');
+    if (whatsapp.length <= 11) whatsapp = '55' + whatsapp;
+
+    try {
+      const result = await pool.query(
+        `INSERT INTO leads (whatsapp, nome, corretor, origem, imovel_desc)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (whatsapp) DO NOTHING
+         RETURNING id`,
+        [whatsapp, nome, item.corretor || null, item.origem || null, item.imovelDesc || null]
+      );
+      if (result.rows.length > 0) inseridos++;
+      else ignorados++;
+    } catch (err) {
+      erros.push(`${nome} (${whatsappBruto}): ${err.message}`);
+    }
+  }
+
+  return { inseridos, ignorados, erros };
+}
+
+// ─── SINCRONIZAÇÃO AUTOMÁTICA COM GOOGLE SHEETS ──────────────
+let sheetsClientCache = null;
+
+async function getSheetsClient() {
+  if (sheetsClientCache) return sheetsClientCache;
+  if (!process.env.GOOGLE_SERVICE_ACCOUNT_KEY) return null;
+
+  const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_KEY);
+  const auth = new google.auth.JWT(
+    credentials.client_email,
+    null,
+    credentials.private_key,
+    ['https://www.googleapis.com/auth/spreadsheets.readonly']
+  );
+  await auth.authorize();
+  sheetsClientCache = google.sheets({ version: 'v4', auth });
+  return sheetsClientCache;
+}
+
+async function sincronizarPlanilhaGoogle() {
+  if (!process.env.GOOGLE_SHEET_ID) {
+    return { ok: false, erro: 'GOOGLE_SHEET_ID não configurada' };
+  }
+
+  const sheets = await getSheetsClient();
+  if (!sheets) {
+    return { ok: false, erro: 'GOOGLE_SERVICE_ACCOUNT_KEY não configurada' };
+  }
+
+  const range = process.env.GOOGLE_SHEET_RANGE || 'A1:Z10000';
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId: process.env.GOOGLE_SHEET_ID,
+    range,
+  });
+
+  const linhas = response.data.values || [];
+  if (linhas.length < 2) return { ok: true, inseridos: 0, ignorados: 0, erros: [] };
+
+  const headers = linhas[0];
+  const idx = mapearColunas(headers);
+
+  const leads = linhas.slice(1).map(linha => ({
+    nome: idx.nome !== undefined ? linha[idx.nome] : '',
+    whatsapp: idx.whatsapp !== undefined ? linha[idx.whatsapp] : '',
+    origem: idx.origem !== undefined ? linha[idx.origem] : null,
+    corretor: idx.corretor !== undefined ? linha[idx.corretor] : null,
+    imovelDesc: idx.imovelDesc !== undefined ? linha[idx.imovelDesc] : null,
+  }));
+
+  const resultado = await importarLeadsEmLote(leads);
+  console.log(`[Google Sheets] Sincronizado: ${resultado.inseridos} novos, ${resultado.ignorados} já existiam ou incompletos`);
+  return { ok: true, ...resultado };
 }
 
 // ─── ÍNDICE PERSISTENTE ──────────────────────────────────────
@@ -604,6 +718,35 @@ app.get('/api/leads', basicAuth, async (req, res) => {
   }
 });
 
+// ─── ROTA: IMPORTAR LEADS EM LOTE (via planilha enviada no dashboard) ─
+// Body esperado: { leads: [{ nome, whatsapp, origem, corretor, imovelDesc }, ...] }
+// Ignora silenciosamente quem já existe (mesmo WhatsApp) — não sobrescreve.
+app.post('/api/leads/import', basicAuth, async (req, res) => {
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  }
+  const { leads } = req.body;
+  if (!Array.isArray(leads) || leads.length === 0) {
+    return res.status(400).json({ ok: false, erro: 'Nenhum lead recebido' });
+  }
+
+  const resultado = await importarLeadsEmLote(leads);
+  console.log(`Importação manual: ${resultado.inseridos} inseridos, ${resultado.ignorados} ignorados`);
+  res.json({ ok: true, ...resultado });
+});
+
+// ─── ROTA: SINCRONIZAR AGORA COM A PLANILHA DO GOOGLE ────────
+app.post('/api/sincronizar-planilha', basicAuth, async (req, res) => {
+  try {
+    const resultado = await sincronizarPlanilhaGoogle();
+    if (!resultado.ok) return res.status(400).json(resultado);
+    res.json(resultado);
+  } catch (err) {
+    console.error('Erro ao sincronizar planilha:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
 // ─── ROTA: ADICIONAR LEAD MANUALMENTE ────────────────────────
 // Body esperado: { nome, whatsapp, origem, corretor, imovelDesc (opcional) }
 app.post('/api/leads', basicAuth, async (req, res) => {
@@ -637,42 +780,40 @@ app.post('/api/leads', basicAuth, async (req, res) => {
   }
 });
 
-// ─── ROTA: ATRIBUIR CORRETOR A NÚMERO NÃO IDENTIFICADO ───────
-// Ao definir um corretor, o contato "sobe de nível": vira um lead completo
-// (com Origem, Status, Visita, Proposta, Venda editáveis) e some da lista
-// de não identificados.
+// ─── ROTA: EDITAR QUALQUER CAMPO DE UM NÚMERO NÃO IDENTIFICADO ─
+// Ao editar QUALQUER campo (Origem, Corretor, Status, Visita, Proposta, Venda),
+// o contato "sobe de nível": vira um lead completo e some da lista de não identificados.
 app.patch('/api/leads-nao-identificados/:id', basicAuth, async (req, res) => {
   if (!process.env.DATABASE_URL) {
     return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
   }
   const { id } = req.params;
-  const { corretor } = req.body;
+  const { campo, valor } = req.body;
+
+  if (!CAMPOS_EDITAVEIS.includes(campo)) {
+    return res.status(400).json({ ok: false, erro: `Campo '${campo}' não é editável` });
+  }
 
   try {
-    if (!corretor) {
-      // Corretor removido/limpo — só atualiza o campo, continua como não identificado
-      await pool.query(`UPDATE leads_nao_identificados SET corretor = NULL WHERE id = $1`, [id]);
-      return res.json({ ok: true, promovido: false });
-    }
-
     const naoIdentResult = await pool.query('SELECT whatsapp, mensagem FROM leads_nao_identificados WHERE id = $1', [id]);
     if (naoIdentResult.rows.length === 0) {
       return res.status(404).json({ ok: false, erro: 'Não encontrado' });
     }
     const { whatsapp, mensagem } = naoIdentResult.rows[0];
 
-    await pool.query(
-      `INSERT INTO leads (whatsapp, nome, corretor, interesse)
+    const insertResult = await pool.query(
+      `INSERT INTO leads (whatsapp, nome, interesse, ${campo})
        VALUES ($1, 'Sem nome', $2, $3)
-       ON CONFLICT (whatsapp) DO UPDATE SET corretor = EXCLUDED.corretor`,
-      [whatsapp, corretor, mensagem || null]
+       ON CONFLICT (whatsapp) DO UPDATE SET ${campo} = EXCLUDED.${campo}
+       RETURNING id`,
+      [whatsapp, mensagem || null, valor]
     );
     await pool.query('DELETE FROM leads_nao_identificados WHERE id = $1', [id]);
 
-    console.log(`Contato promovido a lead: ${whatsapp} → ${corretor}`);
-    res.json({ ok: true, promovido: true });
+    console.log(`Contato promovido a lead: ${whatsapp} [${campo} = ${valor}]`);
+    res.json({ ok: true, promovido: true, id: insertResult.rows[0].id });
   } catch (err) {
-    console.error('Erro ao atribuir corretor:', err);
+    console.error('Erro ao editar não identificado:', err);
     res.status(500).json({ ok: false, erro: err.message });
   }
 });
@@ -718,4 +859,17 @@ const PORT = process.env.PORT || 3001;
 app.listen(PORT, async () => {
   console.log(`Servidor rodando na porta ${PORT}`);
   await initDb();
+
+  // Sincronização automática com a planilha do Google, a cada 10 minutos
+  // (só ativa se GOOGLE_SHEET_ID e GOOGLE_SERVICE_ACCOUNT_KEY estiverem configuradas)
+  if (process.env.GOOGLE_SHEET_ID && process.env.GOOGLE_SERVICE_ACCOUNT_KEY) {
+    const INTERVALO_SYNC_MS = 10 * 60 * 1000;
+    console.log('✅ Sincronização automática com Google Sheets ativada (a cada 10 min)');
+    sincronizarPlanilhaGoogle().catch(err => console.error('Erro na sincronização inicial:', err));
+    setInterval(() => {
+      sincronizarPlanilhaGoogle().catch(err => console.error('Erro na sincronização automática:', err));
+    }, INTERVALO_SYNC_MS);
+  } else {
+    console.warn('⚠️  Sincronização com Google Sheets desativada — configure GOOGLE_SHEET_ID e GOOGLE_SERVICE_ACCOUNT_KEY pra ativar.');
+  }
 });
