@@ -130,6 +130,22 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   }
   .origem-chip .count { font-family: 'JetBrains Mono', monospace; font-weight: 600; color: var(--amber); }
 
+  .corretor-tabs { display: flex; gap: 6px; flex-wrap: wrap; border-bottom: 1px solid var(--line); padding-bottom: 16px; }
+  .corretor-tab-btn {
+    font-family: 'Space Grotesk', sans-serif; font-size: 12.5px; font-weight: 500; color: var(--ink-soft);
+    background: var(--bg); border: 1px solid var(--line); border-radius: 20px;
+    padding: 7px 14px; cursor: pointer; transition: all 0.15s ease;
+  }
+  .corretor-tab-btn:hover { border-color: var(--amber); color: var(--ink); }
+  .corretor-tab-btn.active { background: var(--ink); border-color: var(--ink); color: #fff; }
+
+  .atividade-balloons { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+  .balloon { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  .balloon .balloon-label { font-size: 11.5px; color: var(--ink-soft); margin-bottom: 6px; }
+  .balloon .balloon-value { font-family: 'JetBrains Mono', monospace; font-size: 22px; font-weight: 600; }
+  .balloon.balloon-accent .balloon-value { color: var(--amber); }
+  .balloon.balloon-ok .balloon-value { color: var(--ok); }
+
   .panel { background: var(--bg-card); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
   .panel-head {
     display: flex; justify-content: space-between; align-items: center;
@@ -183,6 +199,14 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   }
   .edit-select.pendente { border-color: var(--amber); background: var(--amber-soft); color: var(--amber); font-weight: 500; }
   .edit-select:focus, .edit-date:focus { outline: none; border-color: var(--amber); }
+
+  .edit-text {
+    font-family: 'Space Grotesk', sans-serif; font-size: 12.5px; color: var(--ink);
+    background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+    padding: 5px 8px; width: 100%; min-width: 140px;
+  }
+  .edit-text:focus { outline: none; border-color: var(--amber); }
+  .edit-text-nome { font-weight: 600; font-size: 13.5px; margin-bottom: 3px; }
 
   .edit-check { display: flex; align-items: center; justify-content: center; }
   .edit-check input[type="checkbox"] {
@@ -243,10 +267,10 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   </div>
 
   <div class="metrics">
-    <div class="metric"><div class="label">Leads distribuídos (7 dias)</div><div class="value" id="m-distribuidos">—</div><div class="sub" id="m-distribuidos-sub">&nbsp;</div></div>
-    <div class="metric accent"><div class="label">Entraram em contato</div><div class="value" id="m-contataram">—</div><div class="sub" id="m-contataram-sub">&nbsp;</div></div>
-    <div class="metric warn-metric"><div class="label">Sem corretor identificado</div><div class="value" id="m-semcorretor">—</div><div class="sub">últimas 24h</div></div>
-    <div class="metric"><div class="label">Tempo médio até 1º contato</div><div class="value" id="m-tempo">—</div><div class="sub">da distribuição à resposta</div></div>
+    <div class="metric"><div class="label">Total de leads</div><div class="value" id="m-distribuidos">—</div><div class="sub" id="m-distribuidos-sub">&nbsp;</div></div>
+    <div class="metric accent"><div class="label">Total de aprovações</div><div class="value" id="m-aprovados">—</div><div class="sub">&nbsp;</div></div>
+    <div class="metric"><div class="label">Total de visitas</div><div class="value" id="m-visitas">—</div><div class="sub">&nbsp;</div></div>
+    <div class="metric"><div class="label">Total de vendas</div><div class="value" id="m-vendas">—</div><div class="sub">&nbsp;</div></div>
   </div>
 
   <div class="corretores" id="corretores-strip"></div>
@@ -257,6 +281,14 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       <h2>Campanhas (imóveis)</h2>
     </div>
     <div id="campanhas-container" style="padding:16px 22px;"></div>
+  </div>
+
+  <div class="panel" style="margin-bottom:28px;">
+    <div class="panel-head">
+      <h2>Atividade por corretor</h2>
+    </div>
+    <div class="corretor-tabs" id="corretor-tabs" style="padding:16px 22px 0;"></div>
+    <div id="corretor-tab-content" style="padding:16px 22px;"></div>
   </div>
 
   <div class="panel">
@@ -527,19 +559,55 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     }
   }
 
+  let ABA_CORRETOR_ATIVA = 'Geral';
+
+  function selecionarAbaCorretor(nome) {
+    ABA_CORRETOR_ATIVA = nome;
+    renderCorretorTabs();
+    renderCorretorTabContent();
+  }
+
+  function renderCorretorTabs() {
+    const container = document.getElementById('corretor-tabs');
+    const abas = ['Geral', ...CORRETORES_DISPONIVEIS];
+    container.innerHTML = abas.map(nome =>
+      \`<button class="corretor-tab-btn \${ABA_CORRETOR_ATIVA === nome ? 'active' : ''}" onclick="selecionarAbaCorretor('\${nome.replace(/'/g, "\\\\'")}')">\${nome}</button>\`
+    ).join('');
+  }
+
+  function renderCorretorTabContent() {
+    const container = document.getElementById('corretor-tab-content');
+    if (!ULTIMO_ESTADO) return;
+
+    const leads = ABA_CORRETOR_ATIVA === 'Geral'
+      ? ULTIMO_ESTADO.leads
+      : ULTIMO_ESTADO.leads.filter(l => l.corretor === ABA_CORRETOR_ATIVA);
+
+    const total = leads.length;
+    const aprovados = leads.filter(l => l.aprovado).length;
+    const visitas = leads.filter(l => l.visita).length;
+    const propostas = leads.filter(l => l.proposta).length;
+    const vendas = leads.filter(l => l.venda).length;
+    const contataram = leads.filter(l => l.contatou).length;
+
+    container.innerHTML = \`<div class="atividade-balloons">
+      <div class="balloon"><div class="balloon-label">Leads</div><div class="balloon-value">\${total}</div></div>
+      <div class="balloon"><div class="balloon-label">Contataram</div><div class="balloon-value">\${contataram}</div></div>
+      <div class="balloon balloon-accent"><div class="balloon-label">Aprovados</div><div class="balloon-value">\${aprovados}</div></div>
+      <div class="balloon"><div class="balloon-label">Visitas</div><div class="balloon-value">\${visitas}</div></div>
+      <div class="balloon"><div class="balloon-label">Propostas</div><div class="balloon-value">\${propostas}</div></div>
+      <div class="balloon balloon-ok"><div class="balloon-label">Vendas</div><div class="balloon-value">\${vendas}</div></div>
+    </div>\`;
+  }
+
   function renderTudo(data) {
     CORRETORES_DISPONIVEIS = data.corretoresDisponiveis || [];
     document.getElementById('m-distribuidos').textContent = data.stats.totalDistribuidos;
     document.getElementById('m-distribuidos-sub').textContent = '+' + data.stats.distribuidos24h + ' nas últimas 24h';
 
-    document.getElementById('m-contataram').textContent = data.stats.totalContataram;
-    const pct = data.stats.totalDistribuidos > 0
-      ? Math.round((data.stats.totalContataram / data.stats.totalDistribuidos) * 100)
-      : 0;
-    document.getElementById('m-contataram-sub').textContent = pct + '% dos distribuídos';
-
-    document.getElementById('m-semcorretor').textContent = data.stats.semCorretor24h;
-    document.getElementById('m-tempo').textContent = formatarTempoMedio(data.stats.tempoMedioContatoSegundos);
+    document.getElementById('m-aprovados').textContent = data.stats.totalAprovados;
+    document.getElementById('m-visitas').textContent = data.stats.totalVisitas;
+    document.getElementById('m-vendas').textContent = data.stats.totalVendas;
 
     const corretoresMap = {};
     (data.porCorretor || []).forEach(c => { corretoresMap[c.corretor] = c.total; });
@@ -586,6 +654,8 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       }).join('');
     filtroCampanha.value = campanhaAtual;
 
+    renderCorretorTabs();
+    renderCorretorTabContent();
     renderTabela();
   }
 
@@ -632,6 +702,8 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
     const linhasHtml = todos.map(item => {
       if (item.tipo === 'nao_identificado') {
+        const imovelInputNI = \`<input type="text" class="edit-text" placeholder="— escrever —" value="" onchange="salvarCampo(\${item.id}, 'imovel_desc', this.value, this, 'nao_identificado')">\`;
+
         const origemSelectNI = \`<select class="edit-select \${!item.origem ? 'pendente' : ''}" onchange="salvarCampo(\${item.id}, 'origem', this.value, this, 'nao_identificado')">
           <option value="" \${!item.origem ? 'selected' : ''}>— escolher —</option>
           \${ORIGENS.map(o => \`<option value="\${o}">\${o}</option>\`).join('')}
@@ -647,16 +719,18 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
           \${STATUS_OPCOES.map(s => \`<option value="\${s}">\${s}</option>\`).join('')}
         </select><span class="saving-dot"></span>\`;
 
+        const aprovadoCheckNI = \`<div class="edit-check"><input type="checkbox" onchange="salvarCampo(\${item.id}, 'aprovado', this.checked, this, 'nao_identificado')"></div>\`;
         const visitaCheckNI = \`<div class="edit-check"><input type="checkbox" onchange="salvarCampo(\${item.id}, 'visita', this.checked, this, 'nao_identificado')"></div>\`;
         const propostaCheckNI = \`<div class="edit-check"><input type="checkbox" onchange="salvarCampo(\${item.id}, 'proposta', this.checked, this, 'nao_identificado')"></div>\`;
         const vendaCheckNI = \`<div class="edit-check"><input type="checkbox" onchange="salvarCampo(\${item.id}, 'venda', this.checked, this, 'nao_identificado')"></div>\`;
 
         return \`<tr>
-          <td><div class="lead-name">Número não identificado</div><div class="lead-meta mono">+\${item.whatsapp}</div></td>
-          <td class="mono">—</td>
+          <td><input type="text" class="edit-text edit-text-nome" value="" placeholder="— escrever nome —" onchange="salvarCampo(\${item.id}, 'nome', this.value, this, 'nao_identificado')"><div class="lead-meta mono">+\${item.whatsapp}</div></td>
+          <td>\${imovelInputNI}</td>
           <td>\${origemSelectNI}</td>
           <td>\${corretorSelectNI}</td>
           <td>\${statusSelectNI}</td>
+          <td>\${aprovadoCheckNI}</td>
           <td>\${visitaCheckNI}</td>
           <td>\${propostaCheckNI}</td>
           <td>\${vendaCheckNI}</td>
@@ -664,10 +738,8 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
         </tr>\`;
       }
 
-      const imovel = [item.imovel_codigo, item.imovel_desc].filter(Boolean).join(' · ') || '—';
-      const statusTag = item.contatou
-        ? '<span class="tag tag-ok">● Contatou</span>'
-        : '<span class="tag tag-pending">Aguardando</span>';
+      const imovelAtual = [item.imovel_codigo, item.imovel_desc].filter(Boolean).join(' · ');
+      const imovelInput = \`<input type="text" class="edit-text" value="\${(item.imovel_desc || '').replace(/"/g, '&quot;')}" placeholder="— escrever —" onchange="salvarCampo(\${item.id}, 'imovel_desc', this.value, this)">\`;
 
       const origemSelect = \`<select class="edit-select \${!item.origem ? 'pendente' : ''}" onchange="salvarCampo(\${item.id}, 'origem', this.value, this)">
         <option value="" \${!item.origem ? 'selected' : ''}>— escolher —</option>
@@ -684,16 +756,18 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
         \${STATUS_OPCOES.map(s => \`<option value="\${s}" \${(item.status || 'Novo') === s ? 'selected' : ''}>\${s}</option>\`).join('')}
       </select><span class="saving-dot"></span>\`;
 
+      const aprovadoCheck = \`<div class="edit-check"><input type="checkbox" \${item.aprovado ? 'checked' : ''} onchange="salvarCampo(\${item.id}, 'aprovado', this.checked, this)"></div>\`;
       const visitaCheck = \`<div class="edit-check"><input type="checkbox" \${item.visita ? 'checked' : ''} onchange="salvarCampo(\${item.id}, 'visita', this.checked, this)"></div>\`;
       const propostaCheck = \`<div class="edit-check"><input type="checkbox" \${item.proposta ? 'checked' : ''} onchange="salvarCampo(\${item.id}, 'proposta', this.checked, this)"></div>\`;
       const vendaCheck = \`<div class="edit-check"><input type="checkbox" \${item.venda ? 'checked' : ''} onchange="salvarCampo(\${item.id}, 'venda', this.checked, this)"></div>\`;
 
       return \`<tr>
-        <td><div class="lead-name">\${item.nome || 'Sem nome'}</div><div class="lead-meta mono">+\${item.whatsapp}</div></td>
-        <td class="mono">\${imovel}</td>
+        <td><input type="text" class="edit-text edit-text-nome" value="\${(item.nome || '').replace(/"/g, '&quot;')}" placeholder="Sem nome" onchange="salvarCampo(\${item.id}, 'nome', this.value, this)"><div class="lead-meta mono">+\${item.whatsapp}</div></td>
+        <td>\${imovelInput}</td>
         <td>\${origemSelect}</td>
         <td>\${corretorSelect}</td>
         <td>\${statusSelect}</td>
+        <td>\${aprovadoCheck}</td>
         <td>\${visitaCheck}</td>
         <td>\${propostaCheck}</td>
         <td>\${vendaCheck}</td>
@@ -702,7 +776,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     }).join('');
 
     container.innerHTML = \`<table>
-      <thead><tr><th>Lead</th><th>Imóvel</th><th>Origem</th><th>Corretor</th><th>Status</th><th>Visita</th><th>Proposta</th><th>Venda</th><th>Chegou</th></tr></thead>
+      <thead><tr><th>Lead</th><th>Imóvel</th><th>Origem</th><th>Corretor</th><th>Status</th><th>Aprovado</th><th>Visita</th><th>Proposta</th><th>Venda</th><th>Chegou</th></tr></thead>
       <tbody>\${linhasHtml}</tbody>
     </table>\`;
   }
