@@ -134,11 +134,12 @@ async function importarLeadsEmLote(leads) {
       const result = await pool.query(
         `INSERT INTO leads (whatsapp, nome, corretor, origem, imovel_desc)
          VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (whatsapp) DO NOTHING
-         RETURNING id`,
+         ON CONFLICT (whatsapp) DO UPDATE SET
+           origem = COALESCE(leads.origem, EXCLUDED.origem)
+         RETURNING id, (xmax = 0) AS inserido_agora`,
         [whatsapp, nome, item.corretor || null, item.origem || 'Patrocinado', item.imovelDesc || null]
       );
-      if (result.rows.length > 0) inseridos++;
+      if (result.rows.length > 0 && result.rows[0].inserido_agora) inseridos++;
       else ignorados++;
     } catch (err) {
       erros.push(`${nome} (${whatsappBruto}): ${err.message}`);
