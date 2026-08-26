@@ -1,1009 +1,874 @@
-const express = require('express');
-const fs = require('fs');
-const { Pool } = require('pg');
-const { google } = require('googleapis');
-const { DASHBOARD_HTML } = require('./dashboard-template');
-const app = express();
-app.use(express.json());
+const DASHBOARD_HTML = `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Diniz Imóveis — Painel de Leads</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
-// ─── CONFIGURAÇÕES ───────────────────────────────────────────
-const EVOLUTION_URL = 'https://evolution-api-production-5e4f.up.railway.app';
-const EVOLUTION_INSTANCE = 'diniz-leads-olx';
-const EVOLUTION_INSTANCE_TIKTOK = 'diniz-tiktok';
-const EVOLUTION_TOKEN = 'A0929C1CF6C5-4E04-9FFB-3A4B073EE943';
-
-const JULIANE_LL = '5562992166458';
-const CYDA       = '5562993652226';
-
-const CORRETORES = [
-  { nome: 'Laís',   fone: '5562992754858' },
-  { nome: 'Nalcio', fone: '5562982077466' },
-  { nome: 'Renata', fone: '5562992670935' },
-  { nome: 'Junior', fone: '5562981625610' },
-  { nome: 'Thayná', fone: '5562991749547' },
-];
-
-// Nomes extras que aparecem como opção no dropdown de corretor do dashboard,
-// mas NÃO entram na fila de distribuição automática (round-robin) do Canal Pro
-// — pra isso precisaria do telefone de cada um, cadastrado em CORRETORES acima.
-const CORRETORES_EXTRA_DASHBOARD = ['Amanda', 'Juliane', 'Bruno'];
-
-// ─── BANCO DE DADOS (leads distribuídos por texto) ───────────
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_URL && process.env.DATABASE_URL.includes('railway')
-    ? { rejectUnauthorized: false }
-    : false,
-});
-
-const THROTTLE_AVISO_MS = 6 * 60 * 60 * 1000; // 6 horas
-
-// Campos do funil que podem ser editados manualmente pelo dashboard
-const CAMPOS_EDITAVEIS = ['nome', 'origem', 'corretor', 'interesse', 'status', 'aprovado', 'visita', 'proposta', 'venda', 'imovel_desc'];
-
-async function initDb() {
-  if (!process.env.DATABASE_URL) {
-    console.warn('⚠️  DATABASE_URL não configurada — recursos de lead router desativados.');
-    return;
-  }
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS leads (
-      id SERIAL PRIMARY KEY,
-      whatsapp TEXT UNIQUE NOT NULL,
-      nome TEXT,
-      email TEXT,
-      corretor TEXT,
-      imovel_codigo TEXT,
-      imovel_desc TEXT,
-      distribuido_em TIMESTAMPTZ DEFAULT now(),
-      contatou BOOLEAN DEFAULT false,
-      primeiro_contato_em TIMESTAMPTZ,
-      avisado_em TIMESTAMPTZ
-    );
-  `);
-
-  // ─── Migração: novas colunas do funil completo ─────────────
-  await pool.query(`
-    ALTER TABLE leads
-      ADD COLUMN IF NOT EXISTS origem TEXT,
-      ADD COLUMN IF NOT EXISTS interesse TEXT,
-      ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'Novo',
-      ADD COLUMN IF NOT EXISTS ultimo_contato DATE,
-      ADD COLUMN IF NOT EXISTS aprovado BOOLEAN DEFAULT false,
-      ADD COLUMN IF NOT EXISTS visita BOOLEAN DEFAULT false,
-      ADD COLUMN IF NOT EXISTS proposta BOOLEAN DEFAULT false,
-      ADD COLUMN IF NOT EXISTS venda BOOLEAN DEFAULT false;
-  `);
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS leads_nao_identificados (
-      id SERIAL PRIMARY KEY,
-      whatsapp TEXT UNIQUE NOT NULL,
-      mensagem TEXT,
-      corretor TEXT,
-      criado_em TIMESTAMPTZ DEFAULT now(),
-      avisado_em TIMESTAMPTZ
-    );
-  `);
-  await pool.query(`ALTER TABLE leads_nao_identificados ADD COLUMN IF NOT EXISTS corretor TEXT;`);
-  console.log('✅ Tabelas do lead router prontas (leads, leads_nao_identificados)');
-}
-
-// ─── IMPORTAÇÃO EM LOTE (reutilizada pelo upload manual e pela sincronização com Google Sheets) ─
-function normalizarTexto(s) {
-  return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
-}
-
-// Normaliza qualquer número de WhatsApp pro MESMO formato sempre (55 + DDD + 9 dígitos),
-// resolvendo o problema clássico do "9º dígito" do celular no Brasil, que causa
-// duplicidade de contatos quando o número chega em formatos diferentes por canais diferentes.
-function canonicalizarWhatsapp(bruto) {
-  let d = String(bruto || '').replace(/\D/g, '');
-  if (!d) return '';
-
-  // Remove o código do país se já vier com ele, pra normalizar a partir do DDD
-  if (d.startsWith('55') && d.length > 11) d = d.slice(2);
-
-  // DDD (2 dígitos) + 8 dígitos = celular sem o "9" na frente — adiciona
-  if (d.length === 10) {
-    d = d.slice(0, 2) + '9' + d.slice(2);
+  :root {
+    --bg: #FAF9F6;
+    --bg-card: #FFFFFF;
+    --ink: #24211D;
+    --ink-soft: #6B675F;
+    --line: #E7E3DA;
+    --amber: #B8863B;
+    --amber-soft: #F3E7D2;
+    --ok: #4A7A5E;
+    --ok-soft: #E4EFE7;
+    --warn: #B14B3B;
+    --warn-soft: #F6E4E0;
   }
 
-  return '55' + d;
-}
+  * { box-sizing: border-box; }
 
-// Reconhece a coluna certa pelo nome do cabeçalho, mesmo com variações (acento, maiúscula, espaço)
-function mapearColunas(headers) {
-  const mapa = {
-    nome: ['nome', 'cliente', 'nome do cliente'],
-    whatsapp: ['whatsapp', 'telefone', 'fone', 'celular'],
-    origem: ['origem', 'canal'],
-    corretor: ['corretor'],
-    imovelDesc: ['interesse', 'imovel', 'imóvel'],
-  };
-  const idx = {};
-  headers.forEach((h, i) => {
-    const hn = normalizarTexto(h);
-    for (const [campo, nomes] of Object.entries(mapa)) {
-      if (nomes.includes(hn) && idx[campo] === undefined) idx[campo] = i;
-    }
-  });
-  return idx;
-}
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: 'Space Grotesk', sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
 
-async function importarLeadsEmLote(leads) {
-  let inseridos = 0;
-  let ignorados = 0;
-  const erros = [];
+  .wrap { max-width: 1320px; margin: 0 auto; padding: 40px 28px 80px; }
 
-  for (const item of leads) {
-    const nome = (item.nome || '').trim();
-    const whatsappBruto = (item.whatsapp || '').trim();
+  header.top {
+    display: flex; align-items: flex-end; justify-content: space-between;
+    margin-bottom: 36px; padding-bottom: 20px; border-bottom: 1px solid var(--line);
+  }
 
-    if (!nome || !whatsappBruto) {
-      ignorados++;
-      continue;
-    }
+  .brand-eyebrow {
+    font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--amber); margin-bottom: 6px;
+  }
 
-    let whatsapp = canonicalizarWhatsapp(whatsappBruto);
+  h1 { font-size: 28px; font-weight: 700; margin: 0; letter-spacing: -0.01em; }
+
+  .top-right { text-align: right; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--ink-soft); }
+
+  #refresh-btn {
+    font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 500; color: var(--ink);
+    background: var(--bg-card); border: 1px solid var(--line); border-radius: 6px;
+    padding: 7px 12px; cursor: pointer; transition: border-color 0.15s ease, background 0.15s ease;
+  }
+  #refresh-btn:hover { border-color: var(--amber); background: var(--amber-soft); }
+  #refresh-btn:active { transform: translateY(1px); }
+  #refresh-btn.loading { color: var(--ink-soft); cursor: default; }
+
+  #add-lead-btn {
+    font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; color: #fff;
+    background: var(--amber); border: 1px solid var(--amber); border-radius: 6px;
+    padding: 7px 12px; cursor: pointer; margin-right: 8px; transition: opacity 0.15s ease;
+  }
+  #add-lead-btn:hover { opacity: 0.88; }
+
+  #import-btn {
+    font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 500; color: var(--ink);
+    background: var(--bg-card); border: 1px solid var(--line); border-radius: 6px;
+    padding: 7px 12px; cursor: pointer; margin-right: 8px; transition: border-color 0.15s ease, background 0.15s ease;
+  }
+  #import-btn:hover { border-color: var(--amber); background: var(--amber-soft); }
+  #import-btn.loading { color: var(--ink-soft); cursor: default; }
+
+  #sync-btn {
+    font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 500; color: var(--ink);
+    background: var(--bg-card); border: 1px solid var(--line); border-radius: 6px;
+    padding: 7px 12px; cursor: pointer; margin-right: 8px; transition: border-color 0.15s ease, background 0.15s ease;
+  }
+  #sync-btn:hover { border-color: var(--ok); background: var(--ok-soft); }
+  #sync-btn.loading { color: var(--ink-soft); cursor: default; }
+
+  .modal-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(36, 33, 29, 0.45);
+    align-items: center; justify-content: center; z-index: 100; padding: 20px;
+  }
+  .modal-overlay.show { display: flex; }
+  .modal {
+    background: var(--bg-card); border-radius: 12px; padding: 26px 28px; width: 100%; max-width: 380px;
+    max-height: 90vh; overflow-y: auto;
+  }
+  .modal h3 { margin: 0 0 18px; font-size: 17px; font-weight: 700; }
+  .modal label { display: block; font-size: 11.5px; color: var(--ink-soft); margin: 12px 0 5px; font-family: 'JetBrains Mono', monospace; text-transform: uppercase; letter-spacing: 0.06em; }
+  .modal input[type="text"], .modal select {
+    width: 100%; font-family: 'Space Grotesk', sans-serif; font-size: 13.5px; color: var(--ink);
+    border: 1px solid var(--line); border-radius: 7px; padding: 9px 11px; background: var(--bg);
+  }
+  .modal input:focus, .modal select:focus { outline: none; border-color: var(--amber); }
+  .modal-erro { color: var(--warn); font-size: 12.5px; margin-top: 10px; min-height: 16px; }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+  .btn-secundario, .btn-primario {
+    font-family: 'Space Grotesk', sans-serif; font-size: 13px; font-weight: 600; border-radius: 7px;
+    padding: 9px 16px; cursor: pointer; border: 1px solid var(--line);
+  }
+  .btn-secundario { background: var(--bg); color: var(--ink-soft); }
+  .btn-primario { background: var(--amber); color: #fff; border-color: var(--amber); }
+  .btn-primario:disabled { opacity: 0.6; cursor: default; }
+
+  .metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 36px; }
+
+  .metric { background: var(--bg-card); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; }
+  .metric .label { font-size: 12px; color: var(--ink-soft); margin-bottom: 10px; }
+  .metric .value { font-family: 'JetBrains Mono', monospace; font-size: 30px; font-weight: 600; letter-spacing: -0.02em; }
+  .metric .sub { font-size: 12px; color: var(--ink-soft); margin-top: 4px; }
+  .metric.accent .value { color: var(--amber); }
+  .metric.warn-metric .value { color: var(--warn); }
+
+  .corretores { display: flex; gap: 10px; margin-bottom: 28px; flex-wrap: wrap; }
+  .corretor-chip {
+    background: var(--bg-card); border: 1px solid var(--line); border-radius: 8px;
+    padding: 10px 16px; display: flex; align-items: center; gap: 10px; font-size: 13px;
+  }
+  .corretor-chip .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .corretor-chip .count { font-family: 'JetBrains Mono', monospace; font-weight: 600; color: var(--ink-soft); }
+
+  .origem-strip { display: flex; gap: 10px; margin-bottom: 28px; flex-wrap: wrap; }
+  .origem-chip {
+    background: var(--bg-card); border: 1px solid var(--line); border-radius: 8px;
+    padding: 10px 16px; display: flex; align-items: center; gap: 10px; font-size: 13px;
+    cursor: pointer; transition: border-color 0.15s ease, background 0.15s ease;
+  }
+  .origem-chip:hover { border-color: var(--amber); }
+  .origem-chip.active { border-color: var(--amber); background: var(--amber-soft); font-weight: 600; }
+  .origem-chip .count { font-family: 'JetBrains Mono', monospace; font-weight: 600; color: var(--amber); }
+
+  .corretor-tabs { display: flex; gap: 6px; flex-wrap: wrap; border-bottom: 1px solid var(--line); padding-bottom: 16px; }
+  .corretor-tab-btn {
+    font-family: 'Space Grotesk', sans-serif; font-size: 12.5px; font-weight: 500; color: var(--ink-soft);
+    background: var(--bg); border: 1px solid var(--line); border-radius: 20px;
+    padding: 7px 14px; cursor: pointer; transition: all 0.15s ease;
+  }
+  .corretor-tab-btn:hover { border-color: var(--amber); color: var(--ink); }
+  .corretor-tab-btn.active { background: var(--ink); border-color: var(--ink); color: #fff; }
+
+  .atividade-balloons { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+  .balloon { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  .balloon .balloon-label { font-size: 11.5px; color: var(--ink-soft); margin-bottom: 6px; }
+  .balloon .balloon-value { font-family: 'JetBrains Mono', monospace; font-size: 22px; font-weight: 600; }
+  .balloon.balloon-accent .balloon-value { color: var(--amber); }
+  .balloon.balloon-ok .balloon-value { color: var(--ok); }
+
+  .panel { background: var(--bg-card); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  .panel-head {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 18px 22px; border-bottom: 1px solid var(--line);
+  }
+  .panel-head h2 { font-size: 15px; font-weight: 600; margin: 0; }
+
+  .filters { display: flex; gap: 8px; flex-wrap: wrap; }
+  select, input[type="date"] {
+    font-family: 'Space Grotesk', sans-serif; font-size: 12px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--ink); padding: 7px 10px; border-radius: 6px;
+  }
+
+  .bulk-bar {
+    display: flex; align-items: center; gap: 10px; padding: 12px 22px;
+    border-bottom: 1px solid var(--line); background: #FCFBF9; flex-wrap: wrap;
+  }
+  .bulk-bar select { font-size: 12.5px; }
+  #bulk-apply-btn {
+    font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; color: #fff;
+    background: var(--amber); border: 1px solid var(--amber); border-radius: 6px;
+    padding: 7px 12px; cursor: pointer;
+  }
+  #bulk-apply-btn:hover { opacity: 0.88; }
+  #bulk-count { color: var(--ink-soft); }
+
+  .table-scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; min-width: 1040px; }
+  thead th {
+    text-align: left; font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--ink-soft); padding: 10px 16px; background: #FCFBF9;
+    border-bottom: 1px solid var(--line); white-space: nowrap;
+  }
+  tbody td { padding: 10px 16px; border-bottom: 1px solid var(--line); font-size: 13.5px; vertical-align: middle; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: #FCFBF9; }
+
+  .lead-name { font-weight: 600; }
+  .lead-meta { color: var(--ink-soft); font-size: 12px; margin-top: 2px; }
+  .mono { font-family: 'JetBrains Mono', monospace; font-size: 12.5px; color: var(--ink-soft); }
+
+  .tag {
+    display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 500;
+    padding: 4px 9px; border-radius: 20px;
+  }
+  .tag-ok { background: var(--ok-soft); color: var(--ok); }
+  .tag-warn { background: var(--warn-soft); color: var(--warn); }
+  .tag-pending { background: var(--amber-soft); color: var(--amber); }
+
+  .corretor-badge { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; font-size: 13px; }
+  .corretor-badge .dot { width: 7px; height: 7px; border-radius: 50%; }
+
+  .time-ago { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--ink-soft); }
+
+  .empty-state { padding: 48px 22px; text-align: center; color: var(--ink-soft); font-size: 13.5px; }
+
+  footer.note { margin-top: 20px; font-size: 11.5px; color: var(--ink-soft); font-family: 'JetBrains Mono', monospace; }
+
+  /* ─── Campos editáveis inline ─── */
+  .edit-select, .edit-date {
+    font-family: 'Space Grotesk', sans-serif; font-size: 12.5px; color: var(--ink);
+    background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+    padding: 5px 8px; min-width: 110px; cursor: pointer;
+  }
+  .edit-select.pendente { border-color: var(--amber); background: var(--amber-soft); color: var(--amber); font-weight: 500; }
+  .edit-select:focus, .edit-date:focus { outline: none; border-color: var(--amber); }
+
+  .edit-text {
+    font-family: 'Space Grotesk', sans-serif; font-size: 12.5px; color: var(--ink);
+    background: var(--bg); border: 1px solid var(--line); border-radius: 6px;
+    padding: 5px 8px; width: 100%; min-width: 140px;
+  }
+  .edit-text:focus { outline: none; border-color: var(--amber); }
+  .edit-text-nome { font-weight: 600; font-size: 13.5px; margin-bottom: 3px; }
+
+  .edit-check { display: flex; align-items: center; justify-content: center; }
+  .edit-check input[type="checkbox"] {
+    width: 17px; height: 17px; cursor: pointer; accent-color: var(--ok);
+  }
+
+  .saving-dot {
+    display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--amber); margin-left: 6px; opacity: 0; transition: opacity 0.15s ease;
+  }
+  .saving-dot.show { opacity: 1; }
+
+  @media (max-width: 720px) {
+    .metrics { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <div>
+      <div class="brand-eyebrow">Diniz Imóveis · Operação de Leads</div>
+      <h1>Quem tá com qual lead</h1>
+    </div>
+    <div class="top-right">
+      <button id="sync-btn" onclick="sincronizarPlanilha()">⇄ Sincronizar planilha</button>
+      <button id="import-btn" onclick="document.getElementById('arquivo-planilha').click()">⇪ Importar arquivo</button>
+      <input type="file" id="arquivo-planilha" accept=".xlsx,.xls,.csv" style="display:none" onchange="importarPlanilha(this.files[0])">
+      <button id="add-lead-btn" onclick="abrirModalLead()">+ Adicionar lead</button>
+      <button id="refresh-btn" onclick="carregarDados()">↻ Atualizar</button>
+      <div id="last-sync" style="margin-top:6px;">Ainda não atualizado</div>
+    </div>
+  </header>
+
+  <div id="modal-overlay" class="modal-overlay" onclick="if(event.target===this) fecharModalLead()">
+    <div class="modal">
+      <h3>Adicionar lead manualmente</h3>
+      <label>Nome</label>
+      <input type="text" id="novo-nome" placeholder="Nome do cliente">
+      <label>WhatsApp</label>
+      <input type="text" id="novo-whatsapp" placeholder="(62) 99999-9999">
+      <label>Origem</label>
+      <select id="novo-origem">
+        <option value="">— escolher —</option>
+        \${ORIGENS.map(o => \`<option value="\${o}">\${o}</option>\`).join('')}
+      </select>
+      <label>Corretor</label>
+      <select id="novo-corretor"></select>
+      <label>Imóvel de interesse (opcional)</label>
+      <input type="text" id="novo-imovel" placeholder="Ex: Apto 3 quartos Bairro X">
+      <div id="modal-erro" class="modal-erro"></div>
+      <div class="modal-actions">
+        <button class="btn-secundario" onclick="fecharModalLead()">Cancelar</button>
+        <button class="btn-primario" onclick="salvarNovoLead()">Salvar lead</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="metrics">
+    <div class="metric"><div class="label">Total de leads</div><div class="value" id="m-distribuidos">—</div><div class="sub" id="m-distribuidos-sub">&nbsp;</div></div>
+    <div class="metric accent"><div class="label">Total de aprovações</div><div class="value" id="m-aprovados">—</div><div class="sub">&nbsp;</div></div>
+    <div class="metric"><div class="label">Total de visitas</div><div class="value" id="m-visitas">—</div><div class="sub">&nbsp;</div></div>
+    <div class="metric"><div class="label">Total de vendas</div><div class="value" id="m-vendas">—</div><div class="sub">&nbsp;</div></div>
+  </div>
+
+  <div class="corretores" id="corretores-strip"></div>
+  <div class="origem-strip" id="origem-strip"></div>
+
+  <div class="panel" style="margin-bottom:28px;">
+    <div class="panel-head">
+      <h2>Campanhas (imóveis)</h2>
+    </div>
+    <div id="campanhas-container" style="padding:16px 22px;"></div>
+  </div>
+
+  <div class="panel" style="margin-bottom:28px;">
+    <div class="panel-head">
+      <h2>Atividade por corretor</h2>
+    </div>
+    <div class="corretor-tabs" id="corretor-tabs" style="padding:16px 22px 0;"></div>
+    <div id="corretor-tab-content" style="padding:16px 22px;"></div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-head">
+      <h2>Atividade recente</h2>
+      <div class="filters">
+        <select id="filtro-corretor" onchange="renderTabela()"><option value="">Todos os corretores</option></select>
+        <select id="filtro-campanha" onchange="renderTabela()"><option value="">Todas as campanhas</option></select>
+        <select id="filtro-origem" onchange="renderTabela()">
+          <option value="">Todas as origens</option>
+          <option value="OLX/Canal Pro">OLX/Canal Pro</option>
+          <option value="Patrocinado">Patrocinado</option>
+          <option value="TikTok">TikTok</option>
+          <option value="Instagram">Instagram</option>
+          <option value="Comentário">Comentário</option>
+          <option value="Outro">Outro</option>
+          <option value="__pendente">Origem pendente</option>
+        </select>
+        <select id="filtro-status" onchange="renderTabela()">
+          <option value="">Todos os status</option>
+          <option value="sem_corretor">Sem corretor</option>
+          <option value="Novo">Novo</option>
+          <option value="Em atendimento">Em atendimento</option>
+          <option value="Visita agendada">Visita agendada</option>
+          <option value="Proposta">Proposta</option>
+          <option value="Sem retorno">Sem retorno</option>
+          <option value="Venda">Venda</option>
+          <option value="Perdido">Perdido</option>
+        </select>
+      </div>
+    </div>
+    <div class="bulk-bar" id="bulk-bar">
+      <span id="bulk-count" class="mono"></span>
+      <select id="bulk-origem-select">
+        <option value="">— escolher origem —</option>
+        <option value="OLX/Canal Pro">OLX/Canal Pro</option>
+        <option value="Patrocinado">Patrocinado</option>
+        <option value="TikTok">TikTok</option>
+        <option value="Instagram">Instagram</option>
+        <option value="Comentário">Comentário</option>
+        <option value="Outro">Outro</option>
+      </select>
+      <button id="bulk-apply-btn" onclick="aplicarOrigemEmMassa()">Aplicar aos leads filtrados</button>
+    </div>
+    <div class="table-scroll" id="tabela-container">
+      <div class="empty-state">Clique em "Atualizar" pra carregar os leads.</div>
+    </div>
+  </div>
+
+  <footer class="note" id="footer-note">diniz-leads-olx · painel manual — atualiza somente ao clicar · edite Origem, Status, Visita, Proposta e Venda direto na tabela</footer>
+
+</div>
+
+<script>
+  const CORES_CORRETOR = ['#B8863B', '#4A7A5E', '#6B5CA5', '#B14B3B', '#3B6EB8'];
+  const ORIGENS = ['OLX/Canal Pro', 'Patrocinado', 'TikTok', 'Instagram', 'Comentário', 'Outro'];
+  const STATUS_OPCOES = ['Novo', 'Em atendimento', 'Visita agendada', 'Proposta', 'Sem retorno', 'Venda', 'Perdido'];
+  let CORRETORES_DISPONIVEIS = [];
+  let ULTIMO_ESTADO = null;
+  let LEADS_FILTRADOS_IDS = [];
+
+  function corDoCorretor(nome) {
+    if (!nome) return '#B14B3B';
+    let hash = 0;
+    for (let i = 0; i < nome.length; i++) hash = nome.charCodeAt(i) + ((hash << 5) - hash);
+    return CORES_CORRETOR[Math.abs(hash) % CORES_CORRETOR.length];
+  }
+
+  function tempoRelativo(dataIso) {
+    if (!dataIso) return '—';
+    const diffMs = Date.now() - new Date(dataIso).getTime();
+    const min = Math.floor(diffMs / 60000);
+    if (min < 1) return 'agora';
+    if (min < 60) return \`há \${min} min\`;
+    const h = Math.floor(min / 60);
+    const restoMin = min % 60;
+    if (h < 24) return \`há \${h}h \${restoMin.toString().padStart(2, '0')}\`;
+    const d = Math.floor(h / 24);
+    return \`há \${d}d\`;
+  }
+
+  function formatarTempoMedio(segundos) {
+    if (segundos === null || segundos === undefined) return '—';
+    const h = Math.floor(segundos / 3600);
+    const m = Math.floor((segundos % 3600) / 60);
+    if (h === 0) return \`\${m}min\`;
+    return \`\${h}h\${m.toString().padStart(2, '0')}\`;
+  }
+
+  async function carregarDados() {
+    const btn = document.getElementById('refresh-btn');
+    btn.classList.add('loading');
+    btn.textContent = '↻ Atualizando…';
 
     try {
-      const result = await pool.query(
-        `INSERT INTO leads (whatsapp, nome, corretor, origem, imovel_desc)
-         VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (whatsapp) DO UPDATE SET
-           origem = COALESCE(leads.origem, EXCLUDED.origem)
-         RETURNING id, (xmax = 0) AS inserido_agora`,
-        [whatsapp, nome, item.corretor || null, item.origem || 'Patrocinado', item.imovelDesc || null]
-      );
-      if (result.rows.length > 0 && result.rows[0].inserido_agora) inseridos++;
-      else ignorados++;
+      const res = await fetch('/api/leads');
+      if (!res.ok) throw new Error('Falha ao buscar dados (' + res.status + ')');
+      const data = await res.json();
+      ULTIMO_ESTADO = data;
+      renderTudo(data);
+      document.getElementById('last-sync').textContent = 'Última atualização: agora mesmo';
     } catch (err) {
-      erros.push(`${nome} (${whatsappBruto}): ${err.message}`);
+      document.getElementById('last-sync').textContent = 'Erro ao atualizar: ' + err.message;
+    } finally {
+      btn.classList.remove('loading');
+      btn.textContent = '↻ Atualizar';
     }
   }
 
-  return { inseridos, ignorados, erros };
-}
-
-// ─── SINCRONIZAÇÃO AUTOMÁTICA COM GOOGLE SHEETS ──────────────
-let sheetsClientCache = null;
-
-async function getSheetsClient() {
-  if (sheetsClientCache) return sheetsClientCache;
-  if (!process.env.GOOGLE_SERVICE_ACCOUNT_KEY) return null;
-
-  const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_KEY);
-  const auth = new google.auth.JWT(
-    credentials.client_email,
-    null,
-    credentials.private_key,
-    ['https://www.googleapis.com/auth/spreadsheets.readonly']
-  );
-  await auth.authorize();
-  sheetsClientCache = google.sheets({ version: 'v4', auth });
-  return sheetsClientCache;
-}
-
-async function sincronizarPlanilhaGoogle() {
-  if (!process.env.GOOGLE_SHEET_ID) {
-    return { ok: false, erro: 'GOOGLE_SHEET_ID não configurada' };
-  }
-
-  const sheets = await getSheetsClient();
-  if (!sheets) {
-    return { ok: false, erro: 'GOOGLE_SERVICE_ACCOUNT_KEY não configurada' };
-  }
-
-  const range = process.env.GOOGLE_SHEET_RANGE || 'A1:Z10000';
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId: process.env.GOOGLE_SHEET_ID,
-    range,
-  });
-
-  const linhas = response.data.values || [];
-  if (linhas.length < 2) return { ok: true, inseridos: 0, ignorados: 0, erros: [] };
-
-  const headers = linhas[0];
-  const idx = mapearColunas(headers);
-
-  const leads = linhas.slice(1).map(linha => ({
-    nome: idx.nome !== undefined ? linha[idx.nome] : '',
-    whatsapp: idx.whatsapp !== undefined ? linha[idx.whatsapp] : '',
-    origem: idx.origem !== undefined ? linha[idx.origem] : null,
-    corretor: idx.corretor !== undefined ? linha[idx.corretor] : null,
-    imovelDesc: idx.imovelDesc !== undefined ? linha[idx.imovelDesc] : null,
-  }));
-
-  const resultado = await importarLeadsEmLote(leads);
-  console.log(`[Google Sheets] Sincronizado: ${resultado.inseridos} novos, ${resultado.ignorados} já existiam ou incompletos`);
-  return { ok: true, ...resultado };
-}
-
-// Reconhece o código do imóvel (ex: VD01, AP02) dentro do código já salvo ou da descrição,
-// e agrupa por esse código — assim "VD01" e "PATRICIA VD01 - GRAN VENEZA" viram a mesma campanha.
-function extrairCodigoImovel(imovelCodigo, imovelDesc) {
-  const texto = `${imovelCodigo || ''} ${imovelDesc || ''}`.toUpperCase();
-  const match = texto.match(/[A-Z]{2}\d{2,}/);
-  if (match) return match[0];
-  return normalizarTexto(imovelDesc || imovelCodigo || 'sem-identificacao');
-}
-
-function agruparCampanhas(linhas) {
-  const grupos = new Map();
-
-  for (const linha of linhas) {
-    const chave = extrairCodigoImovel(linha.imovel_codigo, linha.imovel_desc);
-    const total = parseInt(linha.total, 10) || 0;
-    const totalContataram = parseInt(linha.total_contataram, 10) || 0;
-
-    if (!grupos.has(chave)) {
-      grupos.set(chave, {
-        imovel_codigo: linha.imovel_codigo,
-        imovel_desc: linha.imovel_desc,
-        total: 0,
-        total_contataram: 0,
+  // Salva um campo editável direto na tabela, sem recarregar tudo.
+  // tipo: 'lead' (padrão) ou 'nao_identificado' — este último promove o contato
+  // a lead completo assim que qualquer campo é editado, e recarrega a lista inteira.
+  async function salvarCampo(id, campo, valor, elemento, tipo) {
+    tipo = tipo || 'lead';
+    const url = tipo === 'lead' ? '/api/leads/' + id : '/api/leads-nao-identificados/' + id;
+    const dot = elemento.parentElement.querySelector('.saving-dot');
+    if (dot) dot.classList.add('show');
+    try {
+      const res = await fetch(url, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ campo, valor }),
       });
-    }
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error('Falha ao salvar');
 
-    const grupo = grupos.get(chave);
-    grupo.total += total;
-    grupo.total_contataram += totalContataram;
-    // Mantém a descrição mais completa (mais longa) como a exibida pro grupo
-    const descAtual = (grupo.imovel_desc || '').length;
-    const descNova = (linha.imovel_desc || '').length;
-    if (descNova > descAtual) {
-      grupo.imovel_codigo = linha.imovel_codigo || grupo.imovel_codigo;
-      grupo.imovel_desc = linha.imovel_desc;
-    }
-  }
-
-  return Array.from(grupos.values()).sort((a, b) => b.total - a.total);
-}
-
-// ─── ÍNDICE PERSISTENTE ──────────────────────────────────────
-const INDEX_FILE = '/tmp/index.json';
-
-function lerIndice() {
-  try {
-    const data = fs.readFileSync(INDEX_FILE, 'utf8');
-    return JSON.parse(data).index || 0;
-  } catch { return 0; }
-}
-
-function salvarIndice(index) {
-  try {
-    fs.writeFileSync(INDEX_FILE, JSON.stringify({ index }));
-  } catch (e) { console.error('Erro ao salvar índice:', e); }
-}
-
-// ─── BUFFER DE MENSAGENS (agrupamento 10 min) ────────────────
-const bufferMensagens = {}; // { numero: [{ texto, hora }] }
-let timerResumo = null;
-
-function adicionarAoBuffer(de, conteudo) {
-  if (!bufferMensagens[de]) bufferMensagens[de] = [];
-  bufferMensagens[de].push(conteudo);
-
-  if (!timerResumo) {
-    timerResumo = setTimeout(enviarResumo, 10 * 60 * 1000);
-    console.log('Timer de resumo iniciado (10 min)');
-  }
-}
-
-async function enviarResumo() {
-  timerResumo = null;
-  const contatos = Object.keys(bufferMensagens);
-  if (contatos.length === 0) return;
-
-  let texto = `📱 *Resumo de mensagens*\n`;
-  texto += `_Últimos 10 minutos_\n`;
-
-  for (const numero of contatos) {
-    const msgs = bufferMensagens[numero];
-    texto += `\n👤 *${numero}*\n`;
-    for (const msg of msgs) {
-      texto += `• ${msg}\n`;
-    }
-    delete bufferMensagens[numero];
-  }
-
-  await enviarWhatsApp(JULIANE_LL, texto);
-  console.log('Resumo enviado para Juliane LL');
-}
-
-// ─── FUNÇÃO: ENVIAR MENSAGEM WHATSAPP ────────────────────────
-// instancia opcional — usa a instância principal por padrão
-async function enviarWhatsApp(fone, mensagem, instancia = EVOLUTION_INSTANCE) {
-  const res = await fetch(`${EVOLUTION_URL}/message/sendText/${instancia}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'apikey': EVOLUTION_TOKEN,
-    },
-    body: JSON.stringify({ number: fone, text: mensagem }),
-  });
-  return res.json();
-}
-
-// ─── FUNÇÃO: FORMATAR TELEFONE ───────────────────────────────
-function formatarTelefone(ddd, phone) {
-  if (ddd && phone) {
-    const p = phone.replace(/\D/g, '');
-    if (p.length === 9) return `(${ddd}) ${p.slice(0,5)}-${p.slice(5)}`;
-    if (p.length === 8) return `(${ddd}) ${p.slice(0,4)}-${p.slice(4)}`;
-    return `(${ddd}) ${p}`;
-  }
-  return 'Não informado';
-}
-
-// ─── FUNÇÃO: LIMPAR MENSAGEM DO CLIENTE ──────────────────────
-function limparMensagem(msg) {
-  if (!msg) return '';
-  const corte = msg.indexOf('A seguir, dados para contato');
-  if (corte !== -1) return msg.substring(0, corte).trim();
-  return msg.trim();
-}
-
-// ─── LEAD ROUTER: PARSER DA MENSAGEM DE DISTRIBUIÇÃO ─────────
-function parseDistribuicao(texto) {
-  if (!texto) return null;
-
-  const corretorMatch = texto.match(/corretor\s*[:\-]?\s*(.+)/i);
-  const whatsappMatch = texto.match(/(?:\+?55\s*)?\(?\d{2}\)?\s*9?\d{4}[-\s]?\d{4}/);
-
-  if (!corretorMatch || !whatsappMatch) return null;
-
-  const nomeMatch = texto.match(/nome\s*[:\-]?\s*(.+)/i);
-  const emailMatch = texto.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
-
-  // Origem: reconhece se a própria mensagem de distribuição já disser de onde veio o lead
-  // (ex: "origem: TikTok", "canal: Instagram", "veio de: Patrocinado")
-  const origemMatch = texto.match(/(?:origem|canal|veio de)\s*[:\-]?\s*(.+)/i);
-
-  const primeiraLinha = texto.split('\n')[0].trim();
-  let imovelDesc = primeiraLinha;
-  const prefixMatch = primeiraLinha.match(/interessado\s+(.+)/i);
-  if (prefixMatch) imovelDesc = prefixMatch[1].trim();
-
-  let imovelCodigo = '';
-  const codigoMatch = imovelDesc.match(/^([A-Z]{2}\d+)\s*-?\s*(.*)$/);
-  if (codigoMatch) {
-    imovelCodigo = codigoMatch[1];
-    imovelDesc = codigoMatch[2].trim();
-  }
-
-  const whatsappNormalizado = canonicalizarWhatsapp(whatsappMatch[0]);
-
-  // Origem inferida quando a mensagem não diz explicitamente ("origem:"):
-  // se tiver "CRM" escrito, é lead do OLX/Canal Pro (padrão dessas mensagens);
-  // se tiver só o código do imóvel (ex: VD01) sem CRM, é lead Patrocinado (Insta/Face).
-  let origemInferida = null;
-  if (/\bCRM\b/i.test(texto)) {
-    origemInferida = 'OLX/Canal Pro';
-  } else if (imovelCodigo) {
-    origemInferida = 'Patrocinado';
-  }
-
-  return {
-    nome: nomeMatch ? nomeMatch[1].trim() : 'Sem nome',
-    email: emailMatch ? emailMatch[0] : null,
-    whatsapp: whatsappNormalizado,
-    corretor: corretorMatch[1].trim(),
-    origem: origemMatch ? origemMatch[1].trim() : origemInferida,
-    imovelCodigo,
-    imovelDesc,
-  };
-}
-
-// origemPadrao: usada só se a mensagem em si não tiver a origem escrita (dados.origem).
-// Prioridade: origem escrita na própria mensagem > origem padrão do canal > pendente (null)
-async function salvarDistribuicao(dados, origemPadrao = null) {
-  const origem = dados.origem || origemPadrao || null;
-  await pool.query(
-    `INSERT INTO leads (whatsapp, nome, email, corretor, imovel_codigo, imovel_desc, origem)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
-     ON CONFLICT (whatsapp) DO UPDATE SET
-       nome = EXCLUDED.nome,
-       email = EXCLUDED.email,
-       corretor = EXCLUDED.corretor,
-       imovel_codigo = EXCLUDED.imovel_codigo,
-       imovel_desc = EXCLUDED.imovel_desc,
-       origem = COALESCE(leads.origem, EXCLUDED.origem),
-       distribuido_em = now(),
-       contatou = false,
-       primeiro_contato_em = NULL,
-       avisado_em = NULL`,
-    [dados.whatsapp, dados.nome, dados.email, dados.corretor, dados.imovelCodigo, dados.imovelDesc, origem]
-  );
-  console.log(`Lead distribuído salvo: ${dados.nome} → ${dados.corretor} (${dados.whatsapp}) [origem: ${origem || 'pendente'}]`);
-}
-
-// ─── REGISTRO AUTOMÁTICO DE NOVO CONTATO (número do TikTok) ──
-// Diferente do fluxo do Canal Pro/Juliane, esse número não recebe mensagem de
-// distribuição formatada — então todo contato novo já vira uma linha no funil,
-// com origem = 'TikTok' e corretor em branco (editável no dashboard).
-async function registrarLeadAutomatico(whatsapp, nome, mensagem, origemPadrao) {
-  const existente = await pool.query('SELECT id FROM leads WHERE whatsapp = $1', [whatsapp]);
-  if (existente.rows.length > 0) return false; // já está na base, não sobrescreve
-
-  await pool.query(
-    `INSERT INTO leads (whatsapp, nome, corretor, origem, interesse)
-     VALUES ($1, $2, NULL, $3, $4)
-     ON CONFLICT (whatsapp) DO NOTHING`,
-    [whatsapp, nome || 'Sem nome', origemPadrao, mensagem || null]
-  );
-  console.log(`[Auto] Novo contato registrado: ${nome || whatsapp} (${whatsapp}) [origem: ${origemPadrao}]`);
-  return true;
-}
-
-// ─── LEAD ROUTER: IDENTIFICAÇÃO QUANDO O LEAD ESCREVE ────────
-function precisaAvisar(avisadoEm) {
-  if (!avisadoEm) return true;
-  return (Date.now() - new Date(avisadoEm).getTime()) > THROTTLE_AVISO_MS;
-}
-
-async function identificarLead(whatsapp, mensagemTexto) {
-  const leadResult = await pool.query('SELECT * FROM leads WHERE whatsapp = $1', [whatsapp]);
-
-  if (leadResult.rows.length > 0) {
-    const lead = leadResult.rows[0];
-
-    await pool.query(
-      `UPDATE leads SET contatou = true, primeiro_contato_em = COALESCE(primeiro_contato_em, now())
-       WHERE whatsapp = $1`,
-      [whatsapp]
-    );
-
-    if (precisaAvisar(lead.avisado_em)) {
-      const imovel = [lead.imovel_codigo, lead.imovel_desc].filter(Boolean).join(' - ') || 'não informado';
-      const texto =
-        `✅ Lead identificado\n` +
-        `Nome: ${lead.nome}\n` +
-        `WhatsApp: +${whatsapp}\n` +
-        `Corretor: ${lead.corretor}\n` +
-        `Imóvel: ${imovel}`;
-      await enviarWhatsApp(JULIANE_LL, texto);
-      await pool.query('UPDATE leads SET avisado_em = now() WHERE whatsapp = $1', [whatsapp]);
-      console.log(`Juliane avisada: ${lead.nome} → ${lead.corretor}`);
-    }
-    return;
-  }
-
-  const naoIdentResult = await pool.query(
-    'SELECT * FROM leads_nao_identificados WHERE whatsapp = $1',
-    [whatsapp]
-  );
-  const existente = naoIdentResult.rows[0];
-
-  if (existente) {
-    await pool.query(
-      'UPDATE leads_nao_identificados SET mensagem = $1 WHERE whatsapp = $2',
-      [mensagemTexto, whatsapp]
-    );
-  } else {
-    await pool.query(
-      'INSERT INTO leads_nao_identificados (whatsapp, mensagem) VALUES ($1, $2)',
-      [whatsapp, mensagemTexto]
-    );
-  }
-
-  if (precisaAvisar(existente?.avisado_em)) {
-    const texto =
-      `⚠️ Lead SEM corretor identificado\n` +
-      `WhatsApp: +${whatsapp}\n` +
-      `Mensagem: "${mensagemTexto}"`;
-    await enviarWhatsApp(JULIANE_LL, texto);
-    await pool.query('UPDATE leads_nao_identificados SET avisado_em = now() WHERE whatsapp = $1', [whatsapp]);
-    console.log(`Juliane avisada: lead sem corretor (${whatsapp})`);
-  }
-}
-
-// ─── ROTA: WEBHOOK DO CANAL PRO ──────────────────────────────
-app.post('/lead-canalpro', async (req, res) => {
-  try {
-    const body = req.body;
-    console.log('Lead recebido:', JSON.stringify(body, null, 2));
-
-    const transactionType = body?.transactionType || '';
-    const codigoImovel = body?.clientListingId || 'Não informado';
-    const nomeCliente  = body?.name            || 'Não informado';
-    const emailCliente = body?.email           || 'Não informado';
-    const ddd          = body?.ddd             || '';
-    const phone        = body?.phone           || '';
-    const telefone     = formatarTelefone(ddd, phone);
-    const msgCliente   = limparMensagem(body?.message);
-
-    if (transactionType === 'RENT') {
-      const texto =
-        `Segue um lead de ALUGUEL via Canal Pro\n\n` +
-        `CRM : ${codigoImovel}\n` +
-        `Nome : ${nomeCliente}\n` +
-        `${telefone}\n` +
-        `${emailCliente}\n` +
-        `OBS: ${msgCliente}`;
-
-      await enviarWhatsApp(CYDA, texto);
-      console.log('Lead de aluguel enviado para Cyda');
-      return res.status(200).json({ ok: true, msg: 'Aluguel enviado para Cyda' });
-    }
-
-    const indexAtual = lerIndice();
-    const corretor = CORRETORES[indexAtual];
-    salvarIndice((indexAtual + 1) % CORRETORES.length);
-
-    const texto =
-      `Segue um lead que veio através do Canal Pro\n\n` +
-      `CRM : ${codigoImovel}\n` +
-      `Nome : ${nomeCliente}\n` +
-      `${telefone}\n` +
-      `${emailCliente}\n` +
-      `OBS: ${msgCliente}\n` +
-      `ENVIADO CORRETOR ${corretor.nome.toUpperCase()}`;
-
-    await enviarWhatsApp(corretor.fone, texto);
-
-    const textoControle =
-      `✅ Lead de venda distribuído\n\n` +
-      `CRM : ${codigoImovel}\n` +
-      `Nome : ${nomeCliente}\n` +
-      `${telefone}\n` +
-      `Corretor: ${corretor.nome}`;
-
-    await enviarWhatsApp(JULIANE_LL, textoControle);
-
-    // Registra no funil já com a origem conhecida
-    if (process.env.DATABASE_URL) {
-      const whatsappNormalizado = canonicalizarWhatsapp(telefone);
-      await salvarDistribuicao({
-        whatsapp: whatsappNormalizado,
-        nome: nomeCliente,
-        email: emailCliente,
-        corretor: corretor.nome,
-        imovelCodigo: codigoImovel,
-        imovelDesc: '',
-      }, 'OLX/Canal Pro');
-    }
-
-    console.log(`Lead enviado para ${corretor.nome} (${corretor.fone})`);
-    res.status(200).json({ ok: true, corretor: corretor.nome });
-
-  } catch (err) {
-    console.error('Erro ao processar lead:', err);
-    res.status(500).json({ ok: false, erro: err.message });
-  }
-});
-
-// ─── ROTA: ESPELHO DE MENSAGENS + LEAD ROUTER (Juliane) ──────
-app.post('/webhook-mensagens', async (req, res) => {
-  try {
-    const body = req.body;
-
-    const fromMe = body?.data?.key?.fromMe || body?.key?.fromMe || false;
-    const jid = body?.data?.key?.remoteJid || body?.key?.remoteJid || '';
-
-    if (jid.includes('@g.us')) {
-      console.log('Mensagem de grupo ignorada');
-      return res.status(200).json({ ok: true });
-    }
-
-    const de = canonicalizarWhatsapp(jid.replace('@s.whatsapp.net', '').replace('@c.us', ''));
-    const msg = body?.data?.message || body?.message || {};
-    const conteudo = msg?.conversation || msg?.extendedTextMessage?.text || msg?.imageMessage?.caption || '[mídia]';
-
-    if (fromMe) {
-      if (process.env.DATABASE_URL) {
-        const distribuicao = parseDistribuicao(conteudo);
-        if (distribuicao) {
-          // Distribuição feita pelo WhatsApp da Juliane — esse canal é usado pra repassar
-          // leads patrocinados (Insta/Facebook), então assume 'Patrocinado' como origem padrão
-          // quando a mensagem não disser outra origem explicitamente. Segue editável no dashboard.
-          await salvarDistribuicao(distribuicao, 'Patrocinado');
-          await enviarWhatsApp(JULIANE_LL, `📋 Nova distribuição de lead:\n\n${conteudo}`);
-          console.log(`Distribuição espelhada pra Juliane: ${distribuicao.nome} → ${distribuicao.corretor}`);
-        }
+      if (tipo === 'nao_identificado') {
+        // Contato promovido a lead completo — some da lista de não identificados
+        await carregarDados();
+        return;
       }
-      return res.status(200).json({ ok: true });
-    }
 
-    adicionarAoBuffer(de, conteudo);
-    console.log(`Mensagem de ${de} adicionada ao buffer`);
-
-    if (process.env.DATABASE_URL) {
-      await identificarLead(de, conteudo);
-    }
-
-    res.status(200).json({ ok: true });
-
-  } catch (err) {
-    console.error('Erro ao processar mensagem:', err);
-    res.status(500).json({ ok: false, erro: err.message });
-  }
-});
-
-// ─── ROTA: WEBHOOK DO NÚMERO DO TIKTOK ───────────────────────
-// Aponte o webhook da instância `diniz-tiktok` na Evolution API pra essa rota.
-// Reaproveita o mesmo parser de distribuição — quando o número do TikTok manda
-// a mensagem de distribuição pro corretor, o sistema já grava o lead com origem = 'TikTok'.
-app.post('/webhook-mensagens-tiktok', async (req, res) => {
-  try {
-    const body = req.body;
-
-    const fromMe = body?.data?.key?.fromMe || body?.key?.fromMe || false;
-    const jid = body?.data?.key?.remoteJid || body?.key?.remoteJid || '';
-
-    if (jid.includes('@g.us')) {
-      console.log('[TikTok] Mensagem de grupo ignorada');
-      return res.status(200).json({ ok: true });
-    }
-
-    const de = canonicalizarWhatsapp(jid.replace('@s.whatsapp.net', '').replace('@c.us', ''));
-    const msg = body?.data?.message || body?.message || {};
-    const conteudo = msg?.conversation || msg?.extendedTextMessage?.text || msg?.imageMessage?.caption || '[mídia]';
-
-    if (fromMe) {
-      if (process.env.DATABASE_URL) {
-        const distribuicao = parseDistribuicao(conteudo);
-        if (distribuicao) {
-          // Origem já conhecida: veio pelo número do TikTok.
-          // Se quiser diferenciar TikTok / Instagram / Comentário manualmente,
-          // deixe origem = null aqui e ajuste depois pelo dashboard.
-          await salvarDistribuicao(distribuicao, 'TikTok');
-          await enviarWhatsApp(JULIANE_LL, `📋 Nova distribuição de lead (TikTok):\n\n${conteudo}`);
-          console.log(`[TikTok] Distribuição espelhada pra Juliane: ${distribuicao.nome} → ${distribuicao.corretor}`);
-        }
+      if (ULTIMO_ESTADO) {
+        const lead = ULTIMO_ESTADO.leads.find(l => l.id === id);
+        if (lead) lead[campo] = valor;
       }
-      return res.status(200).json({ ok: true });
+      if ((campo === 'origem' || campo === 'corretor') && elemento.classList) {
+        elemento.classList.toggle('pendente', !valor);
+      }
+    } catch (err) {
+      alert('Não consegui salvar essa alteração. Tenta de novo.');
+    } finally {
+      if (dot) setTimeout(() => dot.classList.remove('show'), 400);
+    }
+  }
+
+  async function sincronizarPlanilha() {
+    const btn = document.getElementById('sync-btn');
+    btn.classList.add('loading');
+    btn.textContent = '⇄ Sincronizando…';
+
+    try {
+      const res = await fetch('/api/sincronizar-planilha', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.erro || 'Falha ao sincronizar');
+
+      await carregarDados();
+      if (data.inseridos > 0 || data.ignorados > 0) {
+        document.getElementById('last-sync').textContent =
+          \`Sincronizado: +\${data.inseridos} novo\${data.inseridos === 1 ? '' : 's'}\`;
+      }
+    } catch (err) {
+      alert('Não consegui sincronizar com a planilha: ' + err.message);
+    } finally {
+      btn.classList.remove('loading');
+      btn.textContent = '⇄ Sincronizar planilha';
+    }
+  }
+
+  // Reconhece a coluna certa mesmo que o nome varie um pouco (maiúscula, acento, espaço)
+  function acharColuna(linha, possiveisNomes) {
+    const chaves = Object.keys(linha);
+    for (const nomePossivel of possiveisNomes) {
+      const alvo = nomePossivel.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      const chave = chaves.find(k => k.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim() === alvo);
+      if (chave) return linha[chave];
+    }
+    return '';
+  }
+
+  async function importarPlanilha(arquivo) {
+    if (!arquivo) return;
+    const btn = document.getElementById('import-btn');
+    btn.classList.add('loading');
+    btn.textContent = '⇪ Lendo planilha…';
+
+    try {
+      const buffer = await arquivo.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: 'array' });
+      const primeiraAba = workbook.Sheets[workbook.SheetNames[0]];
+      const linhas = XLSX.utils.sheet_to_json(primeiraAba, { defval: '' });
+
+      if (linhas.length === 0) {
+        alert('Não encontrei nenhuma linha nessa planilha.');
+        return;
+      }
+
+      const leads = linhas.map(linha => ({
+        nome: String(acharColuna(linha, ['Nome', 'Cliente', 'Nome do Cliente'])).trim(),
+        whatsapp: String(acharColuna(linha, ['WhatsApp', 'Whatsapp', 'Telefone', 'Fone', 'Celular'])).trim(),
+        origem: String(acharColuna(linha, ['Origem', 'Canal'])).trim() || null,
+        corretor: String(acharColuna(linha, ['Corretor'])).trim() || null,
+        imovelDesc: String(acharColuna(linha, ['Interesse', 'Imovel', 'Imóvel'])).trim() || null,
+      })).filter(l => l.nome && l.whatsapp);
+
+      if (leads.length === 0) {
+        alert('Não consegui identificar as colunas de Nome e WhatsApp nessa planilha. Confere se os nomes das colunas batem com o esperado (Nome, WhatsApp, Origem, Corretor, Interesse).');
+        return;
+      }
+
+      btn.textContent = '⇪ Importando…';
+      const res = await fetch('/api/leads/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ leads }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.erro || 'Falha ao importar');
+
+      alert(\`Importação concluída: \${data.inseridos} lead\${data.inseridos === 1 ? '' : 's'} novo\${data.inseridos === 1 ? '' : 's'} adicionado\${data.inseridos === 1 ? '' : 's'}, \${data.ignorados} já existia\${data.ignorados === 1 ? '' : 'm'} ou estava\${data.ignorados === 1 ? '' : 'm'} incompleto\${data.ignorados === 1 ? '' : 's'}.\`);
+      await carregarDados();
+    } catch (err) {
+      alert('Não consegui importar essa planilha: ' + err.message);
+    } finally {
+      btn.classList.remove('loading');
+      btn.textContent = '⇪ Importar planilha';
+      document.getElementById('arquivo-planilha').value = '';
+    }
+  }
+
+  async function aplicarOrigemEmMassa() {
+    const origem = document.getElementById('bulk-origem-select').value;
+    if (!origem) {
+      alert('Escolhe uma origem primeiro.');
+      return;
+    }
+    if (LEADS_FILTRADOS_IDS.length === 0) {
+      alert('Nenhum lead filtrado pra aplicar.');
+      return;
+    }
+    const confirmar = confirm(\`Definir origem "\${origem}" para \${LEADS_FILTRADOS_IDS.length} lead\${LEADS_FILTRADOS_IDS.length === 1 ? '' : 's'} filtrado\${LEADS_FILTRADOS_IDS.length === 1 ? '' : 's'}?\`);
+    if (!confirmar) return;
+
+    const btn = document.getElementById('bulk-apply-btn');
+    btn.disabled = true;
+    btn.textContent = 'Aplicando…';
+
+    try {
+      for (const id of LEADS_FILTRADOS_IDS) {
+        await fetch('/api/leads/' + id, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ campo: 'origem', valor: origem }),
+        });
+      }
+      await carregarDados();
+    } catch (err) {
+      alert('Deu erro ao aplicar em alguns leads. Confere e tenta de novo se precisar.');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Aplicar aos leads filtrados';
+    }
+  }
+
+  function abrirModalLead() {
+    document.getElementById('modal-erro').textContent = '';
+    document.getElementById('novo-nome').value = '';
+    document.getElementById('novo-whatsapp').value = '';
+    document.getElementById('novo-origem').value = '';
+    document.getElementById('novo-imovel').value = '';
+
+    const selectCorretor = document.getElementById('novo-corretor');
+    selectCorretor.innerHTML = CORRETORES_DISPONIVEIS.map(c => \`<option value="\${c}">\${c}</option>\`).join('');
+
+    document.getElementById('modal-overlay').classList.add('show');
+  }
+
+  function fecharModalLead() {
+    document.getElementById('modal-overlay').classList.remove('show');
+  }
+
+  async function salvarNovoLead() {
+    const nome = document.getElementById('novo-nome').value.trim();
+    const whatsapp = document.getElementById('novo-whatsapp').value.trim();
+    const origem = document.getElementById('novo-origem').value;
+    const corretor = document.getElementById('novo-corretor').value;
+    const imovelDesc = document.getElementById('novo-imovel').value.trim();
+    const erroEl = document.getElementById('modal-erro');
+    const btnSalvar = document.querySelector('.btn-primario');
+
+    if (!nome || !whatsapp || !corretor) {
+      erroEl.textContent = 'Preencha nome, WhatsApp e corretor.';
+      return;
     }
 
-    // Mensagem recebida de fora no número do TikTok — registra como lead automaticamente,
-    // mesmo sem formato de distribuição (esse número não dispara aquela mensagem padrão)
-    if (process.env.DATABASE_URL) {
-      const pushName = body?.data?.pushName || body?.pushName || null;
-      await registrarLeadAutomatico(de, pushName, conteudo, 'TikTok');
+    btnSalvar.disabled = true;
+    btnSalvar.textContent = 'Salvando…';
+    erroEl.textContent = '';
+
+    try {
+      const res = await fetch('/api/leads', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nome, whatsapp, origem, corretor, imovelDesc }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.erro || 'Não consegui salvar');
+
+      fecharModalLead();
+      await carregarDados();
+    } catch (err) {
+      erroEl.textContent = err.message;
+    } finally {
+      btnSalvar.disabled = false;
+      btnSalvar.textContent = 'Salvar lead';
+    }
+  }
+
+  let ABA_CORRETOR_ATIVA = 'Geral';
+
+  function selecionarAbaCorretor(nome) {
+    ABA_CORRETOR_ATIVA = nome;
+    renderCorretorTabs();
+    renderCorretorTabContent();
+  }
+
+  function renderCorretorTabs() {
+    const container = document.getElementById('corretor-tabs');
+    const abas = ['Geral', ...CORRETORES_DISPONIVEIS];
+    container.innerHTML = abas.map(nome =>
+      \`<button class="corretor-tab-btn \${ABA_CORRETOR_ATIVA === nome ? 'active' : ''}" onclick="selecionarAbaCorretor('\${nome.replace(/'/g, "\\\\'")}')">\${nome}</button>\`
+    ).join('');
+  }
+
+  function renderCorretorTabContent() {
+    const container = document.getElementById('corretor-tab-content');
+    if (!ULTIMO_ESTADO) return;
+
+    let dados;
+    if (ABA_CORRETOR_ATIVA === 'Geral') {
+      dados = ULTIMO_ESTADO.totalGeral || { total: 0, contataram: 0, aprovados: 0, visitas: 0, propostas: 0, vendas: 0 };
+    } else {
+      const detalhado = (ULTIMO_ESTADO.porCorretorDetalhado || []).find(c => c.corretor === ABA_CORRETOR_ATIVA);
+      dados = detalhado || { total: 0, contataram: 0, aprovados: 0, visitas: 0, propostas: 0, vendas: 0 };
     }
 
-    res.status(200).json({ ok: true });
-
-  } catch (err) {
-    console.error('[TikTok] Erro ao processar mensagem:', err);
-    res.status(500).json({ ok: false, erro: err.message });
-  }
-});
-
-// ─── AUTENTICAÇÃO BÁSICA DO PAINEL ───────────────────────────
-function basicAuth(req, res, next) {
-  const user = process.env.DASHBOARD_USER || 'diniz';
-  const pass = process.env.DASHBOARD_PASS;
-
-  if (!pass) {
-    console.warn('⚠️  DASHBOARD_PASS não configurada — painel está SEM proteção por senha.');
-    return next();
+    container.innerHTML = \`<div class="atividade-balloons">
+      <div class="balloon"><div class="balloon-label">Leads</div><div class="balloon-value">\${dados.total}</div></div>
+      <div class="balloon"><div class="balloon-label">Contataram</div><div class="balloon-value">\${dados.contataram}</div></div>
+      <div class="balloon balloon-accent"><div class="balloon-label">Aprovados</div><div class="balloon-value">\${dados.aprovados}</div></div>
+      <div class="balloon"><div class="balloon-label">Visitas</div><div class="balloon-value">\${dados.visitas}</div></div>
+      <div class="balloon"><div class="balloon-label">Propostas</div><div class="balloon-value">\${dados.propostas}</div></div>
+      <div class="balloon balloon-ok"><div class="balloon-label">Vendas</div><div class="balloon-value">\${dados.vendas}</div></div>
+    </div>\`;
   }
 
-  const auth = req.headers.authorization;
-  if (!auth || !auth.startsWith('Basic ')) {
-    res.set('WWW-Authenticate', 'Basic realm="Painel de Leads"');
-    return res.status(401).send('Autenticação necessária');
+  // "Não informado" no balão corresponde à opção especial __pendente do filtro de origem
+  function origemParaFiltro(origemChip) {
+    return origemChip === 'Não informado' ? '__pendente' : origemChip;
   }
 
-  const [u, p] = Buffer.from(auth.slice(6), 'base64').toString().split(':');
-  if (u === user && p === pass) return next();
-
-  res.set('WWW-Authenticate', 'Basic realm="Painel de Leads"');
-  return res.status(401).send('Credenciais inválidas');
-}
-
-// ─── ROTA: API DE LEADS (alimenta o dashboard) ───────────────
-app.get('/api/leads', basicAuth, async (req, res) => {
-  if (!process.env.DATABASE_URL) {
-    return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
-  }
-  try {
-    const leadsResult = await pool.query(
-      `SELECT id, whatsapp, nome, email, corretor, imovel_codigo, imovel_desc,
-              distribuido_em, contatou, primeiro_contato_em,
-              origem, interesse, status, ultimo_contato, aprovado, visita, proposta, venda
-       FROM leads
-       ORDER BY distribuido_em DESC
-       LIMIT 1000`
-    );
-
-    const naoIdentResult = await pool.query(
-      `SELECT id, whatsapp, mensagem, corretor, criado_em
-       FROM leads_nao_identificados
-       WHERE criado_em > now() - interval '7 days'
-       ORDER BY criado_em DESC
-       LIMIT 50`
-    );
-
-    const statsResult = await pool.query(`
-      SELECT
-        count(*) FILTER (WHERE distribuido_em > now() - interval '7 days') AS total_distribuidos,
-        count(*) FILTER (WHERE distribuido_em > now() - interval '7 days' AND contatou) AS total_contataram,
-        count(*) FILTER (WHERE distribuido_em > now() - interval '24 hours') AS distribuidos_24h,
-        count(*) FILTER (WHERE distribuido_em > now() - interval '7 days' AND aprovado) AS total_aprovados,
-        count(*) FILTER (WHERE distribuido_em > now() - interval '7 days' AND visita) AS total_visitas,
-        count(*) FILTER (WHERE distribuido_em > now() - interval '7 days' AND venda) AS total_vendas,
-        avg(primeiro_contato_em - distribuido_em)
-          FILTER (WHERE contatou AND distribuido_em > now() - interval '7 days') AS tempo_medio_contato
-      FROM leads
-    `);
-
-    const semCorretor24hResult = await pool.query(`
-      SELECT count(*) AS total
-      FROM leads_nao_identificados
-      WHERE criado_em > now() - interval '24 hours'
-    `);
-
-    const porCorretorResult = await pool.query(`
-      SELECT corretor, count(*) AS total
-      FROM leads
-      WHERE distribuido_em > now() - interval '7 days'
-      GROUP BY corretor
-      ORDER BY total DESC
-    `);
-
-    // Sem limite de tempo — usado nas abas de "Atividade por corretor", pra bater
-    // com o total real (a lista principal de leads é limitada a 100 linhas, essa não)
-    const porCorretorDetalhadoResult = await pool.query(`
-      SELECT
-        corretor,
-        count(*) AS total,
-        count(*) FILTER (WHERE contatou) AS contataram,
-        count(*) FILTER (WHERE aprovado) AS aprovados,
-        count(*) FILTER (WHERE visita) AS visitas,
-        count(*) FILTER (WHERE proposta) AS propostas,
-        count(*) FILTER (WHERE venda) AS vendas
-      FROM leads
-      WHERE corretor IS NOT NULL
-      GROUP BY corretor
-      ORDER BY total DESC
-    `);
-
-    const totalGeralResult = await pool.query(`
-      SELECT
-        count(*) AS total,
-        count(*) FILTER (WHERE contatou) AS contataram,
-        count(*) FILTER (WHERE aprovado) AS aprovados,
-        count(*) FILTER (WHERE visita) AS visitas,
-        count(*) FILTER (WHERE proposta) AS propostas,
-        count(*) FILTER (WHERE venda) AS vendas
-      FROM leads
-    `);
-
-    const porCampanhaResult = await pool.query(`
-      SELECT
-        imovel_codigo,
-        imovel_desc,
-        count(*) AS total,
-        count(*) FILTER (WHERE contatou) AS total_contataram
-      FROM leads
-      WHERE distribuido_em > now() - interval '7 days'
-      GROUP BY imovel_codigo, imovel_desc
-      ORDER BY total DESC
-    `);
-    const campanhasAgrupadas = agruparCampanhas(porCampanhaResult.rows);
-
-    const porOrigemResult = await pool.query(`
-      SELECT COALESCE(origem, 'Não informado') AS origem, count(*) AS total
-      FROM leads
-      WHERE distribuido_em > now() - interval '7 days'
-      GROUP BY origem
-      ORDER BY total DESC
-    `);
-
-    res.json({
-      ok: true,
-      leads: leadsResult.rows,
-      naoIdentificados: naoIdentResult.rows,
-      stats: {
-        totalDistribuidos: parseInt(statsResult.rows[0].total_distribuidos, 10) || 0,
-        totalContataram: parseInt(statsResult.rows[0].total_contataram, 10) || 0,
-        distribuidos24h: parseInt(statsResult.rows[0].distribuidos_24h, 10) || 0,
-        totalAprovados: parseInt(statsResult.rows[0].total_aprovados, 10) || 0,
-        totalVisitas: parseInt(statsResult.rows[0].total_visitas, 10) || 0,
-        totalVendas: parseInt(statsResult.rows[0].total_vendas, 10) || 0,
-        semCorretor24h: parseInt(semCorretor24hResult.rows[0].total, 10) || 0,
-        tempoMedioContatoSegundos: statsResult.rows[0].tempo_medio_contato
-          ? Math.round(statsResult.rows[0].tempo_medio_contato.hours * 3600
-              + statsResult.rows[0].tempo_medio_contato.minutes * 60
-              + (statsResult.rows[0].tempo_medio_contato.seconds || 0))
-          : null,
-      },
-      porCorretor: porCorretorResult.rows,
-      porCorretorDetalhado: porCorretorDetalhadoResult.rows.map(r => ({
-        corretor: r.corretor,
-        total: parseInt(r.total, 10) || 0,
-        contataram: parseInt(r.contataram, 10) || 0,
-        aprovados: parseInt(r.aprovados, 10) || 0,
-        visitas: parseInt(r.visitas, 10) || 0,
-        propostas: parseInt(r.propostas, 10) || 0,
-        vendas: parseInt(r.vendas, 10) || 0,
-      })),
-      totalGeral: {
-        total: parseInt(totalGeralResult.rows[0].total, 10) || 0,
-        contataram: parseInt(totalGeralResult.rows[0].contataram, 10) || 0,
-        aprovados: parseInt(totalGeralResult.rows[0].aprovados, 10) || 0,
-        visitas: parseInt(totalGeralResult.rows[0].visitas, 10) || 0,
-        propostas: parseInt(totalGeralResult.rows[0].propostas, 10) || 0,
-        vendas: parseInt(totalGeralResult.rows[0].vendas, 10) || 0,
-      },
-      porCampanha: campanhasAgrupadas,
-      porOrigem: porOrigemResult.rows,
-      corretoresDisponiveis: [...CORRETORES.map(c => c.nome), ...CORRETORES_EXTRA_DASHBOARD],
-    });
-  } catch (err) {
-    console.error('Erro ao buscar leads:', err);
-    res.status(500).json({ ok: false, erro: err.message });
-  }
-});
-
-// ─── ROTA: IMPORTAR LEADS EM LOTE (via planilha enviada no dashboard) ─
-// Body esperado: { leads: [{ nome, whatsapp, origem, corretor, imovelDesc }, ...] }
-// Ignora silenciosamente quem já existe (mesmo WhatsApp) — não sobrescreve.
-app.post('/api/leads/import', basicAuth, async (req, res) => {
-  if (!process.env.DATABASE_URL) {
-    return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
-  }
-  const { leads } = req.body;
-  if (!Array.isArray(leads) || leads.length === 0) {
-    return res.status(400).json({ ok: false, erro: 'Nenhum lead recebido' });
+  function filtrarPorOrigem(valorFiltro) {
+    const select = document.getElementById('filtro-origem');
+    // Clicar de novo no mesmo balão já ativo remove o filtro (alterna)
+    select.value = select.value === valorFiltro ? '' : valorFiltro;
+    renderTudo(ULTIMO_ESTADO);
+    document.getElementById('tabela-container').scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
-  const resultado = await importarLeadsEmLote(leads);
-  console.log(`Importação manual: ${resultado.inseridos} inseridos, ${resultado.ignorados} ignorados`);
-  res.json({ ok: true, ...resultado });
-});
+  function renderTudo(data) {
+    CORRETORES_DISPONIVEIS = data.corretoresDisponiveis || [];
+    document.getElementById('m-distribuidos').textContent = data.stats.totalDistribuidos;
+    document.getElementById('m-distribuidos-sub').textContent = '+' + data.stats.distribuidos24h + ' nas últimas 24h';
 
-// ─── ROTA: SINCRONIZAR AGORA COM A PLANILHA DO GOOGLE ────────
-app.post('/api/sincronizar-planilha', basicAuth, async (req, res) => {
-  try {
-    const resultado = await sincronizarPlanilhaGoogle();
-    if (!resultado.ok) return res.status(400).json(resultado);
-    res.json(resultado);
-  } catch (err) {
-    console.error('Erro ao sincronizar planilha:', err);
-    res.status(500).json({ ok: false, erro: err.message });
-  }
-});
+    document.getElementById('m-aprovados').textContent = data.stats.totalAprovados;
+    document.getElementById('m-visitas').textContent = data.stats.totalVisitas;
+    document.getElementById('m-vendas').textContent = data.stats.totalVendas;
 
-// ─── ROTA: ADICIONAR LEAD MANUALMENTE ────────────────────────
-// Body esperado: { nome, whatsapp, origem, corretor, imovelDesc (opcional) }
-app.post('/api/leads', basicAuth, async (req, res) => {
-  if (!process.env.DATABASE_URL) {
-    return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
-  }
-  const { nome, whatsapp, origem, corretor, imovelDesc } = req.body;
+    const corretoresMap = {};
+    (data.porCorretor || []).forEach(c => { corretoresMap[c.corretor] = c.total; });
 
-  if (!nome || !whatsapp || !corretor) {
-    return res.status(400).json({ ok: false, erro: 'nome, whatsapp e corretor são obrigatórios' });
-  }
+    const strip = document.getElementById('corretores-strip');
+    strip.innerHTML = Object.keys(corretoresMap).map(nome =>
+      \`<div class="corretor-chip"><span class="dot" style="background:\${corDoCorretor(nome)}"></span>\${nome} <span class="count">\${corretoresMap[nome]}</span></div>\`
+    ).join('') || '<div class="mono">Nenhum lead distribuído ainda</div>';
 
-  const whatsappNormalizado = canonicalizarWhatsapp(whatsapp);
+    const filtroCorretor = document.getElementById('filtro-corretor');
+    const atual = filtroCorretor.value;
+    filtroCorretor.innerHTML = '<option value="">Todos os corretores</option>' +
+      Object.keys(corretoresMap).map(n => \`<option value="\${n}">\${n}</option>\`).join('');
+    filtroCorretor.value = atual;
 
-  try {
-    const result = await pool.query(
-      `INSERT INTO leads (whatsapp, nome, corretor, imovel_desc, origem)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING id`,
-      [whatsappNormalizado, nome, corretor, imovelDesc || null, origem || null]
-    );
-    console.log(`Lead adicionado manualmente: ${nome} → ${corretor} (${whatsappNormalizado})`);
-    res.json({ ok: true, id: result.rows[0].id });
-  } catch (err) {
-    if (err.code === '23505') {
-      return res.status(409).json({ ok: false, erro: 'Já existe um lead com esse WhatsApp' });
+    const origemStrip = document.getElementById('origem-strip');
+    const origens = data.porOrigem || [];
+    const filtroOrigemAtual = document.getElementById('filtro-origem').value;
+    origemStrip.innerHTML = origens.map(o => {
+      const valorFiltro = origemParaFiltro(o.origem);
+      const ativo = filtroOrigemAtual === valorFiltro;
+      return \`<div class="origem-chip \${ativo ? 'active' : ''}" onclick="filtrarPorOrigem('\${valorFiltro.replace(/'/g, "\\\\'")}')">\${o.origem} <span class="count">\${o.total}</span></div>\`;
+    }).join('') || '<div class="mono">Nenhuma origem registrada ainda</div>';
+
+    const campanhasContainer = document.getElementById('campanhas-container');
+    const campanhas = data.porCampanha || [];
+    if (campanhas.length === 0) {
+      campanhasContainer.innerHTML = '<div class="mono">Nenhuma campanha ativa nos últimos 7 dias</div>';
+    } else {
+      campanhasContainer.innerHTML = \`<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:10px;">\` +
+        campanhas.map(c => {
+          const nomeCampanha = [c.imovel_codigo, c.imovel_desc].filter(Boolean).join(' - ') || 'Sem identificação';
+          const pctCamp = c.total > 0 ? Math.round((c.total_contataram / c.total) * 100) : 0;
+          return \`<div style="border:1px solid var(--line); border-radius:8px; padding:12px 14px;">
+            <div style="font-weight:600; font-size:13px; margin-bottom:6px;">\${nomeCampanha}</div>
+            <div class="mono" style="font-size:12px;">\${c.total} lead\${c.total == 1 ? '' : 's'} · \${pctCamp}% contataram</div>
+          </div>\`;
+        }).join('') + '</div>';
     }
-    console.error('Erro ao adicionar lead manual:', err);
-    res.status(500).json({ ok: false, erro: err.message });
-  }
-});
 
-// ─── ROTA: EDITAR QUALQUER CAMPO DE UM NÚMERO NÃO IDENTIFICADO ─
-// Ao editar QUALQUER campo (Origem, Corretor, Status, Visita, Proposta, Venda),
-// o contato "sobe de nível": vira um lead completo e some da lista de não identificados.
-app.patch('/api/leads-nao-identificados/:id', basicAuth, async (req, res) => {
-  if (!process.env.DATABASE_URL) {
-    return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
-  }
-  const { id } = req.params;
-  const { campo, valor } = req.body;
+    const filtroCampanha = document.getElementById('filtro-campanha');
+    const campanhaAtual = filtroCampanha.value;
+    filtroCampanha.innerHTML = '<option value="">Todas as campanhas</option>' +
+      campanhas.map(c => {
+        const nomeCampanha = [c.imovel_codigo, c.imovel_desc].filter(Boolean).join(' - ') || 'Sem identificação';
+        return \`<option value="\${c.imovel_codigo || ''}">\${nomeCampanha}</option>\`;
+      }).join('');
+    filtroCampanha.value = campanhaAtual;
 
-  if (!CAMPOS_EDITAVEIS.includes(campo)) {
-    return res.status(400).json({ ok: false, erro: `Campo '${campo}' não é editável` });
+    renderCorretorTabs();
+    renderCorretorTabContent();
+    renderTabela();
   }
 
-  try {
-    const naoIdentResult = await pool.query('SELECT whatsapp, mensagem FROM leads_nao_identificados WHERE id = $1', [id]);
-    if (naoIdentResult.rows.length === 0) {
-      return res.status(404).json({ ok: false, erro: 'Não encontrado' });
+  function renderTabela() {
+    const container = document.getElementById('tabela-container');
+    if (!ULTIMO_ESTADO) return;
+
+    const filtroCorretor = document.getElementById('filtro-corretor').value;
+    const filtroCampanha = document.getElementById('filtro-campanha').value;
+    const filtroOrigem = document.getElementById('filtro-origem').value;
+    const filtroStatus = document.getElementById('filtro-status').value;
+
+    let linhas = ULTIMO_ESTADO.leads.map(l => ({ tipo: 'lead', ...l }));
+    let naoIdent = ULTIMO_ESTADO.naoIdentificados.map(n => ({ tipo: 'nao_identificado', ...n }));
+
+    let todos = [...linhas, ...naoIdent];
+
+    if (filtroStatus === 'sem_corretor') {
+      todos = naoIdent;
+    } else if (filtroStatus) {
+      todos = linhas.filter(l => (l.status || 'Novo') === filtroStatus);
     }
-    const { whatsapp, mensagem } = naoIdentResult.rows[0];
 
-    // Se o campo editado for o próprio 'nome', usa o valor digitado como nome
-    // (em vez do placeholder 'Sem nome') e evita listar a coluna nome duas vezes.
-    const nomeInicial = campo === 'nome' ? valor : 'Sem nome';
-    const colunaExtra = campo === 'nome' ? null : campo;
-
-    const colunas = ['whatsapp', 'nome', 'interesse'];
-    const valores = [whatsapp, nomeInicial, mensagem || null];
-    if (colunaExtra) {
-      colunas.push(colunaExtra);
-      valores.push(valor);
+    if (filtroCorretor) {
+      todos = todos.filter(l => l.tipo === 'lead' && l.corretor === filtroCorretor);
     }
-    const placeholders = valores.map((_, i) => `$${i + 1}`).join(', ');
-    const setClause = colunaExtra ? `${colunaExtra} = EXCLUDED.${colunaExtra}` : 'nome = EXCLUDED.nome';
 
-    const insertResult = await pool.query(
-      `INSERT INTO leads (${colunas.join(', ')})
-       VALUES (${placeholders})
-       ON CONFLICT (whatsapp) DO UPDATE SET ${setClause}
-       RETURNING id`,
-      valores
-    );
-    await pool.query('DELETE FROM leads_nao_identificados WHERE id = $1', [id]);
+    if (filtroCampanha) {
+      todos = todos.filter(l => l.tipo === 'lead' && l.imovel_codigo === filtroCampanha);
+    }
 
-    console.log(`Contato promovido a lead: ${whatsapp} [${campo} = ${valor}]`);
-    res.json({ ok: true, promovido: true, id: insertResult.rows[0].id });
-  } catch (err) {
-    console.error('Erro ao editar não identificado:', err);
-    res.status(500).json({ ok: false, erro: err.message });
+    if (filtroOrigem === '__pendente') {
+      todos = todos.filter(l => l.tipo === 'lead' && !l.origem);
+    } else if (filtroOrigem) {
+      todos = todos.filter(l => l.tipo === 'lead' && l.origem === filtroOrigem);
+    }
+
+    todos.sort((a, b) => new Date(b.distribuido_em || b.criado_em) - new Date(a.distribuido_em || a.criado_em));
+
+    // Guarda os IDs dos leads (não os "não identificados") atualmente filtrados,
+    // pra ação em massa de definir origem
+    LEADS_FILTRADOS_IDS = todos.filter(l => l.tipo === 'lead').map(l => l.id);
+    const bulkCount = document.getElementById('bulk-count');
+    if (bulkCount) {
+      bulkCount.textContent = LEADS_FILTRADOS_IDS.length > 0
+        ? \`\${LEADS_FILTRADOS_IDS.length} lead\${LEADS_FILTRADOS_IDS.length === 1 ? '' : 's'} filtrado\${LEADS_FILTRADOS_IDS.length === 1 ? '' : 's'}\`
+        : 'Nenhum lead filtrado';
+    }
+
+    if (todos.length === 0) {
+      container.innerHTML = '<div class="empty-state">Nenhum lead encontrado com esse filtro.</div>';
+      return;
+    }
+
+    const linhasHtml = todos.map(item => {
+      if (item.tipo === 'nao_identificado') {
+        const imovelInputNI = \`<input type="text" class="edit-text" placeholder="— escrever —" value="" onchange="salvarCampo(\${item.id}, 'imovel_desc', this.value, this, 'nao_identificado')">\`;
+
+        const origemSelectNI = \`<select class="edit-select \${!item.origem ? 'pendente' : ''}" onchange="salvarCampo(\${item.id}, 'origem', this.value, this, 'nao_identificado')">
+          <option value="" \${!item.origem ? 'selected' : ''}>— escolher —</option>
+          \${ORIGENS.map(o => \`<option value="\${o}">\${o}</option>\`).join('')}
+        </select><span class="saving-dot"></span>\`;
+
+        const corretorSelectNI = \`<select class="edit-select \${!item.corretor ? 'pendente' : ''}" onchange="salvarCampo(\${item.id}, 'corretor', this.value, this, 'nao_identificado')">
+          <option value="" \${!item.corretor ? 'selected' : ''}>— escolher —</option>
+          \${CORRETORES_DISPONIVEIS.map(c => \`<option value="\${c}">\${c}</option>\`).join('')}
+        </select><span class="saving-dot"></span>\`;
+
+        const statusSelectNI = \`<select class="edit-select" onchange="salvarCampo(\${item.id}, 'status', this.value, this, 'nao_identificado')">
+          <option value="" selected disabled>— escolher —</option>
+          \${STATUS_OPCOES.map(s => \`<option value="\${s}">\${s}</option>\`).join('')}
+        </select><span class="saving-dot"></span>\`;
+
+        const aprovadoCheckNI = \`<div class="edit-check"><input type="checkbox" onchange="salvarCampo(\${item.id}, 'aprovado', this.checked, this, 'nao_identificado')"></div>\`;
+        const visitaCheckNI = \`<div class="edit-check"><input type="checkbox" onchange="salvarCampo(\${item.id}, 'visita', this.checked, this, 'nao_identificado')"></div>\`;
+        const propostaCheckNI = \`<div class="edit-check"><input type="checkbox" onchange="salvarCampo(\${item.id}, 'proposta', this.checked, this, 'nao_identificado')"></div>\`;
+        const vendaCheckNI = \`<div class="edit-check"><input type="checkbox" onchange="salvarCampo(\${item.id}, 'venda', this.checked, this, 'nao_identificado')"></div>\`;
+
+        return \`<tr>
+          <td><input type="text" class="edit-text edit-text-nome" value="" placeholder="— escrever nome —" onchange="salvarCampo(\${item.id}, 'nome', this.value, this, 'nao_identificado')"><div class="lead-meta mono">+\${item.whatsapp}</div></td>
+          <td>\${imovelInputNI}</td>
+          <td>\${origemSelectNI}</td>
+          <td>\${corretorSelectNI}</td>
+          <td>\${statusSelectNI}</td>
+          <td>\${aprovadoCheckNI}</td>
+          <td>\${visitaCheckNI}</td>
+          <td>\${propostaCheckNI}</td>
+          <td>\${vendaCheckNI}</td>
+          <td class="time-ago">\${tempoRelativo(item.criado_em)}</td>
+        </tr>\`;
+      }
+
+      const imovelAtual = [item.imovel_codigo, item.imovel_desc].filter(Boolean).join(' · ');
+      const imovelInput = \`<input type="text" class="edit-text" value="\${(item.imovel_desc || '').replace(/"/g, '&quot;')}" placeholder="— escrever —" onchange="salvarCampo(\${item.id}, 'imovel_desc', this.value, this)">\`;
+
+      const origemSelect = \`<select class="edit-select \${!item.origem ? 'pendente' : ''}" onchange="salvarCampo(\${item.id}, 'origem', this.value, this)">
+        <option value="" \${!item.origem ? 'selected' : ''}>— escolher —</option>
+        \${ORIGENS.map(o => \`<option value="\${o}" \${item.origem === o ? 'selected' : ''}>\${o}</option>\`).join('')}
+      </select><span class="saving-dot"></span>\`;
+
+      const corretorSelect = \`<select class="edit-select \${!item.corretor ? 'pendente' : ''}" onchange="salvarCampo(\${item.id}, 'corretor', this.value, this)">
+        <option value="" \${!item.corretor ? 'selected' : ''}>— escolher —</option>
+        \${CORRETORES_DISPONIVEIS.map(c => \`<option value="\${c}" \${item.corretor === c ? 'selected' : ''}>\${c}</option>\`).join('')}
+        \${item.corretor && !CORRETORES_DISPONIVEIS.includes(item.corretor) ? \`<option value="\${item.corretor}" selected>\${item.corretor}</option>\` : ''}
+      </select><span class="saving-dot"></span>\`;
+
+      const statusSelect = \`<select class="edit-select" onchange="salvarCampo(\${item.id}, 'status', this.value, this)">
+        \${STATUS_OPCOES.map(s => \`<option value="\${s}" \${(item.status || 'Novo') === s ? 'selected' : ''}>\${s}</option>\`).join('')}
+      </select><span class="saving-dot"></span>\`;
+
+      const aprovadoCheck = \`<div class="edit-check"><input type="checkbox" \${item.aprovado ? 'checked' : ''} onchange="salvarCampo(\${item.id}, 'aprovado', this.checked, this)"></div>\`;
+      const visitaCheck = \`<div class="edit-check"><input type="checkbox" \${item.visita ? 'checked' : ''} onchange="salvarCampo(\${item.id}, 'visita', this.checked, this)"></div>\`;
+      const propostaCheck = \`<div class="edit-check"><input type="checkbox" \${item.proposta ? 'checked' : ''} onchange="salvarCampo(\${item.id}, 'proposta', this.checked, this)"></div>\`;
+      const vendaCheck = \`<div class="edit-check"><input type="checkbox" \${item.venda ? 'checked' : ''} onchange="salvarCampo(\${item.id}, 'venda', this.checked, this)"></div>\`;
+
+      return \`<tr>
+        <td><input type="text" class="edit-text edit-text-nome" value="\${(item.nome || '').replace(/"/g, '&quot;')}" placeholder="Sem nome" onchange="salvarCampo(\${item.id}, 'nome', this.value, this)"><div class="lead-meta mono">+\${item.whatsapp}</div></td>
+        <td>\${imovelInput}</td>
+        <td>\${origemSelect}</td>
+        <td>\${corretorSelect}</td>
+        <td>\${statusSelect}</td>
+        <td>\${aprovadoCheck}</td>
+        <td>\${visitaCheck}</td>
+        <td>\${propostaCheck}</td>
+        <td>\${vendaCheck}</td>
+        <td class="time-ago">\${tempoRelativo(item.distribuido_em)}</td>
+      </tr>\`;
+    }).join('');
+
+    container.innerHTML = \`<table>
+      <thead><tr><th>Lead</th><th>Imóvel</th><th>Origem</th><th>Corretor</th><th>Status</th><th>Aprovado</th><th>Visita</th><th>Proposta</th><th>Venda</th><th>Chegou</th></tr></thead>
+      <tbody>\${linhasHtml}</tbody>
+    </table>\`;
   }
-});
+</script>
+</body>
+</html>`;
 
-// ─── ROTA: EDITAR CAMPOS MANUAIS DO FUNIL ────────────────────
-// Body esperado: { campo: 'origem', valor: 'TikTok' }
-// campo precisa estar em CAMPOS_EDITAVEIS.
-app.patch('/api/leads/:id', basicAuth, async (req, res) => {
-  if (!process.env.DATABASE_URL) {
-    return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
-  }
-  const { id } = req.params;
-  const { campo, valor } = req.body;
-
-  if (!CAMPOS_EDITAVEIS.includes(campo)) {
-    return res.status(400).json({ ok: false, erro: `Campo '${campo}' não é editável` });
-  }
-
-  try {
-    await pool.query(
-      `UPDATE leads SET ${campo} = $1 WHERE id = $2`,
-      [valor, id]
-    );
-    res.json({ ok: true });
-  } catch (err) {
-    console.error('Erro ao editar lead:', err);
-    res.status(500).json({ ok: false, erro: err.message });
-  }
-});
-
-// ─── ROTA: DASHBOARD ──────────────────────────────────────────
-app.get('/dashboard', basicAuth, (req, res) => {
-  res.send(DASHBOARD_HTML);
-});
-
-// ─── ROTA DE TESTE ───────────────────────────────────────────
-app.get('/', (req, res) => {
-  res.send('✅ Diniz Leads OLX rodando!');
-});
-
-// ─── INICIA SERVIDOR ─────────────────────────────────────────
-const PORT = process.env.PORT || 3001;
-app.listen(PORT, async () => {
-  console.log(`Servidor rodando na porta ${PORT}`);
-  await initDb();
-
-  // Sincronização automática com a planilha do Google, a cada 10 minutos
-  // (só ativa se GOOGLE_SHEET_ID e GOOGLE_SERVICE_ACCOUNT_KEY estiverem configuradas)
-  if (process.env.GOOGLE_SHEET_ID && process.env.GOOGLE_SERVICE_ACCOUNT_KEY) {
-    const INTERVALO_SYNC_MS = 10 * 60 * 1000;
-    console.log('✅ Sincronização automática com Google Sheets ativada (a cada 10 min)');
-    sincronizarPlanilhaGoogle().catch(err => console.error('Erro na sincronização inicial:', err));
-    setInterval(() => {
-      sincronizarPlanilhaGoogle().catch(err => console.error('Erro na sincronização automática:', err));
-    }, INTERVALO_SYNC_MS);
-  } else {
-    console.warn('⚠️  Sincronização com Google Sheets desativada — configure GOOGLE_SHEET_ID e GOOGLE_SERVICE_ACCOUNT_KEY pra ativar.');
-  }
-});
+module.exports = { DASHBOARD_HTML };
