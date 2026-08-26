@@ -653,7 +653,6 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
     container.innerHTML = \`<div class="atividade-balloons">
       <div class="balloon"><div class="balloon-label">Leads</div><div class="balloon-value">\${dados.total}</div></div>
-      <div class="balloon"><div class="balloon-label">Contataram</div><div class="balloon-value">\${dados.contataram}</div></div>
       <div class="balloon balloon-accent"><div class="balloon-label">Aprovados</div><div class="balloon-value">\${dados.aprovados}</div></div>
       <div class="balloon"><div class="balloon-label">Visitas</div><div class="balloon-value">\${dados.visitas}</div></div>
       <div class="balloon"><div class="balloon-label">Propostas</div><div class="balloon-value">\${dados.propostas}</div></div>
