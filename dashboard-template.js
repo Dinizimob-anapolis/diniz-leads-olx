@@ -173,6 +173,12 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     padding: 7px 12px; cursor: pointer;
   }
   #bulk-apply-btn:hover { opacity: 0.88; }
+  #bulk-export-btn {
+    font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 500; color: var(--ink);
+    background: var(--bg-card); border: 1px solid var(--line); border-radius: 6px;
+    padding: 7px 12px; cursor: pointer;
+  }
+  #bulk-export-btn:hover { border-color: var(--amber); background: var(--amber-soft); }
   #bulk-count { color: var(--ink-soft); }
 
   .table-scroll { overflow-x: auto; }
@@ -307,10 +313,18 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     <div id="corretor-tab-content" style="padding:16px 22px;"></div>
   </div>
 
+  <div class="panel" style="margin-bottom:28px;">
+    <div class="panel-head">
+      <h2>Leads sem número válido <span id="sem-numero-count" class="mono"></span></h2>
+    </div>
+    <div id="sem-numero-container" style="padding:16px 22px;"></div>
+  </div>
+
   <div class="panel">
     <div class="panel-head">
       <h2>Atividade recente</h2>
       <div class="filters">
+        <input type="text" id="filtro-busca-texto" placeholder="Buscar texto (ex: CRM)…" oninput="renderTabela()" style="min-width:180px;">
         <select id="filtro-corretor" onchange="renderTabela()"><option value="">Todos os corretores</option></select>
         <select id="filtro-campanha" onchange="renderTabela()"><option value="">Todas as campanhas</option></select>
         <select id="filtro-origem" onchange="renderTabela()">
@@ -348,6 +362,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
         <option value="Outro">Outro</option>
       </select>
       <button id="bulk-apply-btn" onclick="aplicarOrigemEmMassa()">Aplicar aos leads filtrados</button>
+      <button id="bulk-export-btn" onclick="exportarCSV()">⇩ Exportar CSV</button>
     </div>
     <div class="table-scroll" id="tabela-container">
       <div class="empty-state">Clique em "Atualizar" pra carregar os leads.</div>
@@ -365,6 +380,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   let CORRETORES_DISPONIVEIS = [];
   let ULTIMO_ESTADO = null;
   let LEADS_FILTRADOS_IDS = [];
+  let LEADS_FILTRADOS_OBJS = [];
 
   function corDoCorretor(nome) {
     if (!nome) return '#B14B3B';
@@ -540,6 +556,40 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     }
   }
 
+  function exportarCSV() {
+    if (LEADS_FILTRADOS_OBJS.length === 0) {
+      alert('Nenhum lead filtrado pra exportar.');
+      return;
+    }
+
+    const colunas = ['Nome', 'Telefone', 'Email', 'Corretor', 'Imovel', 'Origem', 'Status'];
+    const escapar = v => {
+      const s = String(v ?? '');
+      return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+
+    const linhas = LEADS_FILTRADOS_OBJS.map(l => [
+      l.nome || '',
+      l.whatsapp && !l.numero_invalido ? '+' + l.whatsapp : (l.whatsapp_bruto || ''),
+      l.email || '',
+      l.corretor || '',
+      [l.imovel_codigo, l.imovel_desc].filter(Boolean).join(' - '),
+      l.origem || '',
+      l.status || 'Novo',
+    ].map(escapar).join(','));
+
+    const csv = '\uFEFF' + [colunas.join(','), ...linhas].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'leads-diniz-' + new Date().toISOString().slice(0, 10) + '.csv';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
   async function aplicarOrigemEmMassa() {
     const origem = document.getElementById('bulk-origem-select').value;
     if (!origem) {
@@ -665,6 +715,57 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     </div>\`;
   }
 
+  function renderSemNumero() {
+    const container = document.getElementById('sem-numero-container');
+    const countEl = document.getElementById('sem-numero-count');
+    if (!ULTIMO_ESTADO) return;
+
+    const semNumero = ULTIMO_ESTADO.leads.filter(l => l.numero_invalido);
+    countEl.textContent = semNumero.length > 0 ? \`(\${semNumero.length})\` : '';
+
+    if (semNumero.length === 0) {
+      container.innerHTML = '<div class="mono">Nenhum lead sem número no momento.</div>';
+      return;
+    }
+
+    container.innerHTML = \`<div class="table-scroll"><table>
+      <thead><tr><th>Nome</th><th>O que veio na planilha/mensagem</th><th>Origem</th><th>Corretor</th><th>Corrigir WhatsApp</th></tr></thead>
+      <tbody>
+        \${semNumero.map(l => \`<tr>
+          <td><div class="lead-name">\${l.nome || 'Sem nome'}</div></td>
+          <td class="mono">\${l.whatsapp_bruto || '—'}</td>
+          <td class="mono">\${l.origem || '—'}</td>
+          <td class="mono">\${l.corretor || '—'}</td>
+          <td>
+            <input type="text" class="edit-text" id="corrigir-whatsapp-\${l.id}" placeholder="(62) 99999-9999" style="min-width:150px;">
+            <button class="btn-secundario" style="padding:6px 10px; margin-left:6px;" onclick="corrigirWhatsapp(\${l.id})">Salvar</button>
+          </td>
+        </tr>\`).join('')}
+      </tbody>
+    </table></div>\`;
+  }
+
+  async function corrigirWhatsapp(id) {
+    const input = document.getElementById('corrigir-whatsapp-' + id);
+    const valor = input.value.trim();
+    if (!valor) {
+      alert('Digita o número certo primeiro.');
+      return;
+    }
+    try {
+      const res = await fetch('/api/leads/' + id + '/corrigir-whatsapp', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ whatsapp: valor }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.erro || 'Falha ao corrigir');
+      await carregarDados();
+    } catch (err) {
+      alert('Não consegui corrigir: ' + err.message);
+    }
+  }
+
   // "Não informado" no balão corresponde à opção especial __pendente do filtro de origem
   function origemParaFiltro(origemChip) {
     return origemChip === 'Não informado' ? '__pendente' : origemChip;
@@ -737,6 +838,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
     renderCorretorTabs();
     renderCorretorTabContent();
+    renderSemNumero();
     renderTabela();
   }
 
@@ -744,6 +846,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     const container = document.getElementById('tabela-container');
     if (!ULTIMO_ESTADO) return;
 
+    const filtroBusca = document.getElementById('filtro-busca-texto').value.trim().toLowerCase();
     const filtroCorretor = document.getElementById('filtro-corretor').value;
     const filtroCampanha = document.getElementById('filtro-campanha').value;
     const filtroOrigem = document.getElementById('filtro-origem').value;
@@ -758,6 +861,14 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       todos = naoIdent;
     } else if (filtroStatus) {
       todos = linhas.filter(l => (l.status || 'Novo') === filtroStatus);
+    }
+
+    if (filtroBusca) {
+      todos = todos.filter(l => {
+        const alvo = [l.nome, l.imovel_desc, l.imovel_codigo, l.interesse, l.mensagem, l.whatsapp_bruto, l.origem]
+          .filter(Boolean).join(' ').toLowerCase();
+        return alvo.includes(filtroBusca);
+      });
     }
 
     if (filtroCorretor) {
@@ -776,9 +887,11 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
     todos.sort((a, b) => new Date(b.distribuido_em || b.criado_em) - new Date(a.distribuido_em || a.criado_em));
 
-    // Guarda os IDs dos leads (não os "não identificados") atualmente filtrados,
-    // pra ação em massa de definir origem
-    LEADS_FILTRADOS_IDS = todos.filter(l => l.tipo === 'lead').map(l => l.id);
+    // Guarda os IDs (e os objetos completos) dos leads atualmente filtrados —
+    // pra ação em massa de definir origem, e pra exportar CSV
+    const leadsFiltrados = todos.filter(l => l.tipo === 'lead');
+    LEADS_FILTRADOS_IDS = leadsFiltrados.map(l => l.id);
+    LEADS_FILTRADOS_OBJS = leadsFiltrados;
     const bulkCount = document.getElementById('bulk-count');
     if (bulkCount) {
       bulkCount.textContent = LEADS_FILTRADOS_IDS.length > 0
