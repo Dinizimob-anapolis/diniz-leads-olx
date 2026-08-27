@@ -462,9 +462,14 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       if (!res.ok || !data.ok) throw new Error(data.erro || 'Falha ao sincronizar');
 
       await carregarDados();
-      if (data.inseridos > 0 || data.ignorados > 0) {
-        document.getElementById('last-sync').textContent =
-          \`Sincronizado: +\${data.inseridos} novo\${data.inseridos === 1 ? '' : 's'}\`;
+      let resumo = \`Sincronizado: +\${data.inseridos} novo\${data.inseridos === 1 ? '' : 's'}\`;
+      if (data.incompletos > 0) {
+        resumo += \` · \${data.incompletos} linha\${data.incompletos === 1 ? '' : 's'} da planilha sem nome ou WhatsApp (ignorada\${data.incompletos === 1 ? '' : 's'})\`;
+      }
+      document.getElementById('last-sync').textContent = resumo;
+
+      if (data.incompletos > 0 && Array.isArray(data.linhasIncompletas) && data.linhasIncompletas.length > 0) {
+        console.log('Linhas da planilha ignoradas por falta de dado:', data.linhasIncompletas);
       }
     } catch (err) {
       alert('Não consegui sincronizar com a planilha: ' + err.message);
@@ -524,7 +529,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.erro || 'Falha ao importar');
 
-      alert(\`Importação concluída: \${data.inseridos} lead\${data.inseridos === 1 ? '' : 's'} novo\${data.inseridos === 1 ? '' : 's'} adicionado\${data.inseridos === 1 ? '' : 's'}, \${data.ignorados} já existia\${data.ignorados === 1 ? '' : 'm'} ou estava\${data.ignorados === 1 ? '' : 'm'} incompleto\${data.ignorados === 1 ? '' : 's'}.\`);
+      alert(\`Importação concluída: \${data.inseridos} lead\${data.inseridos === 1 ? '' : 's'} novo\${data.inseridos === 1 ? '' : 's'} adicionado\${data.inseridos === 1 ? '' : 's'}, \${data.jaExistiam} já existia\${data.jaExistiam === 1 ? '' : 'm'}, \${data.incompletos} linha\${data.incompletos === 1 ? '' : 's'} sem nome ou WhatsApp (ignorada\${data.incompletos === 1 ? '' : 's'}).\`);
       await carregarDados();
     } catch (err) {
       alert('Não consegui importar essa planilha: ' + err.message);
@@ -675,12 +680,12 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
   function renderTudo(data) {
     CORRETORES_DISPONIVEIS = data.corretoresDisponiveis || [];
-    document.getElementById('m-distribuidos').textContent = data.stats.totalDistribuidos;
+    document.getElementById('m-distribuidos').textContent = data.totalGeral ? data.totalGeral.total : data.stats.totalDistribuidos;
     document.getElementById('m-distribuidos-sub').textContent = '+' + data.stats.distribuidos24h + ' nas últimas 24h';
 
-    document.getElementById('m-aprovados').textContent = data.stats.totalAprovados;
-    document.getElementById('m-visitas').textContent = data.stats.totalVisitas;
-    document.getElementById('m-vendas').textContent = data.stats.totalVendas;
+    document.getElementById('m-aprovados').textContent = data.totalGeral ? data.totalGeral.aprovados : data.stats.totalAprovados;
+    document.getElementById('m-visitas').textContent = data.totalGeral ? data.totalGeral.visitas : data.stats.totalVisitas;
+    document.getElementById('m-vendas').textContent = data.totalGeral ? data.totalGeral.vendas : data.stats.totalVendas;
 
     const corretoresMap = {};
     (data.porCorretor || []).forEach(c => { corretoresMap[c.corretor] = c.total; });
