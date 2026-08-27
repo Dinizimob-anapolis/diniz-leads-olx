@@ -72,7 +72,9 @@ async function initDb() {
       ADD COLUMN IF NOT EXISTS aprovado BOOLEAN DEFAULT false,
       ADD COLUMN IF NOT EXISTS visita BOOLEAN DEFAULT false,
       ADD COLUMN IF NOT EXISTS proposta BOOLEAN DEFAULT false,
-      ADD COLUMN IF NOT EXISTS venda BOOLEAN DEFAULT false;
+      ADD COLUMN IF NOT EXISTS venda BOOLEAN DEFAULT false,
+      ADD COLUMN IF NOT EXISTS numero_invalido BOOLEAN DEFAULT false,
+      ADD COLUMN IF NOT EXISTS whatsapp_bruto TEXT;
   `);
 
   await pool.query(`
@@ -97,9 +99,11 @@ function normalizarTexto(s) {
 // Normaliza qualquer número de WhatsApp pro MESMO formato sempre (55 + DDD + 9 dígitos),
 // resolvendo o problema clássico do "9º dígito" do celular no Brasil, que causa
 // duplicidade de contatos quando o número chega em formatos diferentes por canais diferentes.
+// Retorna null quando o número não tem dígitos suficientes pra ser válido (em vez de
+// devolver algo incompleto que colidiria com outros leads sem número).
 function canonicalizarWhatsapp(bruto) {
   let d = String(bruto || '').replace(/\D/g, '');
-  if (!d) return '';
+  if (!d) return null;
 
   // Remove o código do país se já vier com ele, pra normalizar a partir do DDD
   if (d.startsWith('55') && d.length > 11) d = d.slice(2);
@@ -109,7 +113,18 @@ function canonicalizarWhatsapp(bruto) {
     d = d.slice(0, 2) + '9' + d.slice(2);
   }
 
+  // Precisa de pelo menos DDD (2) + 8 dígitos = 10 dígitos locais pra ser um número real
+  if (d.length < 10) return null;
+
   return '55' + d;
+}
+
+// Gera um identificador único pra leads sem número de WhatsApp válido — assim eles não
+// colidem uns com os outros (cada um vira sua própria linha, editável depois no dashboard)
+let contadorSemNumero = 0;
+function gerarPlaceholderSemNumero() {
+  contadorSemNumero++;
+  return `SEMNUM-${Date.now()}-${contadorSemNumero}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
 // Reconhece a coluna certa pelo nome do cabeçalho, mesmo com variações (acento, maiúscula, espaço)
@@ -120,6 +135,7 @@ function mapearColunas(headers) {
     origem: ['origem', 'canal'],
     corretor: ['corretor'],
     imovelDesc: ['interesse', 'imovel', 'imóvel'],
+    dataChegada: ['data', 'data do lead', 'data de criacao', 'data do ultimo lead gerado', 'data do ultimo lead'],
   };
   const idx = {};
   headers.forEach((h, i) => {
@@ -129,6 +145,30 @@ function mapearColunas(headers) {
     }
   });
   return idx;
+}
+
+// Entende data tanto em formato ISO (2026-08-26T19:39:00.000Z) quanto brasileiro
+// (26/08/2026 19:39, com ou sem hora). Retorna null se não conseguir entender.
+function parseDataChegada(valor) {
+  if (!valor) return null;
+  if (valor instanceof Date && !isNaN(valor)) return valor;
+
+  const s = String(valor).trim();
+  if (!s) return null;
+
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+    const d = new Date(s);
+    if (!isNaN(d)) return d;
+  }
+
+  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+  if (m) {
+    const [, dia, mes, ano, hora, min, seg] = m;
+    const d = new Date(Number(ano), Number(mes) - 1, Number(dia), Number(hora || 0), Number(min || 0), Number(seg || 0));
+    if (!isNaN(d)) return d;
+  }
+
+  return null;
 }
 
 async function importarLeadsEmLote(leads) {
@@ -141,10 +181,9 @@ async function importarLeadsEmLote(leads) {
   leads.forEach((item, i) => {
     const nome = (item.nome || '').trim();
     const whatsappBruto = (item.whatsapp || '').trim();
-    if (!nome || !whatsappBruto) {
+    if (!nome) {
       incompletos++;
-      const motivo = !nome && !whatsappBruto ? 'sem nome e sem WhatsApp' : (!nome ? 'sem nome' : 'sem WhatsApp');
-      linhasIncompletas.push(`linha ${i + 2} (${motivo})`); // +2: cabeçalho + índice base 1
+      linhasIncompletas.push(`linha ${i + 2} (sem nome)`); // +2: cabeçalho + índice base 1
     }
   });
 
@@ -152,18 +191,26 @@ async function importarLeadsEmLote(leads) {
     const nome = (item.nome || '').trim();
     const whatsappBruto = (item.whatsapp || '').trim();
 
-    if (!nome || !whatsappBruto) continue;
+    if (!nome) continue;
 
-    let whatsapp = canonicalizarWhatsapp(whatsappBruto);
+    const whatsappValido = canonicalizarWhatsapp(whatsappBruto);
+    const numeroInvalido = !whatsappValido;
+    const whatsapp = whatsappValido || gerarPlaceholderSemNumero();
+    // dataReal: só preenchida quando o arquivo trouxe uma data que deu pra entender de verdade.
+    // dataFinal: sempre tem um valor (cai pra agora se não tiver data), usada só na criação do lead novo.
+    const dataReal = parseDataChegada(item.dataChegada);
+    const dataFinal = dataReal || new Date();
 
     try {
       const result = await pool.query(
-        `INSERT INTO leads (whatsapp, nome, corretor, origem, imovel_desc)
-         VALUES ($1, $2, $3, $4, $5)
+        `INSERT INTO leads (whatsapp, nome, corretor, origem, imovel_desc, numero_invalido, whatsapp_bruto, distribuido_em)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          ON CONFLICT (whatsapp) DO UPDATE SET
-           origem = COALESCE(leads.origem, EXCLUDED.origem)
+           origem = COALESCE(leads.origem, EXCLUDED.origem),
+           corretor = COALESCE(leads.corretor, EXCLUDED.corretor),
+           distribuido_em = COALESCE($9, leads.distribuido_em)
          RETURNING id, (xmax = 0) AS inserido_agora`,
-        [whatsapp, nome, item.corretor || null, item.origem || 'Patrocinado', item.imovelDesc || null]
+        [whatsapp, nome, item.corretor || null, item.origem || 'Patrocinado', item.imovelDesc || null, numeroInvalido, numeroInvalido ? whatsappBruto : null, dataFinal, dataReal]
       );
       if (result.rows.length > 0 && result.rows[0].inserido_agora) inseridos++;
       else jaExistiam++;
@@ -222,6 +269,7 @@ async function sincronizarPlanilhaGoogle() {
     origem: idx.origem !== undefined ? linha[idx.origem] : null,
     corretor: idx.corretor !== undefined ? linha[idx.corretor] : null,
     imovelDesc: idx.imovelDesc !== undefined ? linha[idx.imovelDesc] : null,
+    dataChegada: idx.dataChegada !== undefined ? linha[idx.dataChegada] : null,
   }));
 
   const resultado = await importarLeadsEmLote(leads);
@@ -402,6 +450,7 @@ function parseDistribuicao(texto) {
     origem: origemMatch ? origemMatch[1].trim() : origemInferida,
     imovelCodigo,
     imovelDesc,
+    mensagemOriginal: texto,
   };
 }
 
@@ -409,9 +458,14 @@ function parseDistribuicao(texto) {
 // Prioridade: origem escrita na própria mensagem > origem padrão do canal > pendente (null)
 async function salvarDistribuicao(dados, origemPadrao = null) {
   const origem = dados.origem || origemPadrao || null;
+  const numeroInvalido = !dados.whatsapp;
+  const whatsappFinal = dados.whatsapp || gerarPlaceholderSemNumero();
+  const whatsappBruto = numeroInvalido ? (dados.whatsappBruto || null) : null;
+  const interesse = dados.mensagemOriginal || null;
+
   await pool.query(
-    `INSERT INTO leads (whatsapp, nome, email, corretor, imovel_codigo, imovel_desc, origem)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `INSERT INTO leads (whatsapp, nome, email, corretor, imovel_codigo, imovel_desc, origem, numero_invalido, whatsapp_bruto, interesse)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
      ON CONFLICT (whatsapp) DO UPDATE SET
        nome = EXCLUDED.nome,
        email = EXCLUDED.email,
@@ -419,13 +473,14 @@ async function salvarDistribuicao(dados, origemPadrao = null) {
        imovel_codigo = EXCLUDED.imovel_codigo,
        imovel_desc = EXCLUDED.imovel_desc,
        origem = COALESCE(leads.origem, EXCLUDED.origem),
+       interesse = COALESCE(EXCLUDED.interesse, leads.interesse),
        distribuido_em = now(),
        contatou = false,
        primeiro_contato_em = NULL,
        avisado_em = NULL`,
-    [dados.whatsapp, dados.nome, dados.email, dados.corretor, dados.imovelCodigo, dados.imovelDesc, origem]
+    [whatsappFinal, dados.nome, dados.email, dados.corretor, dados.imovelCodigo, dados.imovelDesc, origem, numeroInvalido, whatsappBruto, interesse]
   );
-  console.log(`Lead distribuído salvo: ${dados.nome} → ${dados.corretor} (${dados.whatsapp}) [origem: ${origem || 'pendente'}]`);
+  console.log(`Lead distribuído salvo: ${dados.nome} → ${dados.corretor} (${whatsappFinal}) [origem: ${origem || 'pendente'}]${numeroInvalido ? ' [SEM NÚMERO VÁLIDO]' : ''}`);
 }
 
 // ─── REGISTRO AUTOMÁTICO DE NOVO CONTATO (número do TikTok) ──
@@ -566,6 +621,7 @@ app.post('/lead-canalpro', async (req, res) => {
       const whatsappNormalizado = canonicalizarWhatsapp(telefone);
       await salvarDistribuicao({
         whatsapp: whatsappNormalizado,
+        whatsappBruto: telefone,
         nome: nomeCliente,
         email: emailCliente,
         corretor: corretor.nome,
@@ -712,7 +768,8 @@ app.get('/api/leads', basicAuth, async (req, res) => {
     const leadsResult = await pool.query(
       `SELECT id, whatsapp, nome, email, corretor, imovel_codigo, imovel_desc,
               distribuido_em, contatou, primeiro_contato_em,
-              origem, interesse, status, ultimo_contato, aprovado, visita, proposta, venda
+              origem, interesse, status, ultimo_contato, aprovado, visita, proposta, venda,
+              numero_invalido, whatsapp_bruto
        FROM leads
        ORDER BY distribuido_em DESC
        LIMIT 1000`
@@ -777,7 +834,8 @@ app.get('/api/leads', basicAuth, async (req, res) => {
         count(*) FILTER (WHERE aprovado) AS aprovados,
         count(*) FILTER (WHERE visita) AS visitas,
         count(*) FILTER (WHERE proposta) AS propostas,
-        count(*) FILTER (WHERE venda) AS vendas
+        count(*) FILTER (WHERE venda) AS vendas,
+        count(*) FILTER (WHERE numero_invalido) AS sem_numero_valido
       FROM leads
     `);
 
@@ -837,6 +895,7 @@ app.get('/api/leads', basicAuth, async (req, res) => {
         visitas: parseInt(totalGeralResult.rows[0].visitas, 10) || 0,
         propostas: parseInt(totalGeralResult.rows[0].propostas, 10) || 0,
         vendas: parseInt(totalGeralResult.rows[0].vendas, 10) || 0,
+        semNumeroValido: parseInt(totalGeralResult.rows[0].sem_numero_valido, 10) || 0,
       },
       porCampanha: campanhasAgrupadas,
       porOrigem: porOrigemResult.rows,
@@ -889,16 +948,18 @@ app.post('/api/leads', basicAuth, async (req, res) => {
     return res.status(400).json({ ok: false, erro: 'nome, whatsapp e corretor são obrigatórios' });
   }
 
-  const whatsappNormalizado = canonicalizarWhatsapp(whatsapp);
+  const whatsappValido = canonicalizarWhatsapp(whatsapp);
+  const numeroInvalido = !whatsappValido;
+  const whatsappNormalizado = whatsappValido || gerarPlaceholderSemNumero();
 
   try {
     const result = await pool.query(
-      `INSERT INTO leads (whatsapp, nome, corretor, imovel_desc, origem)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO leads (whatsapp, nome, corretor, imovel_desc, origem, numero_invalido, whatsapp_bruto)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING id`,
-      [whatsappNormalizado, nome, corretor, imovelDesc || null, origem || null]
+      [whatsappNormalizado, nome, corretor, imovelDesc || null, origem || null, numeroInvalido, numeroInvalido ? whatsapp : null]
     );
-    console.log(`Lead adicionado manualmente: ${nome} → ${corretor} (${whatsappNormalizado})`);
+    console.log(`Lead adicionado manualmente: ${nome} → ${corretor} (${whatsappNormalizado})${numeroInvalido ? ' [SEM NÚMERO VÁLIDO]' : ''}`);
     res.json({ ok: true, id: result.rows[0].id });
   } catch (err) {
     if (err.code === '23505') {
@@ -957,6 +1018,44 @@ app.patch('/api/leads-nao-identificados/:id', basicAuth, async (req, res) => {
     res.json({ ok: true, promovido: true, id: insertResult.rows[0].id });
   } catch (err) {
     console.error('Erro ao editar não identificado:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
+// ─── ROTA: CORRIGIR NÚMERO DE WHATSAPP INVÁLIDO ──────────────
+// Única forma de editar o WhatsApp de um lead — só serve pra leads marcados
+// como numero_invalido (que nunca tiveram um número real salvo).
+app.patch('/api/leads/:id/corrigir-whatsapp', basicAuth, async (req, res) => {
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  }
+  const { id } = req.params;
+  const { whatsapp } = req.body;
+
+  const whatsappValido = canonicalizarWhatsapp(whatsapp);
+  if (!whatsappValido) {
+    return res.status(400).json({ ok: false, erro: 'Esse número não parece válido. Confere o DDD e os dígitos.' });
+  }
+
+  try {
+    const leadResult = await pool.query('SELECT numero_invalido FROM leads WHERE id = $1', [id]);
+    if (leadResult.rows.length === 0) {
+      return res.status(404).json({ ok: false, erro: 'Lead não encontrado' });
+    }
+    if (!leadResult.rows[0].numero_invalido) {
+      return res.status(400).json({ ok: false, erro: 'Esse lead já tem um WhatsApp válido — não dá pra editar por aqui.' });
+    }
+
+    await pool.query(
+      `UPDATE leads SET whatsapp = $1, numero_invalido = false, whatsapp_bruto = NULL WHERE id = $2`,
+      [whatsappValido, id]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    if (err.code === '23505') {
+      return res.status(409).json({ ok: false, erro: 'Já existe outro lead com esse WhatsApp — pode ser a mesma pessoa duplicada.' });
+    }
+    console.error('Erro ao corrigir WhatsApp:', err);
     res.status(500).json({ ok: false, erro: err.message });
   }
 });
