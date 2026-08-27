@@ -94,6 +94,24 @@ function normalizarTexto(s) {
   return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
 }
 
+// Normaliza qualquer número de WhatsApp pro MESMO formato sempre (55 + DDD + 9 dígitos),
+// resolvendo o problema clássico do "9º dígito" do celular no Brasil, que causa
+// duplicidade de contatos quando o número chega em formatos diferentes por canais diferentes.
+function canonicalizarWhatsapp(bruto) {
+  let d = String(bruto || '').replace(/\D/g, '');
+  if (!d) return '';
+
+  // Remove o código do país se já vier com ele, pra normalizar a partir do DDD
+  if (d.startsWith('55') && d.length > 11) d = d.slice(2);
+
+  // DDD (2 dígitos) + 8 dígitos = celular sem o "9" na frente — adiciona
+  if (d.length === 10) {
+    d = d.slice(0, 2) + '9' + d.slice(2);
+  }
+
+  return '55' + d;
+}
+
 // Reconhece a coluna certa pelo nome do cabeçalho, mesmo com variações (acento, maiúscula, espaço)
 function mapearColunas(headers) {
   const mapa = {
@@ -115,20 +133,28 @@ function mapearColunas(headers) {
 
 async function importarLeadsEmLote(leads) {
   let inseridos = 0;
-  let ignorados = 0;
+  let jaExistiam = 0;
+  let incompletos = 0;
+  const linhasIncompletas = [];
   const erros = [];
+
+  leads.forEach((item, i) => {
+    const nome = (item.nome || '').trim();
+    const whatsappBruto = (item.whatsapp || '').trim();
+    if (!nome || !whatsappBruto) {
+      incompletos++;
+      const motivo = !nome && !whatsappBruto ? 'sem nome e sem WhatsApp' : (!nome ? 'sem nome' : 'sem WhatsApp');
+      linhasIncompletas.push(`linha ${i + 2} (${motivo})`); // +2: cabeçalho + índice base 1
+    }
+  });
 
   for (const item of leads) {
     const nome = (item.nome || '').trim();
     const whatsappBruto = (item.whatsapp || '').trim();
 
-    if (!nome || !whatsappBruto) {
-      ignorados++;
-      continue;
-    }
+    if (!nome || !whatsappBruto) continue;
 
-    let whatsapp = whatsappBruto.replace(/\D/g, '');
-    if (whatsapp.length <= 11) whatsapp = '55' + whatsapp;
+    let whatsapp = canonicalizarWhatsapp(whatsappBruto);
 
     try {
       const result = await pool.query(
@@ -140,13 +166,13 @@ async function importarLeadsEmLote(leads) {
         [whatsapp, nome, item.corretor || null, item.origem || 'Patrocinado', item.imovelDesc || null]
       );
       if (result.rows.length > 0 && result.rows[0].inserido_agora) inseridos++;
-      else ignorados++;
+      else jaExistiam++;
     } catch (err) {
       erros.push(`${nome} (${whatsappBruto}): ${err.message}`);
     }
   }
 
-  return { inseridos, ignorados, erros };
+  return { inseridos, jaExistiam, incompletos, linhasIncompletas, erros };
 }
 
 // ─── SINCRONIZAÇÃO AUTOMÁTICA COM GOOGLE SHEETS ──────────────
@@ -199,7 +225,7 @@ async function sincronizarPlanilhaGoogle() {
   }));
 
   const resultado = await importarLeadsEmLote(leads);
-  console.log(`[Google Sheets] Sincronizado: ${resultado.inseridos} novos, ${resultado.ignorados} já existiam ou incompletos`);
+  console.log(`[Google Sheets] Sincronizado: ${resultado.inseridos} novos, ${resultado.jaExistiam} já existiam, ${resultado.incompletos} incompletos (sem nome/whatsapp)`);
   return { ok: true, ...resultado };
 }
 
@@ -356,8 +382,7 @@ function parseDistribuicao(texto) {
     imovelDesc = codigoMatch[2].trim();
   }
 
-  let whatsappNormalizado = whatsappMatch[0].replace(/\D/g, '');
-  if (whatsappNormalizado.length <= 11) whatsappNormalizado = '55' + whatsappNormalizado;
+  const whatsappNormalizado = canonicalizarWhatsapp(whatsappMatch[0]);
 
   // Origem inferida quando a mensagem não diz explicitamente ("origem:"):
   // se tiver "CRM" escrito, é lead do OLX/Canal Pro (padrão dessas mensagens);
@@ -538,8 +563,7 @@ app.post('/lead-canalpro', async (req, res) => {
 
     // Registra no funil já com a origem conhecida
     if (process.env.DATABASE_URL) {
-      let whatsappNormalizado = telefone.replace(/\D/g, '');
-      if (whatsappNormalizado.length <= 11) whatsappNormalizado = '55' + whatsappNormalizado;
+      const whatsappNormalizado = canonicalizarWhatsapp(telefone);
       await salvarDistribuicao({
         whatsapp: whatsappNormalizado,
         nome: nomeCliente,
@@ -572,7 +596,7 @@ app.post('/webhook-mensagens', async (req, res) => {
       return res.status(200).json({ ok: true });
     }
 
-    const de = jid.replace('@s.whatsapp.net', '').replace('@c.us', '');
+    const de = canonicalizarWhatsapp(jid.replace('@s.whatsapp.net', '').replace('@c.us', ''));
     const msg = body?.data?.message || body?.message || {};
     const conteudo = msg?.conversation || msg?.extendedTextMessage?.text || msg?.imageMessage?.caption || '[mídia]';
 
@@ -622,7 +646,7 @@ app.post('/webhook-mensagens-tiktok', async (req, res) => {
       return res.status(200).json({ ok: true });
     }
 
-    const de = jid.replace('@s.whatsapp.net', '').replace('@c.us', '');
+    const de = canonicalizarWhatsapp(jid.replace('@s.whatsapp.net', '').replace('@c.us', ''));
     const msg = body?.data?.message || body?.message || {};
     const conteudo = msg?.conversation || msg?.extendedTextMessage?.text || msg?.imageMessage?.caption || '[mídia]';
 
@@ -837,7 +861,7 @@ app.post('/api/leads/import', basicAuth, async (req, res) => {
   }
 
   const resultado = await importarLeadsEmLote(leads);
-  console.log(`Importação manual: ${resultado.inseridos} inseridos, ${resultado.ignorados} ignorados`);
+  console.log(`Importação manual: ${resultado.inseridos} inseridos, ${resultado.jaExistiam} já existiam, ${resultado.incompletos} incompletos`);
   res.json({ ok: true, ...resultado });
 });
 
@@ -865,8 +889,7 @@ app.post('/api/leads', basicAuth, async (req, res) => {
     return res.status(400).json({ ok: false, erro: 'nome, whatsapp e corretor são obrigatórios' });
   }
 
-  let whatsappNormalizado = String(whatsapp).replace(/\D/g, '');
-  if (whatsappNormalizado.length <= 11) whatsappNormalizado = '55' + whatsappNormalizado;
+  const whatsappNormalizado = canonicalizarWhatsapp(whatsapp);
 
   try {
     const result = await pool.query(
