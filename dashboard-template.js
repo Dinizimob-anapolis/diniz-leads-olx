@@ -1104,7 +1104,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
         <option value="" \${!item.corretor ? 'selected' : ''}>— escolher —</option>
         \${CORRETORES_DISPONIVEIS.map(c => \`<option value="\${c}" \${item.corretor === c ? 'selected' : ''}>\${c}</option>\`).join('')}
         \${item.corretor && !CORRETORES_DISPONIVEIS.includes(item.corretor) ? \`<option value="\${item.corretor}" selected>\${item.corretor}</option>\` : ''}
-      </select><span class="saving-dot"></span>\`;
+      </select><span class="saving-dot"></span>\${item.outros_corretores ? \`<span class="tag tag-warn" style="margin-left:4px; cursor:help;" title="Também atendido por: \${item.outros_corretores}">+\${item.outros_corretores.split(',').length}</span>\` : ''}\`;
 
       const statusSelect = \`<select class="edit-select" onchange="salvarCampo(\${item.id}, 'status', this.value, this)">
         \${STATUS_OPCOES.map(s => \`<option value="\${s}" \${(item.status || 'Novo') === s ? 'selected' : ''}>\${s}</option>\`).join('')}
