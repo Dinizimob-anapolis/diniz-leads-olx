@@ -74,7 +74,8 @@ async function initDb() {
       ADD COLUMN IF NOT EXISTS proposta BOOLEAN DEFAULT false,
       ADD COLUMN IF NOT EXISTS venda BOOLEAN DEFAULT false,
       ADD COLUMN IF NOT EXISTS numero_invalido BOOLEAN DEFAULT false,
-      ADD COLUMN IF NOT EXISTS whatsapp_bruto TEXT;
+      ADD COLUMN IF NOT EXISTS whatsapp_bruto TEXT,
+      ADD COLUMN IF NOT EXISTS outros_corretores TEXT;
   `);
 
   await pool.query(`
@@ -235,7 +236,14 @@ async function importarLeadsEmLote(leads) {
          ON CONFLICT (whatsapp) DO UPDATE SET
            origem = COALESCE(leads.origem, EXCLUDED.origem),
            corretor = COALESCE(leads.corretor, EXCLUDED.corretor),
-           distribuido_em = COALESCE($9, leads.distribuido_em)
+           distribuido_em = COALESCE($9, leads.distribuido_em),
+           outros_corretores = CASE
+             WHEN leads.corretor IS NOT NULL AND EXCLUDED.corretor IS NOT NULL
+                  AND leads.corretor <> EXCLUDED.corretor
+                  AND (leads.outros_corretores IS NULL OR position(EXCLUDED.corretor IN leads.outros_corretores) = 0)
+             THEN COALESCE(leads.outros_corretores || ', ', '') || EXCLUDED.corretor
+             ELSE leads.outros_corretores
+           END
          RETURNING id, (xmax = 0) AS inserido_agora`,
         [whatsapp, nome, item.corretor || null, item.origem || 'Patrocinado', item.imovelDesc || null, numeroInvalido, numeroInvalido ? whatsappBruto : null, dataFinal, dataReal]
       );
@@ -504,7 +512,14 @@ async function salvarDistribuicao(dados, origemPadrao = null) {
        distribuido_em = now(),
        contatou = false,
        primeiro_contato_em = NULL,
-       avisado_em = NULL`,
+       avisado_em = NULL,
+       outros_corretores = CASE
+         WHEN leads.corretor IS NOT NULL AND EXCLUDED.corretor IS NOT NULL
+              AND leads.corretor <> EXCLUDED.corretor
+              AND (leads.outros_corretores IS NULL OR position(leads.corretor IN leads.outros_corretores) = 0)
+         THEN COALESCE(leads.outros_corretores || ', ', '') || leads.corretor
+         ELSE leads.outros_corretores
+       END`,
     [whatsappFinal, dados.nome, dados.email, dados.corretor, dados.imovelCodigo, dados.imovelDesc, origem, numeroInvalido, whatsappBruto, interesse]
   );
   console.log(`Lead distribuído salvo: ${dados.nome} → ${dados.corretor} (${whatsappFinal}) [origem: ${origem || 'pendente'}]${numeroInvalido ? ' [SEM NÚMERO VÁLIDO]' : ''}`);
@@ -796,7 +811,7 @@ app.get('/api/leads', basicAuth, async (req, res) => {
       `SELECT id, whatsapp, nome, email, corretor, imovel_codigo, imovel_desc,
               distribuido_em, contatou, primeiro_contato_em,
               origem, interesse, status, ultimo_contato, aprovado, visita, proposta, venda,
-              numero_invalido, whatsapp_bruto
+              numero_invalido, whatsapp_bruto, outros_corretores
        FROM leads
        ORDER BY distribuido_em DESC
        LIMIT 1000`
@@ -1110,7 +1125,7 @@ app.post('/api/admin/mesclar-duplicados-numero-formato', basicAuth, async (req, 
   }
   try {
     const todos = await pool.query(
-      `SELECT id, whatsapp, distribuido_em FROM leads WHERE numero_invalido = false`
+      `SELECT id, whatsapp, distribuido_em, corretor, outros_corretores FROM leads WHERE numero_invalido = false`
     );
 
     const grupos = new Map();
@@ -1126,12 +1141,22 @@ app.post('/api/admin/mesclar-duplicados-numero-formato', basicAuth, async (req, 
       leads.sort((a, b) => new Date(a.distribuido_em) - new Date(b.distribuido_em));
       const [sobrevivente, ...restantes] = leads;
 
+      // Junta todos os corretores diferentes dos duplicados apagados, sem repetir
+      const corretoresExtras = new Set(
+        (sobrevivente.outros_corretores || '').split(',').map(s => s.trim()).filter(Boolean)
+      );
       for (const l of restantes) {
+        if (l.corretor && l.corretor !== sobrevivente.corretor) corretoresExtras.add(l.corretor);
         await pool.query('DELETE FROM leads WHERE id = $1', [l.id]);
         mesclados++;
       }
-      if (sobrevivente.whatsapp !== chave) {
-        await pool.query('UPDATE leads SET whatsapp = $1 WHERE id = $2', [chave, sobrevivente.id]);
+      const novosOutrosCorretores = corretoresExtras.size > 0 ? Array.from(corretoresExtras).join(', ') : null;
+
+      if (sobrevivente.whatsapp !== chave || novosOutrosCorretores !== sobrevivente.outros_corretores) {
+        await pool.query(
+          'UPDATE leads SET whatsapp = $1, outros_corretores = $2 WHERE id = $3',
+          [chave, novosOutrosCorretores, sobrevivente.id]
+        );
       }
     }
 
