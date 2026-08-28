@@ -193,6 +193,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     text-align: left; font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.08em;
     text-transform: uppercase; color: var(--ink-soft); padding: 10px 16px; background: #FCFBF9;
     border-bottom: 1px solid var(--line); white-space: nowrap;
+    position: sticky; top: 0; z-index: 10;
   }
   tbody td { padding: 10px 16px; border-bottom: 1px solid var(--line); font-size: 13.5px; vertical-align: middle; }
   tbody tr:last-child td { border-bottom: none; }
