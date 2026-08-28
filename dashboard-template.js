@@ -256,6 +256,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     </div>
     <div class="top-right">
       <button id="sync-btn" onclick="sincronizarPlanilha()">⇄ Sincronizar planilha</button>
+      <button id="infer-btn" onclick="inferirOrigens()" style="background:#F3E7D2; border-color:#B8863B; color:#B8863B;">🔍 Preencher origens pendentes</button>
       <button id="clean-btn" onclick="limparDuplicados()" style="background:#F6E4E0; border-color:#B14B3B; color:#B14B3B;">🧹 Limpar duplicados</button>
       <button id="import-btn" onclick="document.getElementById('arquivo-planilha').click()">⇪ Importar arquivo</button>
       <input type="file" id="arquivo-planilha" accept=".xlsx,.xls,.csv" style="display:none" onchange="importarPlanilha(this.files[0])">
@@ -465,6 +466,24 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       alert('Não consegui salvar essa alteração. Tenta de novo.');
     } finally {
       if (dot) setTimeout(() => dot.classList.remove('show'), 400);
+    }
+  }
+
+  async function inferirOrigens() {
+    const btn = document.getElementById('infer-btn');
+    btn.disabled = true;
+    btn.textContent = '🔍 Analisando…';
+    try {
+      const res = await fetch('/api/admin/inferir-origens-pendentes', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.erro || 'Falha ao inferir origens');
+      alert(\`\${data.atualizados} de \${data.totalPendentes} leads pendentes tiveram a origem preenchida. Os que não deu pra descobrir continuam pendentes pra você escolher manualmente.\`);
+      await carregarDados();
+    } catch (err) {
+      alert('Não consegui preencher: ' + err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '🔍 Preencher origens pendentes';
     }
   }
 
