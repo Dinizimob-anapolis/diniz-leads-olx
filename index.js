@@ -1092,6 +1092,145 @@ app.post('/api/admin/inferir-origens-pendentes', basicAuth, async (req, res) => 
   }
 });
 
+// ─── ROTA: MESCLAR DUPLICADOS DE FORMATO ANTIGO DO NÚMERO (uso único) ─
+// Antes da normalização (9º dígito), a mesma pessoa podia ficar salva duas vezes,
+// com o número em formatos ligeiramente diferentes. Agrupa por número já normalizado
+// e mantém só o lead mais antigo de cada grupo, com o número no formato certo.
+app.post('/api/admin/mesclar-duplicados-numero-formato', basicAuth, async (req, res) => {
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  }
+  try {
+    const todos = await pool.query(
+      `SELECT id, whatsapp, distribuido_em FROM leads WHERE numero_invalido = false`
+    );
+
+    const grupos = new Map();
+    for (const lead of todos.rows) {
+      const chave = canonicalizarWhatsapp(lead.whatsapp) || lead.whatsapp;
+      if (!grupos.has(chave)) grupos.set(chave, []);
+      grupos.get(chave).push(lead);
+    }
+
+    let mesclados = 0;
+    for (const [chave, leads] of grupos) {
+      if (leads.length <= 1) continue;
+      leads.sort((a, b) => new Date(a.distribuido_em) - new Date(b.distribuido_em));
+      const [sobrevivente, ...restantes] = leads;
+
+      for (const l of restantes) {
+        await pool.query('DELETE FROM leads WHERE id = $1', [l.id]);
+        mesclados++;
+      }
+      if (sobrevivente.whatsapp !== chave) {
+        await pool.query('UPDATE leads SET whatsapp = $1 WHERE id = $2', [chave, sobrevivente.id]);
+      }
+    }
+
+    // Segunda passada: remove leads "sem número válido" (SEMNUM) que ficaram obsoletos
+    // porque a mesma pessoa (mesmo nome) já tem um lead com número de verdade.
+    const obsoletosResult = await pool.query(`
+      DELETE FROM leads inv
+      USING leads bom
+      WHERE inv.numero_invalido = true
+        AND bom.numero_invalido = false
+        AND inv.nome = bom.nome
+      RETURNING inv.id
+    `);
+    mesclados += obsoletosResult.rowCount;
+
+    console.log(`Mesclagem de duplicados por formato: ${mesclados} removidos`);
+    res.json({ ok: true, mesclados });
+  } catch (err) {
+    console.error('Erro ao mesclar duplicados por formato:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
+// ─── ROTA: CORRIGIR CORRETOR + DATA DOS 52 LEADS DO CANAL PRO (uso único) ─
+// Dados fixos, já cruzados manualmente com as conversas do WhatsApp — corrige
+// direto no banco, sem depender de nenhum upload de arquivo.
+const DADOS_CORRIGIDOS_CANALPRO = [
+  { whatsapp: '5511997771727', corretor: 'Laís', data: '26/08/2026 19:39' },
+  { whatsapp: '5562993767420', corretor: 'Laís', data: '25/08/2026 12:40' },
+  { whatsapp: '5541988481366', corretor: 'Laís', data: '24/08/2026 11:55' },
+  { whatsapp: '5562992699641', corretor: 'Junior', data: '23/08/2026 21:45' },
+  { whatsapp: '5562994442693', corretor: 'Nalcio', data: '22/08/2026 19:22' },
+  { whatsapp: '5562992671240', corretor: 'Laís', data: '21/08/2026 12:55' },
+  { whatsapp: '5562994084045', corretor: 'Nalcio', data: '20/08/2026 10:45' },
+  { whatsapp: '5562994546023', corretor: 'Laís', data: '19/08/2026 14:32' },
+  { whatsapp: '5562991071195', corretor: 'Renata', data: '19/08/2026 12:37' },
+  { whatsapp: '5516988505505', corretor: 'Laís', data: '17/08/2026 23:17' },
+  { whatsapp: '5562996448898', corretor: 'Renata', data: '17/08/2026 08:48' },
+  { whatsapp: '5562991814817', corretor: 'Junior', data: '14/08/2026 07:35' },
+  { whatsapp: '5562992295892', corretor: 'Nalcio', data: '14/08/2026 04:09' },
+  { whatsapp: '5562982679938', corretor: 'Laís', data: '12/08/2026 22:25' },
+  { whatsapp: '5562981224201', corretor: 'Junior', data: '10/08/2026 10:07' },
+  { whatsapp: '5562992795220', corretor: 'Renata', data: '09/08/2026 16:17' },
+  { whatsapp: '5562992402227', corretor: 'Nalcio', data: '08/08/2026 19:24' },
+  { whatsapp: '5535383361855', corretor: 'Laís', data: '08/08/2026 17:41' },
+  { whatsapp: '5562984111295', corretor: 'Nalcio', data: '08/08/2026 08:52' },
+  { whatsapp: '5561984172632', corretor: 'Laís', data: '05/08/2026 16:02' },
+  { whatsapp: '5511945655849', corretor: 'Nalcio', data: '05/08/2026 10:43' },
+  { whatsapp: '5562996973237', corretor: 'Laís', data: '04/08/2026 16:02' },
+  { whatsapp: '5562994069875', corretor: 'Nalcio', data: '04/08/2026 06:28' },
+  { whatsapp: '5562992638241', corretor: 'Nalcio', data: '02/08/2026 21:48' },
+  { whatsapp: '5564996432984', corretor: 'Nalcio', data: '02/08/2026 16:53' },
+  { whatsapp: '5562991481170', corretor: 'Laís', data: '31/07/2026 19:01' },
+  { whatsapp: '5562994891474', corretor: 'Nalcio', data: '29/07/2026 12:01' },
+  { whatsapp: '5562982249292', corretor: 'Laís', data: '27/07/2026 15:40' },
+  { whatsapp: '5562991681084', corretor: 'Renata', data: '27/07/2026 13:57' },
+  { whatsapp: '5562991876319', corretor: 'Nalcio', data: '25/07/2026 08:10' },
+  { whatsapp: '5563999167720', corretor: 'Nalcio', data: '23/07/2026 08:01' },
+  { whatsapp: '5562995393451', corretor: 'Renata', data: '21/07/2026 11:54' },
+  { whatsapp: '5562992296303', corretor: 'Nalcio', data: '20/07/2026 09:22' },
+  { whatsapp: '5562981007075', corretor: 'Nalcio', data: '16/07/2026 19:35' },
+  { whatsapp: '5562991754544', corretor: 'Laís', data: '16/07/2026 19:14' },
+  { whatsapp: '5562985993485', corretor: 'Renata', data: '15/07/2026 13:34' },
+  { whatsapp: '5511951268877', corretor: 'Nalcio', data: '14/07/2026 12:09' },
+  { whatsapp: '5562993908306', corretor: 'Laís', data: '12/07/2026 06:57' },
+  { whatsapp: '5562992118453', corretor: 'Nalcio', data: '12/07/2026 00:14' },
+  { whatsapp: '5562991075395', corretor: 'Laís', data: '11/07/2026 12:38' },
+  { whatsapp: '5562991724840', corretor: 'Nalcio', data: '10/07/2026 18:30' },
+  { whatsapp: '5562993456060', corretor: 'Nalcio', data: '09/07/2026 14:20' },
+  { whatsapp: '5562992474585', corretor: 'Nalcio', data: '09/07/2026 00:03' },
+  { whatsapp: '5562994933970', corretor: 'Laís', data: '07/07/2026 18:09' },
+  { whatsapp: '5562993580158', corretor: 'Laís', data: '02/07/2026 09:46' },
+  { whatsapp: '5562998368040', corretor: 'Nalcio', data: '01/07/2026 12:44' },
+  { whatsapp: '5562994057532', corretor: 'Laís', data: '01/07/2026 04:55' },
+  { whatsapp: '5562995675744', corretor: 'Nalcio', data: '30/06/2026 10:00' },
+  { whatsapp: '5562981502498', corretor: 'Laís', data: '30/06/2026 02:12' },
+  { whatsapp: '5562994679355', corretor: 'Nalcio', data: '29/06/2026 11:41' },
+  { whatsapp: '5511982795830', corretor: 'Laís', data: '28/06/2026 21:32' },
+  { whatsapp: '5562996986440', corretor: 'Laís', data: '23/06/2026 19:44' },
+];
+
+app.post('/api/admin/corrigir-canalpro-fixo', basicAuth, async (req, res) => {
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  }
+  try {
+    let corrigidos = 0;
+    let naoEncontrados = 0;
+
+    for (const item of DADOS_CORRIGIDOS_CANALPRO) {
+      const dataParseada = parseDataChegada(item.data);
+      const result = await pool.query(
+        `UPDATE leads SET corretor = $1, distribuido_em = $2 WHERE whatsapp = $3 RETURNING id`,
+        [item.corretor, dataParseada, item.whatsapp]
+      );
+      if (result.rowCount > 0) corrigidos++;
+      else naoEncontrados++;
+    }
+
+    console.log(`Correção fixa Canal Pro: ${corrigidos} corrigidos, ${naoEncontrados} não encontrados`);
+    res.json({ ok: true, corrigidos, naoEncontrados, total: DADOS_CORRIGIDOS_CANALPRO.length });
+  } catch (err) {
+    console.error('Erro ao corrigir Canal Pro:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
 // ─── ROTA: LIMPAR DUPLICADOS SEM NÚMERO VÁLIDO (uso único) ───
 // Remove duplicatas geradas pelo bug do identificador aleatório (antes da correção):
 // mantém só o lead mais antigo de cada grupo com mesmo nome entre os "sem número válido".
