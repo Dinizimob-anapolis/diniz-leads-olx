@@ -173,6 +173,12 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     padding: 7px 12px; cursor: pointer;
   }
   #bulk-apply-btn:hover { opacity: 0.88; }
+  #bulk-apply-imovel-btn {
+    font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; color: #fff;
+    background: var(--amber); border: 1px solid var(--amber); border-radius: 6px;
+    padding: 7px 12px; cursor: pointer;
+  }
+  #bulk-apply-imovel-btn:hover { opacity: 0.88; }
   #bulk-export-btn {
     font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 500; color: var(--ink);
     background: var(--bg-card); border: 1px solid var(--line); border-radius: 6px;
@@ -258,6 +264,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       <button id="sync-btn" onclick="sincronizarPlanilha()">⇄ Sincronizar planilha</button>
       <button id="infer-btn" onclick="inferirOrigens()" style="background:#F3E7D2; border-color:#B8863B; color:#B8863B;">🔍 Preencher origens pendentes</button>
       <button id="clean-btn" onclick="limparDuplicados()" style="background:#F6E4E0; border-color:#B14B3B; color:#B14B3B;">🧹 Limpar duplicados</button>
+      <button id="merge-btn" onclick="mesclarDuplicadosFormato()" style="background:#F6E4E0; border-color:#B14B3B; color:#B14B3B;">🔗 Unir duplicados de número</button>
       <button id="import-btn" onclick="document.getElementById('arquivo-planilha').click()">⇪ Importar arquivo</button>
       <input type="file" id="arquivo-planilha" accept=".xlsx,.xls,.csv" style="display:none" onchange="importarPlanilha(this.files[0])">
       <button id="add-lead-btn" onclick="abrirModalLead()">+ Adicionar lead</button>
@@ -364,6 +371,9 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
         <option value="Outro">Outro</option>
       </select>
       <button id="bulk-apply-btn" onclick="aplicarOrigemEmMassa()">Aplicar aos leads filtrados</button>
+      <span style="border-left:1px solid var(--line); height:20px; margin:0 4px;"></span>
+      <input type="text" id="bulk-imovel-input" placeholder="Novo valor do Imóvel…" style="min-width:160px;">
+      <button id="bulk-apply-imovel-btn" onclick="aplicarImovelEmMassa()">Aplicar Imóvel aos filtrados</button>
       <button id="bulk-export-btn" onclick="exportarCSV()">⇩ Exportar CSV</button>
     </div>
     <div class="table-scroll" id="tabela-container">
@@ -484,6 +494,25 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     } finally {
       btn.disabled = false;
       btn.textContent = '🔍 Preencher origens pendentes';
+    }
+  }
+
+  async function mesclarDuplicadosFormato() {
+    if (!confirm('Isso vai juntar leads duplicados por causa do formato antigo do número (9º dígito) ou por já ter um número válido cadastrado, mantendo sempre o mais antigo. Confirma?')) return;
+    const btn = document.getElementById('merge-btn');
+    btn.disabled = true;
+    btn.textContent = '🔗 Unindo…';
+    try {
+      const res = await fetch('/api/admin/mesclar-duplicados-numero-formato', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.erro || 'Falha ao unir');
+      alert(\`\${data.mesclados} lead\${data.mesclados === 1 ? '' : 's'} duplicado\${data.mesclados === 1 ? '' : 's'} unido\${data.mesclados === 1 ? '' : 's'}.\`);
+      await carregarDados();
+    } catch (err) {
+      alert('Não consegui unir: ' + err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '🔗 Unir duplicados de número';
     }
   }
 
@@ -628,6 +657,40 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  }
+
+  async function aplicarImovelEmMassa() {
+    const valor = document.getElementById('bulk-imovel-input').value.trim();
+    if (!valor) {
+      alert('Digita o valor do Imóvel primeiro.');
+      return;
+    }
+    if (LEADS_FILTRADOS_IDS.length === 0) {
+      alert('Nenhum lead filtrado pra aplicar.');
+      return;
+    }
+    const confirmar = confirm(\`Definir Imóvel "\${valor}" para \${LEADS_FILTRADOS_IDS.length} lead\${LEADS_FILTRADOS_IDS.length === 1 ? '' : 's'} filtrado\${LEADS_FILTRADOS_IDS.length === 1 ? '' : 's'}?\`);
+    if (!confirmar) return;
+
+    const btn = document.getElementById('bulk-apply-imovel-btn');
+    btn.disabled = true;
+    btn.textContent = 'Aplicando…';
+
+    try {
+      for (const id of LEADS_FILTRADOS_IDS) {
+        await fetch('/api/leads/' + id, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ campo: 'imovel_desc', valor }),
+        });
+      }
+      await carregarDados();
+    } catch (err) {
+      alert('Deu erro ao aplicar em alguns leads. Confere e tenta de novo se precisar.');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Aplicar Imóvel aos filtrados';
+    }
   }
 
   async function aplicarOrigemEmMassa() {
