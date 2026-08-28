@@ -289,6 +289,8 @@ async function sincronizarPlanilhaGoogle() {
 
   const headers = linhas[0];
   const idx = mapearColunas(headers);
+  console.log('[DIAGNÓSTICO PLANILHA] Cabeçalhos encontrados:', JSON.stringify(headers));
+  console.log('[DIAGNÓSTICO PLANILHA] Mapeamento de colunas:', JSON.stringify(idx));
 
   const leads = linhas.slice(1).map(linha => ({
     nome: idx.nome !== undefined ? linha[idx.nome] : '',
