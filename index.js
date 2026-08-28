@@ -301,6 +301,9 @@ async function sincronizarPlanilhaGoogle() {
     dataChegada: idx.dataChegada !== undefined ? linha[idx.dataChegada] : null,
   }));
 
+  console.log('[DIAGNÓSTICO PLANILHA] 3 primeiras linhas brutas:', JSON.stringify(linhas.slice(1, 4)));
+  console.log('[DIAGNÓSTICO PLANILHA] 3 primeiras datas extraídas:', JSON.stringify(leads.slice(0, 3).map(l => ({ nome: l.nome, dataChegada: l.dataChegada }))));
+
   const resultado = await importarLeadsEmLote(leads);
   console.log(`[Google Sheets] Sincronizado: ${resultado.inseridos} novos, ${resultado.jaExistiam} já existiam, ${resultado.incompletos} incompletos (sem nome/whatsapp)`);
   return { ok: true, ...resultado };
