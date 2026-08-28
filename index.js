@@ -223,6 +223,9 @@ async function importarLeadsEmLote(leads) {
     // dataReal: só preenchida quando o arquivo trouxe uma data que deu pra entender de verdade.
     // dataFinal: sempre tem um valor (cai pra agora se não tiver data), usada só na criação do lead novo.
     const dataReal = parseDataChegada(item.dataChegada);
+    if (!dataReal && item.dataChegada) {
+      console.log(`[DIAGNÓSTICO DATA] Não consegui entender a data de "${nome}". Valor bruto recebido: ${JSON.stringify(item.dataChegada)} (tipo: ${typeof item.dataChegada})`);
+    }
     const dataFinal = dataReal || new Date();
 
     try {
