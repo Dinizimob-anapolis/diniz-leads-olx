@@ -187,7 +187,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   #bulk-export-btn:hover { border-color: var(--amber); background: var(--amber-soft); }
   #bulk-count { color: var(--ink-soft); }
 
-  .table-scroll { overflow-x: auto; }
+  .table-scroll { overflow-x: auto; overflow-y: visible; }
   table { width: 100%; border-collapse: collapse; min-width: 1040px; }
   thead th {
     text-align: left; font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.08em;
