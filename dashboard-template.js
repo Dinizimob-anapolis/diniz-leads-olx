@@ -514,7 +514,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 
     try {
       const buffer = await arquivo.arrayBuffer();
-      const workbook = XLSX.read(buffer, { type: 'array' });
+      const workbook = XLSX.read(buffer, { type: 'array', cellDates: true });
       const primeiraAba = workbook.Sheets[workbook.SheetNames[0]];
       const linhas = XLSX.utils.sheet_to_json(primeiraAba, { defval: '' });
 
@@ -529,10 +529,11 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
         origem: String(acharColuna(linha, ['Origem', 'Canal'])).trim() || null,
         corretor: String(acharColuna(linha, ['Corretor'])).trim() || null,
         imovelDesc: String(acharColuna(linha, ['Interesse', 'Imovel', 'Imóvel'])).trim() || null,
-      })).filter(l => l.nome && l.whatsapp);
+        dataChegada: acharColuna(linha, ['Data', 'Data do Lead', 'Data de Criação', 'Data do ultimo lead gerado', 'Data do último lead gerado']) || null,
+      })).filter(l => l.nome);
 
       if (leads.length === 0) {
-        alert('Não consegui identificar as colunas de Nome e WhatsApp nessa planilha. Confere se os nomes das colunas batem com o esperado (Nome, WhatsApp, Origem, Corretor, Interesse).');
+        alert('Não consegui identificar a coluna de Nome nessa planilha. Confere se o cabeçalho bate com o esperado (Nome, WhatsApp, Origem, Corretor, Interesse, Data).');
         return;
       }
 
@@ -565,7 +566,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     const colunas = ['Nome', 'Telefone', 'Email', 'Corretor', 'Imovel', 'Origem', 'Status'];
     const escapar = v => {
       const s = String(v ?? '');
-      return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+      return /[",\\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
     };
 
     const linhas = LEADS_FILTRADOS_OBJS.map(l => [
@@ -578,7 +579,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       l.status || 'Novo',
     ].map(escapar).join(','));
 
-    const csv = '\uFEFF' + [colunas.join(','), ...linhas].join('\n');
+    const csv = '\uFEFF' + [colunas.join(','), ...linhas].join('\\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -686,11 +687,17 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     renderCorretorTabContent();
   }
 
+  function selecionarAbaCorretorPorIndice(botao) {
+    const abas = ['Geral', ...CORRETORES_DISPONIVEIS];
+    const idx = parseInt(botao.getAttribute('data-idx'), 10);
+    selecionarAbaCorretor(abas[idx]);
+  }
+
   function renderCorretorTabs() {
     const container = document.getElementById('corretor-tabs');
     const abas = ['Geral', ...CORRETORES_DISPONIVEIS];
-    container.innerHTML = abas.map(nome =>
-      \`<button class="corretor-tab-btn \${ABA_CORRETOR_ATIVA === nome ? 'active' : ''}" onclick="selecionarAbaCorretor('\${nome.replace(/'/g, "\\\\'")}')">\${nome}</button>\`
+    container.innerHTML = abas.map((nome, i) =>
+      \`<button class="corretor-tab-btn \${ABA_CORRETOR_ATIVA === nome ? 'active' : ''}" data-idx="\${i}" onclick="selecionarAbaCorretorPorIndice(this)">\${nome}</button>\`
     ).join('');
   }
 
@@ -779,6 +786,14 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     document.getElementById('tabela-container').scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
+  function filtrarPorOrigemIndice(el) {
+    const idx = parseInt(el.getAttribute('data-idx'), 10);
+    const origens = (ULTIMO_ESTADO && ULTIMO_ESTADO.porOrigem) || [];
+    const o = origens[idx];
+    if (!o) return;
+    filtrarPorOrigem(origemParaFiltro(o.origem));
+  }
+
   function renderTudo(data) {
     CORRETORES_DISPONIVEIS = data.corretoresDisponiveis || [];
     document.getElementById('m-distribuidos').textContent = data.totalGeral ? data.totalGeral.total : data.stats.totalDistribuidos;
@@ -805,10 +820,10 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     const origemStrip = document.getElementById('origem-strip');
     const origens = data.porOrigem || [];
     const filtroOrigemAtual = document.getElementById('filtro-origem').value;
-    origemStrip.innerHTML = origens.map(o => {
+    origemStrip.innerHTML = origens.map((o, i) => {
       const valorFiltro = origemParaFiltro(o.origem);
       const ativo = filtroOrigemAtual === valorFiltro;
-      return \`<div class="origem-chip \${ativo ? 'active' : ''}" onclick="filtrarPorOrigem('\${valorFiltro.replace(/'/g, "\\\\'")}')">\${o.origem} <span class="count">\${o.total}</span></div>\`;
+      return \`<div class="origem-chip \${ativo ? 'active' : ''}" data-idx="\${i}" onclick="filtrarPorOrigemIndice(this)">\${o.origem} <span class="count">\${o.total}</span></div>\`;
     }).join('') || '<div class="mono">Nenhuma origem registrada ainda</div>';
 
     const campanhasContainer = document.getElementById('campanhas-container');
