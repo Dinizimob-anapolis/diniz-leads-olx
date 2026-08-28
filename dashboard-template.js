@@ -265,6 +265,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       <button id="infer-btn" onclick="inferirOrigens()" style="background:#F3E7D2; border-color:#B8863B; color:#B8863B;">🔍 Preencher origens pendentes</button>
       <button id="clean-btn" onclick="limparDuplicados()" style="background:#F6E4E0; border-color:#B14B3B; color:#B14B3B;">🧹 Limpar duplicados</button>
       <button id="merge-btn" onclick="mesclarDuplicadosFormato()" style="background:#F6E4E0; border-color:#B14B3B; color:#B14B3B;">🔗 Unir duplicados de número</button>
+      <button id="fix-canalpro-btn" onclick="corrigirCanalProFixo()" style="background:#E4EFE7; border-color:#4A7A5E; color:#4A7A5E;">✅ Corrigir 52 leads Canal Pro</button>
       <button id="import-btn" onclick="document.getElementById('arquivo-planilha').click()">⇪ Importar arquivo</button>
       <input type="file" id="arquivo-planilha" accept=".xlsx,.xls,.csv" style="display:none" onchange="importarPlanilha(this.files[0])">
       <button id="add-lead-btn" onclick="abrirModalLead()">+ Adicionar lead</button>
@@ -494,6 +495,25 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     } finally {
       btn.disabled = false;
       btn.textContent = '🔍 Preencher origens pendentes';
+    }
+  }
+
+  async function corrigirCanalProFixo() {
+    if (!confirm('Isso vai corrigir corretor e data dos 52 leads do Canal Pro já identificados, direto no banco. Confirma?')) return;
+    const btn = document.getElementById('fix-canalpro-btn');
+    btn.disabled = true;
+    btn.textContent = '✅ Corrigindo…';
+    try {
+      const res = await fetch('/api/admin/corrigir-canalpro-fixo', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.erro || 'Falha ao corrigir');
+      alert(\`\${data.corrigidos} de \${data.total} leads corrigidos. \${data.naoEncontrados} não foram encontrados no banco.\`);
+      await carregarDados();
+    } catch (err) {
+      alert('Não consegui corrigir: ' + err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '✅ Corrigir 52 leads Canal Pro';
     }
   }
 
