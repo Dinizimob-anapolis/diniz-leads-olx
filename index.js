@@ -127,6 +127,19 @@ function gerarPlaceholderSemNumero() {
   return `SEMNUM-${Date.now()}-${contadorSemNumero}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
+// Gera um identificador ESTÁVEL (sempre igual pra mesma pessoa) quando não há WhatsApp válido,
+// baseado em nome + email. Isso evita que a mesma linha, sem telefone, vire um lead novo
+// toda vez que a planilha for sincronizada de novo (a cada 10 min).
+function gerarChaveSemNumero(nome, email) {
+  const base = normalizarTexto(`${nome || ''}|${email || ''}`);
+  if (!base.replace(/\|/g, '')) return gerarPlaceholderSemNumero(); // nada pra basear, usa aleatório mesmo
+  let hash = 0;
+  for (let i = 0; i < base.length; i++) {
+    hash = (hash * 31 + base.charCodeAt(i)) >>> 0;
+  }
+  return `SEMNUM-${hash.toString(36)}`;
+}
+
 // Reconhece a coluna certa pelo nome do cabeçalho, mesmo com variações (acento, maiúscula, espaço)
 function mapearColunas(headers) {
   const mapa = {
@@ -195,7 +208,7 @@ async function importarLeadsEmLote(leads) {
 
     const whatsappValido = canonicalizarWhatsapp(whatsappBruto);
     const numeroInvalido = !whatsappValido;
-    const whatsapp = whatsappValido || gerarPlaceholderSemNumero();
+    const whatsapp = whatsappValido || gerarChaveSemNumero(nome, item.email);
     // dataReal: só preenchida quando o arquivo trouxe uma data que deu pra entender de verdade.
     // dataFinal: sempre tem um valor (cai pra agora se não tiver data), usada só na criação do lead novo.
     const dataReal = parseDataChegada(item.dataChegada);
@@ -459,7 +472,7 @@ function parseDistribuicao(texto) {
 async function salvarDistribuicao(dados, origemPadrao = null) {
   const origem = dados.origem || origemPadrao || null;
   const numeroInvalido = !dados.whatsapp;
-  const whatsappFinal = dados.whatsapp || gerarPlaceholderSemNumero();
+  const whatsappFinal = dados.whatsapp || gerarChaveSemNumero(dados.nome, dados.email);
   const whatsappBruto = numeroInvalido ? (dados.whatsappBruto || null) : null;
   const interesse = dados.mensagemOriginal || null;
 
@@ -1018,6 +1031,32 @@ app.patch('/api/leads-nao-identificados/:id', basicAuth, async (req, res) => {
     res.json({ ok: true, promovido: true, id: insertResult.rows[0].id });
   } catch (err) {
     console.error('Erro ao editar não identificado:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
+// ─── ROTA: LIMPAR DUPLICADOS SEM NÚMERO VÁLIDO (uso único) ───
+// Remove duplicatas geradas pelo bug do identificador aleatório (antes da correção):
+// mantém só o lead mais antigo de cada grupo com mesmo nome entre os "sem número válido".
+app.post('/api/admin/limpar-duplicados-sem-numero', basicAuth, async (req, res) => {
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  }
+  try {
+    const result = await pool.query(`
+      DELETE FROM leads a
+      USING leads b
+      WHERE a.numero_invalido = true
+        AND b.numero_invalido = true
+        AND a.nome = b.nome
+        AND COALESCE(a.email, '') = COALESCE(b.email, '')
+        AND a.id > b.id
+      RETURNING a.id
+    `);
+    console.log(`Limpeza de duplicados sem número: ${result.rowCount} removidos`);
+    res.json({ ok: true, removidos: result.rowCount });
+  } catch (err) {
+    console.error('Erro ao limpar duplicados:', err);
     res.status(500).json({ ok: false, erro: err.message });
   }
 });
