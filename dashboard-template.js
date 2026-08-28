@@ -265,7 +265,6 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       <button id="infer-btn" onclick="inferirOrigens()" style="background:#F3E7D2; border-color:#B8863B; color:#B8863B;">🔍 Preencher origens pendentes</button>
       <button id="clean-btn" onclick="limparDuplicados()" style="background:#F6E4E0; border-color:#B14B3B; color:#B14B3B;">🧹 Limpar duplicados</button>
       <button id="merge-btn" onclick="mesclarDuplicadosFormato()" style="background:#F6E4E0; border-color:#B14B3B; color:#B14B3B;">🔗 Unir duplicados de número</button>
-      <button id="fix-canalpro-btn" onclick="corrigirCanalProFixo()" style="background:#E4EFE7; border-color:#4A7A5E; color:#4A7A5E;">✅ Corrigir 52 leads Canal Pro</button>
       <button id="import-btn" onclick="document.getElementById('arquivo-planilha').click()">⇪ Importar arquivo</button>
       <input type="file" id="arquivo-planilha" accept=".xlsx,.xls,.csv" style="display:none" onchange="importarPlanilha(this.files[0])">
       <button id="add-lead-btn" onclick="abrirModalLead()">+ Adicionar lead</button>
@@ -324,10 +323,12 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   </div>
 
   <div class="panel" style="margin-bottom:28px;">
-    <div class="panel-head">
-      <h2>Leads sem número válido <span id="sem-numero-count" class="mono"></span></h2>
+    <div class="panel-head" style="cursor:pointer;" onclick="toggleSemNumero()">
+      <h2 style="display:flex; align-items:center; gap:8px;">
+        <span id="sem-numero-seta">▸</span> Leads sem número válido <span id="sem-numero-count" class="mono"></span>
+      </h2>
     </div>
-    <div id="sem-numero-container" style="padding:16px 22px;"></div>
+    <div id="sem-numero-container" style="padding:16px 22px; display:none;"></div>
   </div>
 
   <div class="panel">
@@ -495,25 +496,6 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     } finally {
       btn.disabled = false;
       btn.textContent = '🔍 Preencher origens pendentes';
-    }
-  }
-
-  async function corrigirCanalProFixo() {
-    if (!confirm('Isso vai corrigir corretor e data dos 52 leads do Canal Pro já identificados, direto no banco. Confirma?')) return;
-    const btn = document.getElementById('fix-canalpro-btn');
-    btn.disabled = true;
-    btn.textContent = '✅ Corrigindo…';
-    try {
-      const res = await fetch('/api/admin/corrigir-canalpro-fixo', { method: 'POST' });
-      const data = await res.json();
-      if (!res.ok || !data.ok) throw new Error(data.erro || 'Falha ao corrigir');
-      alert(\`\${data.corrigidos} de \${data.total} leads corrigidos. \${data.naoEncontrados} não foram encontrados no banco.\`);
-      await carregarDados();
-    } catch (err) {
-      alert('Não consegui corrigir: ' + err.message);
-    } finally {
-      btn.disabled = false;
-      btn.textContent = '✅ Corrigir 52 leads Canal Pro';
     }
   }
 
@@ -844,6 +826,24 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     </div>\`;
   }
 
+  let SEM_NUMERO_ABERTO = false;
+  let SEM_NUMERO_PAGINA = 1;
+  const SEM_NUMERO_POR_PAGINA = 10;
+
+  function toggleSemNumero() {
+    SEM_NUMERO_ABERTO = !SEM_NUMERO_ABERTO;
+    const container = document.getElementById('sem-numero-container');
+    const seta = document.getElementById('sem-numero-seta');
+    container.style.display = SEM_NUMERO_ABERTO ? 'block' : 'none';
+    seta.textContent = SEM_NUMERO_ABERTO ? '▾' : '▸';
+    if (SEM_NUMERO_ABERTO) renderSemNumero();
+  }
+
+  function irParaPaginaSemNumero(pagina) {
+    SEM_NUMERO_PAGINA = pagina;
+    renderSemNumero();
+  }
+
   function renderSemNumero() {
     const container = document.getElementById('sem-numero-container');
     const countEl = document.getElementById('sem-numero-count');
@@ -852,15 +852,28 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     const semNumero = ULTIMO_ESTADO.leads.filter(l => l.numero_invalido);
     countEl.textContent = semNumero.length > 0 ? \`(\${semNumero.length})\` : '';
 
+    if (!SEM_NUMERO_ABERTO) return;
+
     if (semNumero.length === 0) {
       container.innerHTML = '<div class="mono">Nenhum lead sem número no momento.</div>';
       return;
     }
 
+    const totalPaginas = Math.ceil(semNumero.length / SEM_NUMERO_POR_PAGINA);
+    if (SEM_NUMERO_PAGINA > totalPaginas) SEM_NUMERO_PAGINA = totalPaginas;
+    const inicio = (SEM_NUMERO_PAGINA - 1) * SEM_NUMERO_POR_PAGINA;
+    const pagina = semNumero.slice(inicio, inicio + SEM_NUMERO_POR_PAGINA);
+
+    const paginacaoHtml = totalPaginas > 1 ? \`<div style="display:flex; gap:6px; margin-top:14px; flex-wrap:wrap;">
+      \${Array.from({ length: totalPaginas }, (_, i) => i + 1).map(p =>
+        \`<button class="btn-secundario" style="padding:6px 12px; \${p === SEM_NUMERO_PAGINA ? 'background:var(--amber); color:#fff; border-color:var(--amber);' : ''}" onclick="irParaPaginaSemNumero(\${p})">\${p}</button>\`
+      ).join('')}
+    </div>\` : '';
+
     container.innerHTML = \`<div class="table-scroll"><table>
       <thead><tr><th>Nome</th><th>O que veio na planilha/mensagem</th><th>Origem</th><th>Corretor</th><th>Corrigir WhatsApp</th></tr></thead>
       <tbody>
-        \${semNumero.map(l => \`<tr>
+        \${pagina.map(l => \`<tr>
           <td><div class="lead-name">\${l.nome || 'Sem nome'}</div></td>
           <td class="mono">\${l.whatsapp_bruto || '—'}</td>
           <td class="mono">\${l.origem || '—'}</td>
@@ -871,7 +884,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
           </td>
         </tr>\`).join('')}
       </tbody>
-    </table></div>\`;
+    </table></div>\${paginacaoHtml}\`;
   }
 
   async function corrigirWhatsapp(id) {
