@@ -92,6 +92,17 @@ async function initDb() {
 }
 
 // ─── IMPORTAÇÃO EM LOTE (reutilizada pelo upload manual e pela sincronização com Google Sheets) ─
+// Origem inferida a partir de um texto livre (mensagem original ou distribuição):
+// se tiver "CRM" escrito, é lead do OLX/Canal Pro; se tiver um código de imóvel
+// (ex: VD01) sem CRM, é lead Patrocinado (Insta/Face); senão, fica pendente.
+function inferirOrigemDeTexto(texto, imovelCodigoJaExtraido) {
+  if (!texto) return null;
+  if (/\bCRM\b/i.test(texto)) return 'OLX/Canal Pro';
+  if (imovelCodigoJaExtraido) return 'Patrocinado';
+  if (/[A-Z]{2}\d{2,}/i.test(texto)) return 'Patrocinado';
+  return null;
+}
+
 function normalizarTexto(s) {
   return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
 }
@@ -448,12 +459,7 @@ function parseDistribuicao(texto) {
   // Origem inferida quando a mensagem não diz explicitamente ("origem:"):
   // se tiver "CRM" escrito, é lead do OLX/Canal Pro (padrão dessas mensagens);
   // se tiver só o código do imóvel (ex: VD01) sem CRM, é lead Patrocinado (Insta/Face).
-  let origemInferida = null;
-  if (/\bCRM\b/i.test(texto)) {
-    origemInferida = 'OLX/Canal Pro';
-  } else if (imovelCodigo) {
-    origemInferida = 'Patrocinado';
-  }
+  let origemInferida = inferirOrigemDeTexto(texto, imovelCodigo);
 
   return {
     nome: nomeMatch ? nomeMatch[1].trim() : 'Sem nome',
@@ -1015,8 +1021,21 @@ app.patch('/api/leads-nao-identificados/:id', basicAuth, async (req, res) => {
       colunas.push(colunaExtra);
       valores.push(valor);
     }
+
+    // Se não foi a origem que acabou de ser editada, tenta descobrir sozinho
+    // (CRM na mensagem → OLX/Canal Pro; código de imóvel sem CRM → Patrocinado)
+    let setClauseOrigem = '';
+    if (campo !== 'origem') {
+      const origemInferida = inferirOrigemDeTexto(mensagem);
+      if (origemInferida) {
+        colunas.push('origem');
+        valores.push(origemInferida);
+        setClauseOrigem = ', origem = COALESCE(leads.origem, EXCLUDED.origem)';
+      }
+    }
+
     const placeholders = valores.map((_, i) => `$${i + 1}`).join(', ');
-    const setClause = colunaExtra ? `${colunaExtra} = EXCLUDED.${colunaExtra}` : 'nome = EXCLUDED.nome';
+    const setClause = (colunaExtra ? `${colunaExtra} = EXCLUDED.${colunaExtra}` : 'nome = EXCLUDED.nome') + setClauseOrigem;
 
     const insertResult = await pool.query(
       `INSERT INTO leads (${colunas.join(', ')})
@@ -1031,6 +1050,44 @@ app.patch('/api/leads-nao-identificados/:id', basicAuth, async (req, res) => {
     res.json({ ok: true, promovido: true, id: insertResult.rows[0].id });
   } catch (err) {
     console.error('Erro ao editar não identificado:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
+// ─── ROTA: INFERIR ORIGEM DOS LEADS PENDENTES (uso único/pontual) ─
+// Passa por todo lead sem origem definida e tenta descobrir sozinho, olhando o
+// código/nome do imóvel e a mensagem guardada (CRM → OLX/Canal Pro; código tipo
+// VD01 sem CRM → Patrocinado). Não sobrescreve quem já tem origem definida.
+app.post('/api/admin/inferir-origens-pendentes', basicAuth, async (req, res) => {
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  }
+  try {
+    const pendentes = await pool.query(
+      `SELECT id, imovel_codigo, imovel_desc, interesse FROM leads WHERE origem IS NULL`
+    );
+
+    let atualizados = 0;
+    for (const lead of pendentes.rows) {
+      const codigo = (lead.imovel_codigo || '').trim();
+      let origemInferida;
+      if (/^\d+$/.test(codigo)) {
+        // Código só com números (ex: 111, 1046) — é o CRM do Canal Pro/OLX
+        origemInferida = 'OLX/Canal Pro';
+      } else {
+        const textoBase = [lead.imovel_codigo, lead.imovel_desc, lead.interesse].filter(Boolean).join(' ');
+        origemInferida = inferirOrigemDeTexto(textoBase);
+      }
+      if (origemInferida) {
+        await pool.query('UPDATE leads SET origem = $1 WHERE id = $2', [origemInferida, lead.id]);
+        atualizados++;
+      }
+    }
+
+    console.log(`Inferência de origem em massa: ${atualizados} de ${pendentes.rows.length} pendentes atualizados`);
+    res.json({ ok: true, atualizados, totalPendentes: pendentes.rows.length });
+  } catch (err) {
+    console.error('Erro ao inferir origens pendentes:', err);
     res.status(500).json({ ok: false, erro: err.message });
   }
 });
