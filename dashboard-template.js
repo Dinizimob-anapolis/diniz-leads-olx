@@ -263,9 +263,6 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     </div>
     <div class="top-right">
       <button id="sync-btn" onclick="sincronizarPlanilha()">⇄ Sincronizar planilha</button>
-      <button id="infer-btn" onclick="inferirOrigens()" style="background:#F3E7D2; border-color:#B8863B; color:#B8863B;">🔍 Preencher origens pendentes</button>
-      <button id="clean-btn" onclick="limparDuplicados()" style="background:#F6E4E0; border-color:#B14B3B; color:#B14B3B;">🧹 Limpar duplicados</button>
-      <button id="merge-btn" onclick="mesclarDuplicadosFormato()" style="background:#F6E4E0; border-color:#B14B3B; color:#B14B3B;">🔗 Unir duplicados de número</button>
       <button id="import-btn" onclick="document.getElementById('arquivo-planilha').click()">⇪ Importar arquivo</button>
       <input type="file" id="arquivo-planilha" accept=".xlsx,.xls,.csv" style="display:none" onchange="importarPlanilha(this.files[0])">
       <button id="add-lead-btn" onclick="abrirModalLead()">+ Adicionar lead</button>
@@ -479,62 +476,6 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       alert('Não consegui salvar essa alteração. Tenta de novo.');
     } finally {
       if (dot) setTimeout(() => dot.classList.remove('show'), 400);
-    }
-  }
-
-  async function inferirOrigens() {
-    const btn = document.getElementById('infer-btn');
-    btn.disabled = true;
-    btn.textContent = '🔍 Analisando…';
-    try {
-      const res = await fetch('/api/admin/inferir-origens-pendentes', { method: 'POST' });
-      const data = await res.json();
-      if (!res.ok || !data.ok) throw new Error(data.erro || 'Falha ao inferir origens');
-      alert(\`\${data.atualizados} de \${data.totalPendentes} leads pendentes tiveram a origem preenchida. Os que não deu pra descobrir continuam pendentes pra você escolher manualmente.\`);
-      await carregarDados();
-    } catch (err) {
-      alert('Não consegui preencher: ' + err.message);
-    } finally {
-      btn.disabled = false;
-      btn.textContent = '🔍 Preencher origens pendentes';
-    }
-  }
-
-  async function mesclarDuplicadosFormato() {
-    if (!confirm('Isso vai juntar leads duplicados por causa do formato antigo do número (9º dígito) ou por já ter um número válido cadastrado, mantendo sempre o mais antigo. Confirma?')) return;
-    const btn = document.getElementById('merge-btn');
-    btn.disabled = true;
-    btn.textContent = '🔗 Unindo…';
-    try {
-      const res = await fetch('/api/admin/mesclar-duplicados-numero-formato', { method: 'POST' });
-      const data = await res.json();
-      if (!res.ok || !data.ok) throw new Error(data.erro || 'Falha ao unir');
-      alert(\`\${data.mesclados} lead\${data.mesclados === 1 ? '' : 's'} duplicado\${data.mesclados === 1 ? '' : 's'} unido\${data.mesclados === 1 ? '' : 's'}.\`);
-      await carregarDados();
-    } catch (err) {
-      alert('Não consegui unir: ' + err.message);
-    } finally {
-      btn.disabled = false;
-      btn.textContent = '🔗 Unir duplicados de número';
-    }
-  }
-
-  async function limparDuplicados() {
-    if (!confirm('Isso vai apagar os leads duplicados sem número válido (mesmo nome), mantendo só o mais antigo de cada. Confirma?')) return;
-    const btn = document.getElementById('clean-btn');
-    btn.disabled = true;
-    btn.textContent = '🧹 Limpando…';
-    try {
-      const res = await fetch('/api/admin/limpar-duplicados-sem-numero', { method: 'POST' });
-      const data = await res.json();
-      if (!res.ok || !data.ok) throw new Error(data.erro || 'Falha ao limpar');
-      alert(\`\${data.removidos} lead\${data.removidos === 1 ? '' : 's'} duplicado\${data.removidos === 1 ? '' : 's'} removido\${data.removidos === 1 ? '' : 's'}.\`);
-      await carregarDados();
-    } catch (err) {
-      alert('Não consegui limpar: ' + err.message);
-    } finally {
-      btn.disabled = false;
-      btn.textContent = '🧹 Limpar duplicados';
     }
   }
 
