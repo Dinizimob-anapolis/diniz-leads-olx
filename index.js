@@ -39,7 +39,7 @@ const pool = new Pool({
 const THROTTLE_AVISO_MS = 6 * 60 * 60 * 1000; // 6 horas
 
 // Campos do funil que podem ser editados manualmente pelo dashboard
-const CAMPOS_EDITAVEIS = ['nome', 'origem', 'corretor', 'interesse', 'status', 'aprovado', 'visita', 'proposta', 'venda', 'imovel_desc'];
+const CAMPOS_EDITAVEIS = ['nome', 'origem', 'corretor', 'interesse', 'status', 'aprovado', 'visita', 'proposta', 'venda', 'imovel_desc', 'sem_retorno', 'em_andamento'];
 
 async function initDb() {
   if (!process.env.DATABASE_URL) {
@@ -75,7 +75,9 @@ async function initDb() {
       ADD COLUMN IF NOT EXISTS venda BOOLEAN DEFAULT false,
       ADD COLUMN IF NOT EXISTS numero_invalido BOOLEAN DEFAULT false,
       ADD COLUMN IF NOT EXISTS whatsapp_bruto TEXT,
-      ADD COLUMN IF NOT EXISTS outros_corretores TEXT;
+      ADD COLUMN IF NOT EXISTS outros_corretores TEXT,
+      ADD COLUMN IF NOT EXISTS sem_retorno BOOLEAN DEFAULT false,
+      ADD COLUMN IF NOT EXISTS em_andamento BOOLEAN DEFAULT false;
   `);
 
   await pool.query(`
@@ -114,6 +116,38 @@ async function initDb() {
     }
   } catch (err) {
     console.error('Erro na correção automática de origens antigas:', err);
+  }
+
+  // Leads importados direto do export da OLX vêm com o canal de contato INTERNO da OLX
+  // ("Telefone", "Chat OLX", "Formulário", "WhatsApp") no campo Origem — isso não é uma
+  // categoria nossa, é só como o cliente contatou dentro da OLX. Todos esses são, na
+  // prática, leads do OLX/Canal Pro, então padroniza pra isso.
+  try {
+    const corrigidosCanal = await pool.query(`
+      UPDATE leads
+      SET origem = 'OLX/Canal Pro'
+      WHERE origem IN ('Telefone', 'Chat OLX', 'Formulário', 'WhatsApp')
+      RETURNING id
+    `);
+    if (corrigidosCanal.rowCount > 0) {
+      console.log(`✅ Correção automática de origem: ${corrigidosCanal.rowCount} lead(s) com canal interno da OLX (Telefone/Chat OLX/Formulário/WhatsApp) foram corrigidos para 'OLX/Canal Pro'.`);
+    }
+  } catch (err) {
+    console.error('Erro na correção de canais internos da OLX:', err);
+  }
+
+  // Alguns leads ficaram com a palavra literal "null" salva como origem (provavelmente
+  // uma célula vazia da planilha exportada). Isso não é uma origem real — limpa pra
+  // ficar sem origem mesmo, como qualquer outro pendente.
+  try {
+    const corrigidosNull = await pool.query(`
+      UPDATE leads SET origem = NULL WHERE origem = 'null' RETURNING id
+    `);
+    if (corrigidosNull.rowCount > 0) {
+      console.log(`✅ Correção automática de origem: ${corrigidosNull.rowCount} lead(s) com origem literal "null" foram limpos (ficam sem origem).`);
+    }
+  } catch (err) {
+    console.error('Erro na correção da origem literal "null":', err);
   }
 }
 
@@ -841,7 +875,7 @@ app.get('/api/leads', basicAuth, async (req, res) => {
       `SELECT id, whatsapp, nome, email, corretor, imovel_codigo, imovel_desc,
               distribuido_em, contatou, primeiro_contato_em,
               origem, interesse, status, ultimo_contato, aprovado, visita, proposta, venda,
-              numero_invalido, whatsapp_bruto, outros_corretores
+              numero_invalido, whatsapp_bruto, outros_corretores, sem_retorno, em_andamento
        FROM leads
        ORDER BY distribuido_em DESC
        LIMIT 1000`
