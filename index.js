@@ -877,7 +877,6 @@ app.get('/api/leads', basicAuth, async (req, res) => {
     const porCorretorResult = await pool.query(`
       SELECT corretor, count(*) AS total
       FROM leads
-      WHERE distribuido_em > now() - interval '7 days'
       GROUP BY corretor
       ORDER BY total DESC
     `);
@@ -918,7 +917,6 @@ app.get('/api/leads', basicAuth, async (req, res) => {
         count(*) AS total,
         count(*) FILTER (WHERE contatou) AS total_contataram
       FROM leads
-      WHERE distribuido_em > now() - interval '7 days'
       GROUP BY imovel_codigo, imovel_desc
       ORDER BY total DESC
     `);
@@ -927,7 +925,6 @@ app.get('/api/leads', basicAuth, async (req, res) => {
     const porOrigemResult = await pool.query(`
       SELECT COALESCE(origem, 'Não informado') AS origem, count(*) AS total
       FROM leads
-      WHERE distribuido_em > now() - interval '7 days'
       GROUP BY origem
       ORDER BY total DESC
     `);
