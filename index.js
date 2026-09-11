@@ -90,32 +90,42 @@ async function initDb() {
   `);
   await pool.query(`ALTER TABLE leads_nao_identificados ADD COLUMN IF NOT EXISTS corretor TEXT;`);
   console.log('✅ Tabelas do lead router prontas (leads, leads_nao_identificados)');
+
+  // ─── Correção automática de origens antigas mal classificadas ─────────
+  // Leads que ficaram marcados como 'OLX/Canal Pro' antes da inferência existir,
+  // mas que na verdade têm código de imóvel (tipo VD01) e nenhuma evidência de CRM
+  // — esses são Patrocinado de verdade. Roda em todo início, mas é seguro repetir:
+  // uma vez corrigido, o lead deixa de bater no WHERE e não é tocado de novo.
+  // Nunca mexe em TikTok nem em origem explícita, porque o WHERE só pega quem já
+  // está marcado como OLX/Canal Pro especificamente.
+  try {
+    const corrigidos = await pool.query(`
+      UPDATE leads
+      SET origem = 'Patrocinado'
+      WHERE origem = 'OLX/Canal Pro'
+        AND (imovel_codigo ~* '[A-Z]{2}[0-9]{2,}' OR imovel_desc ~* '[A-Z]{2}[0-9]{2,}')
+        AND COALESCE(interesse, '') !~* 'CRM'
+        AND COALESCE(imovel_codigo, '') !~* 'CRM'
+        AND COALESCE(imovel_desc, '') !~* 'CRM'
+      RETURNING id
+    `);
+    if (corrigidos.rowCount > 0) {
+      console.log(`✅ Correção automática de origem: ${corrigidos.rowCount} lead(s) que estavam como 'OLX/Canal Pro' com código de imóvel (sem CRM) foram corrigidos para 'Patrocinado'.`);
+    }
+  } catch (err) {
+    console.error('Erro na correção automática de origens antigas:', err);
+  }
 }
 
 // ─── IMPORTAÇÃO EM LOTE (reutilizada pelo upload manual e pela sincronização com Google Sheets) ─
 // Origem inferida a partir de um texto livre (mensagem original ou distribuição):
 // se tiver "CRM" escrito, é lead do OLX/Canal Pro; se tiver um código de imóvel
 // (ex: VD01) sem CRM, é lead Patrocinado (Insta/Face); senão, fica pendente.
-function inferirOrigemDeTexto(texto, imovelCodigoJaExtraido = '') {
+function inferirOrigemDeTexto(texto, imovelCodigoJaExtraido) {
   if (!texto) return null;
-
-  const bruto = String(texto).trim();
-
-  // CRM sempre indica Canal Pro / OLX.
-  if (/\bCRM\b/i.test(bruto)) {
-    return 'OLX/Canal Pro';
-  }
-
-  // Código de imóvel já extraído (ex.: VD01).
-  if (imovelCodigoJaExtraido) {
-    return 'Patrocinado';
-  }
-
-  // Código imobiliário no texto (ex.: VD01, VD02, AP01).
-  if (/[A-Z]{2}\d{2,}/i.test(bruto)) {
-    return 'Patrocinado';
-  }
-
+  if (/\bCRM\b/i.test(texto)) return 'OLX/Canal Pro';
+  if (imovelCodigoJaExtraido) return 'Patrocinado';
+  if (/[A-Z]{2}\d{2,}/i.test(texto)) return 'Patrocinado';
   return null;
 }
 
@@ -244,6 +254,11 @@ async function importarLeadsEmLote(leads) {
     }
     const dataFinal = dataReal || new Date();
 
+    // Origem: usa a que a planilha já trouxer; se não trouxer, tenta inferir pelo
+    // código/nome do imóvel (CRM → OLX/Canal Pro; código tipo VD01 → Patrocinado);
+    // se não tiver nenhuma evidência, fica sem origem (nada de forçar um padrão).
+    const origemFinal = item.origem || inferirOrigemDeTexto(item.imovelDesc) || null;
+
     try {
       const result = await pool.query(
         `INSERT INTO leads (whatsapp, nome, corretor, origem, imovel_desc, numero_invalido, whatsapp_bruto, distribuido_em)
@@ -260,7 +275,7 @@ async function importarLeadsEmLote(leads) {
              ELSE leads.outros_corretores
            END
          RETURNING id, (xmax = 0) AS inserido_agora`,
-        [whatsapp, nome, item.corretor || null, item.origem || null, item.imovelDesc || null, numeroInvalido, numeroInvalido ? whatsappBruto : null, dataFinal, dataReal]
+        [whatsapp, nome, item.corretor || null, origemFinal, item.imovelDesc || null, numeroInvalido, numeroInvalido ? whatsappBruto : null, dataFinal, dataReal]
       );
       if (result.rows.length > 0 && result.rows[0].inserido_agora) inseridos++;
       else jaExistiam++;
@@ -717,10 +732,10 @@ app.post('/webhook-mensagens', async (req, res) => {
       if (process.env.DATABASE_URL) {
         const distribuicao = parseDistribuicao(conteudo);
         if (distribuicao) {
-          // Distribuição feita pelo WhatsApp da Juliane — esse canal é usado pra repassar
-          // leads patrocinados (Insta/Facebook), então assume 'Patrocinado' como origem padrão
-          // quando a mensagem não disser outra origem explicitamente. Segue editável no dashboard.
-          await salvarDistribuicao(distribuicao, 'Sem origem');
+          // Distribuição feita pelo WhatsApp da Juliane. A origem já vem de dentro de
+          // parseDistribuicao (explícita, ou inferida por CRM/código de imóvel). Se não
+          // tiver nenhuma evidência, fica sem origem — não força mais 'Patrocinado' aqui.
+          await salvarDistribuicao(distribuicao, null);
           await enviarWhatsApp(JULIANE_LL, `📋 Nova distribuição de lead:\n\n${conteudo}`);
           console.log(`Distribuição espelhada pra Juliane: ${distribuicao.nome} → ${distribuicao.corretor}`);
         }
@@ -1127,160 +1142,6 @@ app.post('/api/admin/inferir-origens-pendentes', basicAuth, async (req, res) => 
   } catch (err) {
     console.error('Erro ao inferir origens pendentes:', err);
     res.status(500).json({ ok: false, erro: err.message });
-  }
-});
-
-// ─── ROTA: CORRIGIR ORIGENS ANTIGAS ────────────────────────────
-// Recalcula as origens já gravadas no banco.
-// Regras:
-// - CRM -> OLX/Canal Pro
-// - código somente numérico -> OLX/Canal Pro
-// - código como VD01 / AP01 etc., sem CRM -> Patrocinado
-// - origem explícita na mensagem -> respeita a origem
-// - sem evidência suficiente -> não altera o registro
-//
-// Esta rota é protegida por basicAuth e deve ser usada uma vez
-// depois do deploy para corrigir os leads antigos.
-
-async function executarCorrecaoDeOrigens() {
-  const result = await pool.query(`
-    SELECT
-      id,
-      imovel_codigo,
-      imovel_desc,
-      interesse,
-      origem
-    FROM leads
-    ORDER BY id
-  `);
-
-  let corrigidos = 0;
-  let mantidos = 0;
-  let semEvidencia = 0;
-
-  for (const lead of result.rows) {
-    const codigo = String(lead.imovel_codigo || '').trim();
-    const descricao = String(lead.imovel_desc || '').trim();
-    const interesse = String(lead.interesse || '').trim();
-
-    const textoCompleto = [codigo, descricao, interesse]
-      .filter(Boolean)
-      .join(' ');
-
-    let novaOrigem = null;
-
-    // Origem explícita escrita na mensagem.
-    const origemExplicita = textoCompleto.match(
-      /(?:origem|canal|veio\s+de)\s*[:\-]?\s*(olx\/canal\s*pro|olx|canal\s*pro|patrocinado|tiktok|instagram|facebook|coment[aá]rio|outro)/i
-    );
-
-    if (origemExplicita) {
-      const valor = origemExplicita[1].toLowerCase();
-
-      if (valor.includes('olx') || valor.includes('canal pro')) {
-        novaOrigem = 'OLX/Canal Pro';
-      } else if (valor.includes('patrocinado')) {
-        novaOrigem = 'Patrocinado';
-      } else if (valor.includes('tiktok')) {
-        novaOrigem = 'TikTok';
-      } else if (valor.includes('instagram') || valor.includes('facebook')) {
-        novaOrigem = 'Instagram';
-      } else if (valor.includes('coment')) {
-        novaOrigem = 'Comentário';
-      } else {
-        novaOrigem = 'Outro';
-      }
-    }
-
-    // CRM sempre vence código de imóvel.
-    if (/\bCRM\b/i.test(textoCompleto)) {
-      novaOrigem = 'OLX/Canal Pro';
-    }
-
-    // Código numérico representa CRM / Canal Pro.
-    if (/^\d+$/.test(codigo)) {
-      novaOrigem = 'OLX/Canal Pro';
-    }
-
-    // Códigos como VD01, VD02, AP01 etc. sem CRM -> Patrocinado.
-    if (
-      !/\bCRM\b/i.test(textoCompleto) &&
-      /[A-Z]{2}\d{2,}/i.test(textoCompleto)
-    ) {
-      novaOrigem = 'Patrocinado';
-    }
-
-    // Não inventa origem quando não há evidência.
-    if (!novaOrigem) {
-      semEvidencia++;
-      continue;
-    }
-
-    if (lead.origem === novaOrigem) {
-      mantidos++;
-      continue;
-    }
-
-    await pool.query(
-      'UPDATE leads SET origem = $1 WHERE id = $2',
-      [novaOrigem, lead.id]
-    );
-
-    corrigidos++;
-  }
-
-  console.log(
-    `[CORREÇÃO ORIGENS] analisados=${result.rows.length} corrigidos=${corrigidos} ` +
-    `mantidos=${mantidos} semEvidencia=${semEvidencia}`
-  );
-
-  return {
-    ok: true,
-    totalAnalisados: result.rows.length,
-    corrigidos,
-    mantidos,
-    semEvidencia
-  };
-}
-
-app.post('/api/admin/corrigir-origens', basicAuth, async (req, res) => {
-  if (!process.env.DATABASE_URL) {
-    return res.status(503).json({
-      ok: false,
-      erro: 'DATABASE_URL não configurada'
-    });
-  }
-
-  try {
-    const resultado = await executarCorrecaoDeOrigens();
-    return res.json(resultado);
-  } catch (err) {
-    console.error('Erro ao corrigir origens:', err);
-    return res.status(500).json({
-      ok: false,
-      erro: err.message
-    });
-  }
-});
-
-// Também permite executar pelo navegador, usando GET, para facilitar a correção pontual.
-app.get('/api/admin/corrigir-origens', basicAuth, async (req, res) => {
-  if (!process.env.DATABASE_URL) {
-    return res.status(503).json({
-      ok: false,
-      erro: 'DATABASE_URL não configurada'
-    });
-  }
-
-  try {
-    const resultado = await executarCorrecaoDeOrigens();
-    return res.json(resultado);
-  } catch (err) {
-    console.error('Erro ao corrigir origens:', err);
-    return res.status(500).json({
-      ok: false,
-      erro: err.message
-    });
   }
 });
 
