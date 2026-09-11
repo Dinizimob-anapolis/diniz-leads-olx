@@ -306,10 +306,12 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
   <div class="origem-strip" id="origem-strip"></div>
 
   <div class="panel" style="margin-bottom:28px;">
-    <div class="panel-head">
-      <h2>Campanhas (imóveis)</h2>
+    <div class="panel-head" style="cursor:pointer;" onclick="toggleCampanhas()">
+      <h2 style="display:flex; align-items:center; gap:8px;">
+        <span id="campanhas-seta">▸</span> Campanhas (imóveis)
+      </h2>
     </div>
-    <div id="campanhas-container" style="padding:16px 22px;"></div>
+    <div id="campanhas-container" style="padding:16px 22px; display:none;"></div>
   </div>
 
   <div class="panel" style="margin-bottom:28px;">
@@ -333,7 +335,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     <div class="panel-head">
       <h2>Atividade recente</h2>
       <div class="filters">
-        <input type="text" id="filtro-busca-texto" placeholder="Buscar texto (ex: CRM)…" oninput="renderTabela()" style="min-width:180px;">
+        <input type="text" id="filtro-busca-texto" placeholder="Buscar texto ou número…" oninput="renderTabela()" style="min-width:180px;">
         <select id="filtro-corretor" onchange="renderTabela()"><option value="">Todos os corretores</option></select>
         <select id="filtro-campanha" onchange="renderTabela()"><option value="">Todas as campanhas</option></select>
         <select id="filtro-origem" onchange="renderTabela()">
@@ -351,6 +353,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
           <option value="sem_corretor">Sem corretor</option>
           <option value="Novo">Novo</option>
           <option value="Em atendimento">Em atendimento</option>
+          <option value="Em andamento">Em andamento</option>
           <option value="Visita agendada">Visita agendada</option>
           <option value="Proposta">Proposta</option>
           <option value="Sem retorno">Sem retorno</option>
@@ -361,20 +364,6 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     </div>
     <div class="bulk-bar" id="bulk-bar">
       <span id="bulk-count" class="mono"></span>
-      <select id="bulk-origem-select">
-        <option value="">— escolher origem —</option>
-        <option value="OLX/Canal Pro">OLX/Canal Pro</option>
-        <option value="Patrocinado">Patrocinado</option>
-        <option value="TikTok">TikTok</option>
-        <option value="Instagram">Instagram</option>
-        <option value="Comentário">Comentário</option>
-        <option value="Outro">Outro</option>
-      </select>
-      <button id="bulk-apply-btn" onclick="aplicarOrigemEmMassa()">Aplicar aos leads filtrados</button>
-      <span style="border-left:1px solid var(--line); height:20px; margin:0 4px;"></span>
-      <input type="text" id="bulk-imovel-input" placeholder="Novo valor do Imóvel…" style="min-width:160px;">
-      <button id="bulk-apply-imovel-btn" onclick="aplicarImovelEmMassa()">Aplicar Imóvel aos filtrados</button>
-      <button id="bulk-export-btn" onclick="exportarCSV()">⇩ Exportar CSV</button>
     </div>
     <div class="table-scroll" id="tabela-container">
       <div class="empty-state">Clique em "Atualizar" pra carregar os leads.</div>
@@ -388,11 +377,13 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
 <script>
   const CORES_CORRETOR = ['#B8863B', '#4A7A5E', '#6B5CA5', '#B14B3B', '#3B6EB8'];
   const ORIGENS = ['OLX/Canal Pro', 'Patrocinado', 'TikTok', 'Instagram', 'Comentário', 'Outro'];
-  const STATUS_OPCOES = ['Novo', 'Em atendimento', 'Visita agendada', 'Proposta', 'Sem retorno', 'Venda', 'Perdido'];
+  const STATUS_OPCOES = ['Novo', 'Em atendimento', 'Em andamento', 'Visita agendada', 'Proposta', 'Sem retorno', 'Venda', 'Perdido'];
   let CORRETORES_DISPONIVEIS = [];
   let ULTIMO_ESTADO = null;
   let LEADS_FILTRADOS_IDS = [];
   let LEADS_FILTRADOS_OBJS = [];
+  let TABELA_PAGINA = 1;
+  const TABELA_POR_PAGINA = 15;
 
   function corDoCorretor(nome) {
     if (!nome) return '#B14B3B';
@@ -569,108 +560,6 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     }
   }
 
-  function exportarCSV() {
-    if (LEADS_FILTRADOS_OBJS.length === 0) {
-      alert('Nenhum lead filtrado pra exportar.');
-      return;
-    }
-
-    const colunas = ['Nome', 'Telefone', 'Email', 'Corretor', 'Imovel', 'Origem', 'Status'];
-    const escapar = v => {
-      const s = String(v ?? '');
-      return /[",\\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
-    };
-
-    const linhas = LEADS_FILTRADOS_OBJS.map(l => [
-      l.nome || '',
-      l.whatsapp && !l.numero_invalido ? '+' + l.whatsapp : (l.whatsapp_bruto || ''),
-      l.email || '',
-      l.corretor || '',
-      [l.imovel_codigo, l.imovel_desc].filter(Boolean).join(' - '),
-      l.origem || '',
-      l.status || 'Novo',
-    ].map(escapar).join(','));
-
-    const csv = '\uFEFF' + [colunas.join(','), ...linhas].join('\\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'leads-diniz-' + new Date().toISOString().slice(0, 10) + '.csv';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  }
-
-  async function aplicarImovelEmMassa() {
-    const valor = document.getElementById('bulk-imovel-input').value.trim();
-    if (!valor) {
-      alert('Digita o valor do Imóvel primeiro.');
-      return;
-    }
-    if (LEADS_FILTRADOS_IDS.length === 0) {
-      alert('Nenhum lead filtrado pra aplicar.');
-      return;
-    }
-    const confirmar = confirm(\`Definir Imóvel "\${valor}" para \${LEADS_FILTRADOS_IDS.length} lead\${LEADS_FILTRADOS_IDS.length === 1 ? '' : 's'} filtrado\${LEADS_FILTRADOS_IDS.length === 1 ? '' : 's'}?\`);
-    if (!confirmar) return;
-
-    const btn = document.getElementById('bulk-apply-imovel-btn');
-    btn.disabled = true;
-    btn.textContent = 'Aplicando…';
-
-    try {
-      for (const id of LEADS_FILTRADOS_IDS) {
-        await fetch('/api/leads/' + id, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ campo: 'imovel_desc', valor }),
-        });
-      }
-      await carregarDados();
-    } catch (err) {
-      alert('Deu erro ao aplicar em alguns leads. Confere e tenta de novo se precisar.');
-    } finally {
-      btn.disabled = false;
-      btn.textContent = 'Aplicar Imóvel aos filtrados';
-    }
-  }
-
-  async function aplicarOrigemEmMassa() {
-    const origem = document.getElementById('bulk-origem-select').value;
-    if (!origem) {
-      alert('Escolhe uma origem primeiro.');
-      return;
-    }
-    if (LEADS_FILTRADOS_IDS.length === 0) {
-      alert('Nenhum lead filtrado pra aplicar.');
-      return;
-    }
-    const confirmar = confirm(\`Definir origem "\${origem}" para \${LEADS_FILTRADOS_IDS.length} lead\${LEADS_FILTRADOS_IDS.length === 1 ? '' : 's'} filtrado\${LEADS_FILTRADOS_IDS.length === 1 ? '' : 's'}?\`);
-    if (!confirmar) return;
-
-    const btn = document.getElementById('bulk-apply-btn');
-    btn.disabled = true;
-    btn.textContent = 'Aplicando…';
-
-    try {
-      for (const id of LEADS_FILTRADOS_IDS) {
-        await fetch('/api/leads/' + id, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ campo: 'origem', valor: origem }),
-        });
-      }
-      await carregarDados();
-    } catch (err) {
-      alert('Deu erro ao aplicar em alguns leads. Confere e tenta de novo se precisar.');
-    } finally {
-      btn.disabled = false;
-      btn.textContent = 'Aplicar aos leads filtrados';
-    }
-  }
-
   function abrirModalLead() {
     document.getElementById('modal-erro').textContent = '';
     document.getElementById('novo-nome').value = '';
@@ -766,6 +655,42 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       <div class="balloon"><div class="balloon-label">Propostas</div><div class="balloon-value">\${dados.propostas}</div></div>
       <div class="balloon balloon-ok"><div class="balloon-label">Vendas</div><div class="balloon-value">\${dados.vendas}</div></div>
     </div>\`;
+  }
+
+  function mostrarOutrosCorretores(el) {
+    const id = parseInt(el.getAttribute('data-lead-id'), 10);
+    const lead = (ULTIMO_ESTADO && ULTIMO_ESTADO.leads || []).find(l => l.id === id);
+    if (lead && lead.outros_corretores) {
+      alert('Esse lead também foi atendido por: ' + lead.outros_corretores);
+    }
+  }
+
+  let CAMPANHAS_ABERTO = false;
+
+  function toggleCampanhas() {
+    CAMPANHAS_ABERTO = !CAMPANHAS_ABERTO;
+    const container = document.getElementById('campanhas-container');
+    const seta = document.getElementById('campanhas-seta');
+    container.style.display = CAMPANHAS_ABERTO ? 'block' : 'none';
+    seta.textContent = CAMPANHAS_ABERTO ? '▾' : '▸';
+    if (CAMPANHAS_ABERTO) renderCampanhas((ULTIMO_ESTADO && ULTIMO_ESTADO.porCampanha) || []);
+  }
+
+  function renderCampanhas(campanhas) {
+    const campanhasContainer = document.getElementById('campanhas-container');
+    if (campanhas.length === 0) {
+      campanhasContainer.innerHTML = '<div class="mono">Nenhuma campanha ativa nos últimos 7 dias</div>';
+      return;
+    }
+    campanhasContainer.innerHTML = \`<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:10px;">\` +
+      campanhas.map(c => {
+        const nomeCampanha = [c.imovel_codigo, c.imovel_desc].filter(Boolean).join(' - ') || 'Sem identificação';
+        const pctCamp = c.total > 0 ? Math.round((c.total_contataram / c.total) * 100) : 0;
+        return \`<div style="border:1px solid var(--line); border-radius:8px; padding:12px 14px;">
+          <div style="font-weight:600; font-size:13px; margin-bottom:6px;">\${nomeCampanha}</div>
+          <div class="mono" style="font-size:12px;">\${c.total} lead\${c.total == 1 ? '' : 's'} · \${pctCamp}% contataram</div>
+        </div>\`;
+      }).join('') + '</div>';
   }
 
   let SEM_NUMERO_ABERTO = false;
@@ -903,21 +828,8 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       return \`<div class="origem-chip \${ativo ? 'active' : ''}" data-idx="\${i}" onclick="filtrarPorOrigemIndice(this)">\${o.origem} <span class="count">\${o.total}</span></div>\`;
     }).join('') || '<div class="mono">Nenhuma origem registrada ainda</div>';
 
-    const campanhasContainer = document.getElementById('campanhas-container');
     const campanhas = data.porCampanha || [];
-    if (campanhas.length === 0) {
-      campanhasContainer.innerHTML = '<div class="mono">Nenhuma campanha ativa nos últimos 7 dias</div>';
-    } else {
-      campanhasContainer.innerHTML = \`<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:10px;">\` +
-        campanhas.map(c => {
-          const nomeCampanha = [c.imovel_codigo, c.imovel_desc].filter(Boolean).join(' - ') || 'Sem identificação';
-          const pctCamp = c.total > 0 ? Math.round((c.total_contataram / c.total) * 100) : 0;
-          return \`<div style="border:1px solid var(--line); border-radius:8px; padding:12px 14px;">
-            <div style="font-weight:600; font-size:13px; margin-bottom:6px;">\${nomeCampanha}</div>
-            <div class="mono" style="font-size:12px;">\${c.total} lead\${c.total == 1 ? '' : 's'} · \${pctCamp}% contataram</div>
-          </div>\`;
-        }).join('') + '</div>';
-    }
+    if (CAMPANHAS_ABERTO) renderCampanhas(campanhas);
 
     const filtroCampanha = document.getElementById('filtro-campanha');
     const campanhaAtual = filtroCampanha.value;
@@ -934,7 +846,8 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     renderTabela();
   }
 
-  function renderTabela() {
+  function renderTabela(mantendoPagina) {
+    if (!mantendoPagina) TABELA_PAGINA = 1;
     const container = document.getElementById('tabela-container');
     if (!ULTIMO_ESTADO) return;
 
@@ -956,10 +869,13 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     }
 
     if (filtroBusca) {
+      const filtroBuscaDigitos = filtroBusca.replace(/\D/g, '');
       todos = todos.filter(l => {
         const alvo = [l.nome, l.imovel_desc, l.imovel_codigo, l.interesse, l.mensagem, l.whatsapp_bruto, l.origem]
           .filter(Boolean).join(' ').toLowerCase();
-        return alvo.includes(filtroBusca);
+        const bateTexto = alvo.includes(filtroBusca);
+        const bateNumero = filtroBuscaDigitos.length >= 4 && (l.whatsapp || '').includes(filtroBuscaDigitos);
+        return bateTexto || bateNumero;
       });
     }
 
@@ -996,7 +912,13 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       return;
     }
 
-    const linhasHtml = todos.map(item => {
+    const totalPaginasTabela = Math.ceil(todos.length / TABELA_POR_PAGINA);
+    if (TABELA_PAGINA > totalPaginasTabela) TABELA_PAGINA = totalPaginasTabela;
+    if (TABELA_PAGINA < 1) TABELA_PAGINA = 1;
+    const inicioTabela = (TABELA_PAGINA - 1) * TABELA_POR_PAGINA;
+    const todosPagina = todos.slice(inicioTabela, inicioTabela + TABELA_POR_PAGINA);
+
+    const linhasHtml = todosPagina.map(item => {
       if (item.tipo === 'nao_identificado') {
         const imovelInputNI = \`<input type="text" class="edit-text" placeholder="— escrever —" value="" onchange="salvarCampo(\${item.id}, 'imovel_desc', this.value, this, 'nao_identificado')">\`;
 
@@ -1046,7 +968,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
         <option value="" \${!item.corretor ? 'selected' : ''}>— escolher —</option>
         \${CORRETORES_DISPONIVEIS.map(c => \`<option value="\${c}" \${item.corretor === c ? 'selected' : ''}>\${c}</option>\`).join('')}
         \${item.corretor && !CORRETORES_DISPONIVEIS.includes(item.corretor) ? \`<option value="\${item.corretor}" selected>\${item.corretor}</option>\` : ''}
-      </select><span class="saving-dot"></span>\${item.outros_corretores ? \`<span class="tag tag-warn" style="margin-left:4px; cursor:help;" title="Também atendido por: \${item.outros_corretores}">+\${item.outros_corretores.split(',').length}</span>\` : ''}\`;
+      </select><span class="saving-dot"></span>\${item.outros_corretores ? \`<span class="tag tag-warn" style="margin-left:4px; cursor:pointer;" data-lead-id="\${item.id}" onclick="mostrarOutrosCorretores(this)">+\${item.outros_corretores.split(',').length}</span>\` : ''}\`;
 
       const statusSelect = \`<select class="edit-select" onchange="salvarCampo(\${item.id}, 'status', this.value, this)">
         \${STATUS_OPCOES.map(s => \`<option value="\${s}" \${(item.status || 'Novo') === s ? 'selected' : ''}>\${s}</option>\`).join('')}
@@ -1071,10 +993,21 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       </tr>\`;
     }).join('');
 
+    const paginacaoTabelaHtml = totalPaginasTabela > 1 ? \`<div style="display:flex; gap:6px; margin-top:14px; padding:0 22px 4px; flex-wrap:wrap;">
+      \${Array.from({ length: totalPaginasTabela }, (_, i) => i + 1).map(p =>
+        \`<button class="btn-secundario" style="padding:6px 12px; \${p === TABELA_PAGINA ? 'background:var(--amber); color:#fff; border-color:var(--amber);' : ''}" onclick="irParaPaginaTabela(\${p})">\${p}</button>\`
+      ).join('')}
+    </div>\` : '';
+
     container.innerHTML = \`<table>
       <thead><tr><th>Lead</th><th>Imóvel</th><th>Origem</th><th>Corretor</th><th>Status</th><th>Aprovado</th><th>Visita</th><th>Proposta</th><th>Venda</th><th>Chegou</th></tr></thead>
       <tbody>\${linhasHtml}</tbody>
-    </table>\`;
+    </table>\${paginacaoTabelaHtml}\`;
+  }
+
+  function irParaPaginaTabela(pagina) {
+    TABELA_PAGINA = pagina;
+    renderTabela(true);
   }
 </script>
 </body>
