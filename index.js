@@ -59,7 +59,7 @@ const pool = new Pool({
 const THROTTLE_AVISO_MS = 6 * 60 * 60 * 1000; // 6 horas
 
 // Campos do funil que podem ser editados manualmente pelo dashboard
-const CAMPOS_EDITAVEIS = ['nome', 'origem', 'corretor', 'interesse', 'status', 'aprovado', 'visita', 'proposta', 'venda', 'imovel_desc', 'sem_retorno', 'em_andamento', 'notas_sdr', 'carteira_sdr', 'tarefa_sdr', 'corretores_repassados'];
+const CAMPOS_EDITAVEIS = ['nome', 'origem', 'corretor', 'interesse', 'status', 'aprovado', 'visita', 'proposta', 'venda', 'imovel_desc', 'sem_retorno', 'em_andamento', 'notas_sdr', 'carteira_sdr', 'tarefa_sdr', 'corretores_repassados', 'ultima_atualizacao_sdr'];
 
 async function initDb() {
   if (!process.env.DATABASE_URL) {
@@ -102,7 +102,9 @@ async function initDb() {
       ADD COLUMN IF NOT EXISTS reaquecido_em TIMESTAMPTZ,
       ADD COLUMN IF NOT EXISTS carteira_sdr BOOLEAN DEFAULT false,
       ADD COLUMN IF NOT EXISTS tarefa_sdr TEXT,
-      ADD COLUMN IF NOT EXISTS corretores_repassados TEXT;
+      ADD COLUMN IF NOT EXISTS corretores_repassados TEXT,
+      ADD COLUMN IF NOT EXISTS status_alterado_em TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS ultima_atualizacao_sdr DATE;
   `);
 
   // ─── Tabela de backups automáticos (dump diário de todos os leads) ─
@@ -1106,7 +1108,7 @@ function basicAuthAdminOuSdr(req, res, next) {
 
 // Campos que a SDR pode editar pelo CRM — o resto (aprovado, visita, proposta,
 // venda, corretor, origem etc.) continua só pra quem loga como admin.
-const CAMPOS_EDITAVEIS_SDR = ['status', 'notas_sdr', 'carteira_sdr', 'tarefa_sdr', 'corretores_repassados'];
+const CAMPOS_EDITAVEIS_SDR = ['status', 'notas_sdr', 'carteira_sdr', 'tarefa_sdr', 'corretores_repassados', 'ultima_atualizacao_sdr'];
 
 // ─── ROTA: API DE LEADS (alimenta o dashboard) ───────────────
 app.get('/api/leads', basicAuthAdminOuSdr, async (req, res) => {
@@ -1359,14 +1361,14 @@ app.post('/api/leads/conferir', basicAuthAdminOuSdr, async (req, res) => {
     const existente = await pool.query('SELECT * FROM leads WHERE whatsapp = $1', [whatsappValido]);
     if (existente.rows.length > 0) {
       const atualizado = await pool.query(
-        `UPDATE leads SET carteira_sdr = true WHERE id = $1 RETURNING *`,
+        `UPDATE leads SET carteira_sdr = true, status_alterado_em = now() WHERE id = $1 RETURNING *`,
         [existente.rows[0].id]
       );
       return res.json({ ok: true, encontrado: true, criado: false, lead: atualizado.rows[0] });
     }
     const result = await pool.query(
-      `INSERT INTO leads (whatsapp, nome, origem, status, carteira_sdr)
-       VALUES ($1, $2, 'SDR', 'Novo', true)
+      `INSERT INTO leads (whatsapp, nome, origem, status, carteira_sdr, status_alterado_em)
+       VALUES ($1, $2, 'SDR', 'Novo', true, now())
        RETURNING *`,
       [whatsappValido, nome.trim()]
     );
@@ -1375,7 +1377,7 @@ app.post('/api/leads/conferir', basicAuthAdminOuSdr, async (req, res) => {
     if (err.code === '23505') {
       const existente = await pool.query('SELECT * FROM leads WHERE whatsapp = $1', [whatsappValido]);
       const atualizado = await pool.query(
-        `UPDATE leads SET carteira_sdr = true WHERE id = $1 RETURNING *`,
+        `UPDATE leads SET carteira_sdr = true, status_alterado_em = now() WHERE id = $1 RETURNING *`,
         [existente.rows[0].id]
       );
       return res.json({ ok: true, encontrado: true, criado: false, lead: atualizado.rows[0] });
@@ -1395,7 +1397,8 @@ app.get('/api/leads/carteira-sdr', basicAuthAdminOuSdr, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT id, whatsapp, nome, corretor, origem, status, distribuido_em,
-              outros_corretores, notas_sdr, reaquecido_em, tarefa_sdr, corretores_repassados
+              outros_corretores, notas_sdr, reaquecido_em, tarefa_sdr, corretores_repassados,
+              status_alterado_em, ultima_atualizacao_sdr
        FROM leads
        WHERE carteira_sdr = true
        ORDER BY distribuido_em DESC`
@@ -1743,11 +1746,20 @@ app.patch('/api/leads/:id', basicAuthAdminOuSdr, async (req, res) => {
   try {
     // Quando a SDR marca o lead como "Reaquecendo", registra o momento —
     // ajuda a saber há quanto tempo está nessa fila de reaquecimento.
-    if (campo === 'status' && valor === 'Reaquecendo') {
-      await pool.query(
-        `UPDATE leads SET status = $1, reaquecido_em = now() WHERE id = $2`,
-        [valor, id]
-      );
+    if (campo === 'status') {
+      // Toda troca de status marca "entrou nessa etapa agora" — é a data
+      // mostrada no card. Se for pra "Reaquecendo", também marca reaquecido_em.
+      if (valor === 'Reaquecendo') {
+        await pool.query(
+          `UPDATE leads SET status = $1, status_alterado_em = now(), reaquecido_em = now() WHERE id = $2`,
+          [valor, id]
+        );
+      } else {
+        await pool.query(
+          `UPDATE leads SET status = $1, status_alterado_em = now() WHERE id = $2`,
+          [valor, id]
+        );
+      }
     } else {
       await pool.query(
         `UPDATE leads SET ${campo} = $1 WHERE id = $2`,
