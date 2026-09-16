@@ -6,30 +6,29 @@ const CRM_HTML = `<!DOCTYPE html>
 <title>CRM — Carteira de Leads</title>
 <style>
   :root {
-    --bg: #0f1115;
-    --card: #171a21;
-    --card-border: #262a33;
-    --column-bg: #12141a;
-    --text: #e8e9ec;
-    --muted: #8b909c;
-    --accent: #4f8cff;
-    --warn-bg: #3a2a12;
-    --warn-border: #a9701f;
-    --warn-text: #ffb84d;
-    --ok: #3ac97b;
-    --radius: 10px;
+    --bg: #f7f8fb;
+    --card: #ffffff;
+    --card-border: #e6e8ef;
+    --text: #1f2430;
+    --muted: #767c8c;
+    --accent: #4f6cff;
+    --warn-bg: #fff2df;
+    --warn-border: #f2a93b;
+    --warn-text: #b5720a;
+    --ok: #17a869;
+    --radius: 12px;
   }
   * { box-sizing: border-box; }
   body {
     margin: 0;
-    background: var(--bg);
+    background: #ffffff;
     color: var(--text);
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    padding: 12px;
+    padding: 14px;
     overflow-x: hidden;
   }
-  h1 { font-size: 20px; margin: 0 0 4px; }
-  .sub { color: var(--muted); font-size: 13px; margin-bottom: 12px; }
+  h1 { font-size: 21px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 14px; }
 
   .toolbar {
     display: flex;
@@ -37,123 +36,134 @@ const CRM_HTML = `<!DOCTYPE html>
     margin-bottom: 14px;
   }
   input[type="text"] {
-    background: var(--card);
+    background: #fff;
     border: 1px solid var(--card-border);
     color: var(--text);
-    padding: 8px 12px;
+    padding: 9px 13px;
     border-radius: var(--radius);
     font-size: 14px;
     flex: 1;
   }
+  input[type="text"]:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
   .add-contato-btn {
     background: var(--accent);
     color: #fff;
     border: none;
-    padding: 8px 16px;
+    padding: 9px 18px;
     border-radius: var(--radius);
     font-size: 14px;
-    font-weight: 600;
+    font-weight: 700;
     cursor: pointer;
     white-space: nowrap;
+    box-shadow: 0 2px 6px rgba(79,108,255,0.35);
   }
 
-  .stats { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+  .stats { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
   .stat {
     background: var(--card);
     border: 1px solid var(--card-border);
     border-radius: var(--radius);
-    padding: 8px 12px;
+    padding: 9px 14px;
     font-size: 12px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
   }
-  .stat .num { font-size: 16px; font-weight: 600; margin-right: 4px; }
+  .stat .num { font-size: 17px; font-weight: 800; margin-right: 4px; }
 
   .board {
     display: flex;
-    gap: 10px;
+    gap: 12px;
     overflow-x: auto;
-    padding-bottom: 12px;
+    padding-bottom: 14px;
     -webkit-overflow-scrolling: touch;
   }
   .column {
-    background: var(--column-bg);
-    border: 1px solid var(--card-border);
     border-radius: var(--radius);
-    min-width: 250px;
-    max-width: 250px;
+    min-width: 258px;
+    max-width: 258px;
     display: flex;
     flex-direction: column;
     max-height: calc(100vh - 200px);
+    border: 1px solid rgba(0,0,0,0.05);
   }
-  .column.dragover { border-color: var(--accent); background: #17203a; }
+  .column.dragover { outline: 2px dashed rgba(0,0,0,0.2); outline-offset: -4px; }
   .column-header {
-    padding: 10px 12px;
+    padding: 11px 13px;
     font-size: 13px;
-    font-weight: 600;
-    border-bottom: 1px solid var(--card-border);
+    font-weight: 800;
     display: flex;
     justify-content: space-between;
     align-items: center;
     position: sticky;
     top: 0;
+    border-radius: var(--radius) var(--radius) 0 0;
   }
   .column-count {
-    background: var(--card-border);
-    color: var(--muted);
+    background: rgba(255,255,255,0.55);
     font-size: 11px;
-    padding: 1px 7px;
+    padding: 1px 8px;
     border-radius: 10px;
+    font-weight: 700;
   }
   .column-cards {
     overflow-y: auto;
-    padding: 8px;
+    padding: 9px;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 9px;
     flex: 1;
   }
 
   .lead {
     background: var(--card);
     border: 1px solid var(--card-border);
-    border-radius: 8px;
-    padding: 10px;
+    border-left: 4px solid transparent;
+    border-radius: 10px;
+    padding: 11px;
     cursor: grab;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
   }
   .lead:active { cursor: grabbing; }
   .lead.dragging { opacity: 0.4; }
-  .lead.reaquecer { border-color: var(--warn-border); background: linear-gradient(180deg, var(--warn-bg), var(--card) 30px); }
+  .lead.reaquecer { border-color: var(--warn-border); background: linear-gradient(180deg, var(--warn-bg), var(--card) 32px); }
   .lead.recem-adicionado { animation: pulso 1.6s ease-in-out 2; }
   @keyframes pulso {
-    0%, 100% { box-shadow: none; }
-    50% { box-shadow: 0 0 0 2px var(--warn-border); }
+    0%, 100% { box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+    50% { box-shadow: 0 0 0 3px var(--warn-border); }
   }
-  .lead-nome { font-size: 13px; font-weight: 600; }
+  .lead-nome { font-size: 13px; font-weight: 700; }
   .lead-meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
   .badge {
     display: inline-block;
     font-size: 10px;
-    padding: 2px 7px;
+    font-weight: 700;
+    padding: 2px 8px;
     border-radius: 10px;
     margin-top: 6px;
     margin-right: 4px;
   }
   .badge.warn { background: var(--warn-bg); color: var(--warn-text); border: 1px solid var(--warn-border); }
-  .badge.origem { background: #1f2430; color: var(--muted); border: 1px solid var(--card-border); }
+  .badge.origem { background: #eef0f6; color: var(--muted); border: 1px solid var(--card-border); }
 
   .lead-notas {
     margin-top: 8px;
     font-size: 11px;
     color: var(--muted);
-    background: #10131a;
+    background: #f4f5f9;
     border-radius: 6px;
     padding: 6px 8px;
     white-space: pre-wrap;
+  }
+  .tarefa-preview {
+    margin-top: 6px;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--warn-text);
   }
 
   .overlay {
     display: none;
     position: fixed; inset: 0;
-    background: rgba(0,0,0,0.6);
+    background: rgba(20,20,30,0.45);
     align-items: center;
     justify-content: center;
     z-index: 50;
@@ -164,32 +174,34 @@ const CRM_HTML = `<!DOCTYPE html>
     background: var(--card);
     border: 1px solid var(--card-border);
     border-radius: var(--radius);
-    padding: 18px;
+    padding: 20px;
     width: 100%;
     max-width: 420px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.2);
   }
-  .modal h2 { font-size: 16px; margin: 0 0 4px; }
+  .modal h2 { font-size: 17px; margin: 0 0 4px; }
   .modal .lead-meta { margin-bottom: 10px; }
-  .modal label { font-size: 12px; color: var(--muted); display: block; margin: 10px 0 4px; }
+  .modal label { font-size: 12px; color: var(--muted); font-weight: 700; display: block; margin: 12px 0 4px; }
   select, textarea {
-    background: #10131a;
+    background: #fff;
     border: 1px solid var(--card-border);
     color: var(--text);
     border-radius: 8px;
-    padding: 7px 9px;
+    padding: 8px 10px;
     font-size: 13px;
     font-family: inherit;
     width: 100%;
   }
   textarea { min-height: 70px; resize: vertical; }
-  .modal-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 14px; }
+  .modal-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 16px; }
   .wa-btn {
-    background: #1f5c3a;
-    color: #9df0bb;
-    border: 1px solid #2f7a4d;
-    padding: 7px 14px;
+    background: #e3f8ee;
+    color: #128a55;
+    border: 1px solid #a8ecca;
+    padding: 8px 15px;
     border-radius: 8px;
     font-size: 13px;
+    font-weight: 700;
     text-decoration: none;
     cursor: pointer;
   }
@@ -197,31 +209,71 @@ const CRM_HTML = `<!DOCTYPE html>
     background: var(--accent);
     color: #fff;
     border: none;
-    padding: 8px 16px;
+    padding: 9px 18px;
     border-radius: 8px;
     font-size: 13px;
-    font-weight: 600;
+    font-weight: 700;
     cursor: pointer;
   }
   .close-btn {
-    background: none;
+    background: #fff;
     border: 1px solid var(--card-border);
     color: var(--muted);
-    padding: 7px 14px;
+    padding: 8px 15px;
     border-radius: 8px;
     font-size: 13px;
+    font-weight: 700;
     cursor: pointer;
   }
-  .saved-flash { color: var(--ok); font-size: 11px; margin-left: 8px; opacity: 0; transition: opacity .3s; }
+  .saved-flash { color: var(--ok); font-size: 11px; font-weight: 700; margin-left: 8px; opacity: 0; transition: opacity .3s; }
   .saved-flash.show { opacity: 1; }
   .aviso-modal {
     font-size: 12px;
     border-radius: 8px;
-    padding: 8px 10px;
+    padding: 9px 11px;
     margin-top: 10px;
+    font-weight: 600;
   }
   .aviso-modal.warn { background: var(--warn-bg); color: var(--warn-text); border: 1px solid var(--warn-border); }
-  .aviso-modal.ok { background: #12241a; color: #9df0bb; border: 1px solid #2f7a4d; }
+  .aviso-modal.ok { background: #e3f8ee; color: #128a55; border: 1px solid #a8ecca; }
+
+  .chip-corretor {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 3px 8px 3px 10px;
+    border-radius: 12px;
+    border: 1px solid;
+    margin-right: 6px;
+    margin-bottom: 6px;
+  }
+  .chip-corretor button {
+    background: none;
+    border: none;
+    color: inherit;
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 1;
+    padding: 0 0 0 2px;
+    opacity: 0.7;
+  }
+  .chip-add {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: #eef0f6;
+    color: var(--text);
+    border: none;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 800;
+    vertical-align: middle;
+  }
 </style>
 </head>
 <body>
@@ -250,6 +302,18 @@ let ULTIMO_ADICIONADO_ID = null;
 
 const COLUNAS = ['Novo', 'Reaquecendo', 'Contato feito', 'Aguardando retorno', 'Repassado ao corretor', 'Fechado', 'Sem interesse'];
 
+// Paleta viva, uma cor por coluna — usada no fundo da coluna, cabeçalho e
+// na barrinha lateral de cada cartão daquela coluna.
+const CORES_COLUNA = {
+  'Novo':                   { bg: '#eaf1ff', header: '#dbe8ff', accent: '#3b6cf0', texto: '#1d3a8f' },
+  'Reaquecendo':            { bg: '#fff1de', header: '#ffe3bd', accent: '#f2941c', texto: '#8a5406' },
+  'Contato feito':          { bg: '#e6faf1', header: '#c9f4de', accent: '#12b76a', texto: '#0a6b3d' },
+  'Aguardando retorno':     { bg: '#f4ecff', header: '#e6d5ff', accent: '#9b4de0', texto: '#5c2894' },
+  'Repassado ao corretor':  { bg: '#ffeaf5', header: '#ffd3ea', accent: '#e8479e', texto: '#93195e' },
+  'Fechado':                { bg: '#eafcea', header: '#d1f7d1', accent: '#2fa42f', texto: '#1c661c' },
+  'Sem interesse':          { bg: '#fdecec', header: '#fad2d2', accent: '#e0453f', texto: '#8f2723' },
+};
+
 function statusDoLead(lead) {
   return COLUNAS.includes(lead.status) ? lead.status : 'Novo';
 }
@@ -267,6 +331,25 @@ function corretoresEnvolvidos(lead) {
     });
   }
   return lista;
+}
+
+const PALETA_CORES = ['#3b6cf0', '#e0453f', '#f2941c', '#12b76a', '#9b4de0', '#e8479e', '#0aa5c2', '#c9a20a'];
+function corDoCorretor(nome) {
+  let hash = 0;
+  for (let i = 0; i < nome.length; i++) hash = (hash * 31 + nome.charCodeAt(i)) >>> 0;
+  return PALETA_CORES[hash % PALETA_CORES.length];
+}
+
+function corretoresRepassadosLista(lead) {
+  return (lead.corretores_repassados || '').split(',').map(s => s.trim()).filter(Boolean);
+}
+
+function renderChipsCorretores(lead) {
+  const lista = corretoresRepassadosLista(lead);
+  return lista.map(nome => {
+    const cor = corDoCorretor(nome);
+    return \`<span class="chip-corretor" style="border-color:\${cor};color:\${cor};background:\${cor}1a">\${nome}<button data-nome="\${nome}" class="chip-remove">×</button></span>\`;
+  }).join('') + \`<button class="chip-add" id="add-corretor-btn" type="button">+</button>\`;
 }
 
 async function carregar() {
@@ -292,20 +375,21 @@ function render() {
 
   document.getElementById('stats').innerHTML = \`
     <div class="stat"><span class="num">\${TODOS_LEADS.length}</span>na carteira</div>
-    <div class="stat" style="color:var(--warn-text)"><span class="num">\${reaquecerCount}</span>pra reaquecer</div>
+    <div class="stat" style="color:#b5720a"><span class="num">\${reaquecerCount}</span>pra reaquecer</div>
   \`;
 
   const board = document.getElementById('board');
   board.innerHTML = COLUNAS.map(coluna => {
     const leadsColuna = leads.filter(l => statusDoLead(l) === coluna);
+    const cor = CORES_COLUNA[coluna];
     return \`
-      <div class="column" data-coluna="\${coluna}">
-        <div class="column-header">
+      <div class="column" data-coluna="\${coluna}" style="background:\${cor.bg}">
+        <div class="column-header" style="background:\${cor.header};color:\${cor.texto}">
           \${coluna}
           <span class="column-count">\${leadsColuna.length}</span>
         </div>
         <div class="column-cards" data-coluna="\${coluna}">
-          \${leadsColuna.map(lead => cardHtml(lead)).join('') || ''}
+          \${leadsColuna.map(lead => cardHtml(lead, cor.accent)).join('') || ''}
         </div>
       </div>
     \`;
@@ -338,7 +422,6 @@ function render() {
     });
   });
 
-  // Se acabou de adicionar um contato, dá um destaque visual nele e rola até lá
   if (ULTIMO_ADICIONADO_ID) {
     const cardNovo = board.querySelector(\`.lead[data-id="\${ULTIMO_ADICIONADO_ID}"]\`);
     if (cardNovo) {
@@ -349,21 +432,23 @@ function render() {
   }
 }
 
-function cardHtml(lead) {
+function cardHtml(lead, corBorda) {
   const duplicado = temHistoricoDuplicado(lead);
   const envolvidos = corretoresEnvolvidos(lead);
+  const chipsRepassados = corretoresRepassadosLista(lead);
   return \`
-    <div class="lead \${duplicado ? 'reaquecer' : ''}" draggable="true" data-id="\${lead.id}">
+    <div class="lead \${duplicado ? 'reaquecer' : ''}" draggable="true" data-id="\${lead.id}" style="\${duplicado ? '' : \`border-left-color:\${corBorda}\`}">
       <div class="lead-nome">\${lead.nome || 'Sem nome'}</div>
       <div class="lead-meta">\${lead.whatsapp || 'sem WhatsApp'}</div>
       \${lead.origem ? \`<span class="badge origem">\${lead.origem}</span>\` : ''}
       \${duplicado ? \`<span class="badge warn">⚠️ \${envolvidos.length}: \${envolvidos.join(', ')}</span>\` : ''}
+      \${chipsRepassados.length > 0 ? \`<div>\${chipsRepassados.map(nome => \`<span class="chip-corretor" style="border-color:\${corDoCorretor(nome)};color:\${corDoCorretor(nome)};background:\${corDoCorretor(nome)}1a">\${nome}</span>\`).join('')}</div>\` : ''}
+      \${lead.tarefa_sdr ? \`<div class="tarefa-preview">📌 \${lead.tarefa_sdr}</div>\` : ''}
       \${lead.notas_sdr ? \`<div class="lead-notas">\${lead.notas_sdr}</div>\` : ''}
     </div>
   \`;
 }
 
-// ─── Modal de detalhe do lead (clicar num cartão) ─────────────
 function abrirModalLead(id) {
   const lead = TODOS_LEADS.find(l => String(l.id) === String(id));
   if (!lead) return;
@@ -383,6 +468,14 @@ function abrirModalLead(id) {
       \${COLUNAS.map(c => \`<option value="\${c}" \${statusDoLead(lead) === c ? 'selected' : ''}>\${c}</option>\`).join('')}
     </select>
 
+    \${statusDoLead(lead) === 'Repassado ao corretor' ? \`
+      <label>Corretor(es)</label>
+      <div id="modal-chips-corretores">\${renderChipsCorretores(lead)}</div>
+    \` : ''}
+
+    <label>Tarefa</label>
+    <input type="text" id="modal-tarefa" placeholder="Próximo passo, ex: ligar amanhã 14h" value="\${lead.tarefa_sdr || ''}">
+
     <label>Notas</label>
     <textarea id="modal-notas" placeholder="O que já foi conversado, quando retomar...">\${lead.notas_sdr || ''}</textarea>
 
@@ -393,19 +486,60 @@ function abrirModalLead(id) {
         <span class="saved-flash" id="modal-flash">salvo ✓</span>
       </div>
     </div>
+    <button class="close-btn" id="modal-remover" style="width:100%;margin-top:8px;color:#b5720a;border-color:var(--warn-border);">Remover da carteira</button>
   \`;
 
   document.getElementById('overlay').classList.add('show');
   document.getElementById('modal-fechar').addEventListener('click', fecharModal);
+  document.getElementById('modal-remover').addEventListener('click', () => {
+    if (!confirm(\`Remover "\${lead.nome || 'esse contato'}" da sua carteira? Ele some do seu Kanban, mas continua no sistema.\`)) return;
+    salvarCampo(id, 'carteira_sdr', false, () => { fecharModal(); carregar(); });
+  });
   document.getElementById('modal-status').addEventListener('change', e => {
-    salvarCampo(id, 'status', e.target.value, () => { render(); flashModal(); });
+    salvarCampo(id, 'status', e.target.value, () => { render(); abrirModalLead(id); });
   });
   document.getElementById('modal-notas').addEventListener('blur', e => {
     salvarCampo(id, 'notas_sdr', e.target.value, () => { render(); flashModal(); });
   });
+  document.getElementById('modal-tarefa').addEventListener('blur', e => {
+    salvarCampo(id, 'tarefa_sdr', e.target.value, () => { render(); flashModal(); });
+  });
+
+  const chipsContainer = document.getElementById('modal-chips-corretores');
+  if (chipsContainer) ligarEventosChips(id, lead, chipsContainer);
 }
 
-// ─── Modal de adicionar contato novo ──────────────────────────
+function ligarEventosChips(id, lead, chipsContainer) {
+  chipsContainer.querySelectorAll('.chip-remove').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const atual = corretoresRepassadosLista(lead).filter(n => n !== btn.dataset.nome);
+      const valor = atual.join(', ');
+      salvarCampo(id, 'corretores_repassados', valor, () => {
+        lead.corretores_repassados = valor;
+        render();
+        chipsContainer.innerHTML = renderChipsCorretores(lead);
+        ligarEventosChips(id, lead, chipsContainer);
+      });
+    });
+  });
+  const addBtn = chipsContainer.querySelector('#add-corretor-btn');
+  if (addBtn) {
+    addBtn.addEventListener('click', () => {
+      const nome = prompt('Nome do corretor:');
+      if (!nome || !nome.trim()) return;
+      const atual = corretoresRepassadosLista(lead);
+      if (!atual.includes(nome.trim())) atual.push(nome.trim());
+      const valor = atual.join(', ');
+      salvarCampo(id, 'corretores_repassados', valor, () => {
+        lead.corretores_repassados = valor;
+        render();
+        chipsContainer.innerHTML = renderChipsCorretores(lead);
+        ligarEventosChips(id, lead, chipsContainer);
+      });
+    });
+  }
+}
+
 function abrirModalAdicionar() {
   document.getElementById('modal').innerHTML = \`
     <h2>Adicionar contato</h2>
