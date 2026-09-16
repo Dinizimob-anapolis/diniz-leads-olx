@@ -103,9 +103,7 @@ const CRM_HTML = `<!DOCTYPE html>
     padding: 11px 13px;
     font-size: 13px;
     font-weight: 800;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
+    display: block;
     position: sticky;
     top: 0;
     border-radius: var(--radius) var(--radius) 0 0;
@@ -391,20 +389,27 @@ function render() {
   const leads = leadsFiltrados();
   const reaquecerCount = TODOS_LEADS.filter(temHistoricoDuplicado).length;
 
+  const vgvTotal = TODOS_LEADS.reduce((soma, lead) => soma + parseValorImovel(lead.valor_imovel_sdr), 0);
+
   document.getElementById('stats').innerHTML = \`
     <div class="stat"><span class="num">\${TODOS_LEADS.length}</span>na carteira</div>
     <div class="stat" style="color:#b5720a"><span class="num">\${reaquecerCount}</span>pra reaquecer</div>
+    \${vgvTotal > 0 ? \`<div class="stat" style="color:#17a34a"><span class="num">\${formatarReais(vgvTotal)}</span>VGV total</div>\` : ''}
   \`;
 
   const board = document.getElementById('board');
   board.innerHTML = COLUNAS.map(coluna => {
     const leadsColuna = leads.filter(l => statusDoLead(l) === coluna);
     const cor = CORES_COLUNA[coluna];
+    const vgvColuna = leadsColuna.reduce((soma, lead) => soma + parseValorImovel(lead.valor_imovel_sdr), 0);
     return \`
       <div class="column" data-coluna="\${coluna}">
         <div class="column-header" style="background:\${cor.header};color:\${cor.texto}">
-          \${coluna}
-          <span class="column-count">\${leadsColuna.length}</span>
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            \${coluna}
+            <span class="column-count">\${leadsColuna.length}</span>
+          </div>
+          \${vgvColuna > 0 ? \`<div style="font-size:11px;font-weight:700;opacity:0.95;margin-top:2px;">\${formatarReais(vgvColuna)}</div>\` : ''}
         </div>
         <div class="column-cards" data-coluna="\${coluna}">
           \${leadsColuna.map(lead => cardHtml(lead, cor.accent)).join('') || ''}
@@ -457,6 +462,37 @@ function formatarData(dataStr) {
   return d.toLocaleDateString('pt-BR');
 }
 
+// Entende valores digitados livremente: "R$ 350.000", "350 mil", "1,2 milhão"...
+function parseValorImovel(texto) {
+  if (!texto) return 0;
+  let s = String(texto).toLowerCase().replace(/r\$/g, '').trim();
+  let multiplicador = 1;
+  if (/milh(a|ã)o|milh(o|õ)es|\bmi\b/.test(s)) {
+    multiplicador = 1000000;
+    s = s.replace(/milh(a|ã)o|milh(o|õ)es|\bmi\b/g, '');
+  } else if (/\bmil\b/.test(s)) {
+    multiplicador = 1000;
+    s = s.replace(/\bmil\b/g, '');
+  }
+  s = s.replace(/[^\d.,]/g, '').trim();
+  if (!s) return 0;
+  if (s.includes('.') && s.includes(',')) {
+    s = s.replace(/\./g, '').replace(',', '.');
+  } else if (s.includes(',')) {
+    const partes = s.split(',');
+    s = (partes[1] && partes[1].length <= 2) ? s.replace(',', '.') : s.replace(/,/g, '');
+  } else if (s.includes('.')) {
+    const partes = s.split('.');
+    if (partes.length > 1 && partes[partes.length - 1].length === 3) s = s.replace(/\./g, '');
+  }
+  const num = parseFloat(s);
+  return isNaN(num) ? 0 : num * multiplicador;
+}
+
+function formatarReais(valor) {
+  return valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
+}
+
 function cardHtml(lead, corBorda) {
   const duplicado = temHistoricoDuplicado(lead);
   const envolvidos = corretoresEnvolvidos(lead);
@@ -464,7 +500,10 @@ function cardHtml(lead, corBorda) {
   const dataEtapa = formatarData(lead.status_alterado_em || lead.distribuido_em);
   return \`
     <div class="lead \${duplicado ? 'reaquecer' : ''}" draggable="true" data-id="\${lead.id}" style="\${duplicado ? '' : \`border-left-color:\${corBorda}\`}">
-      <div class="lead-nome">\${lead.nome || 'Sem nome'}</div>
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:6px;">
+        <div class="lead-nome">\${lead.nome || 'Sem nome'}</div>
+        \${lead.valor_imovel_sdr ? \`<span style="font-size:10px;font-weight:700;color:#17a34a;white-space:nowrap;">💰 \${lead.valor_imovel_sdr}</span>\` : ''}
+      </div>
       <div class="lead-meta">\${lead.whatsapp || 'sem WhatsApp'}</div>
       \${dataEtapa ? \`<div class="lead-meta">Nessa etapa desde \${dataEtapa}</div>\` : ''}
       \${lead.origem ? \`<span class="badge origem">\${lead.origem}</span>\` : ''}
@@ -486,7 +525,10 @@ function abrirModalLead(id) {
   const waLink = lead.whatsapp ? \`https://wa.me/\${lead.whatsapp}\` : null;
 
   document.getElementById('modal').innerHTML = \`
-    <h2>\${lead.nome || 'Sem nome'}</h2>
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+      <h2>\${lead.nome || 'Sem nome'}</h2>
+      <span id="badge-valor-imovel">\${lead.valor_imovel_sdr ? \`<span class="badge" style="background:#eafcea;color:#17a34a;border:1px solid #a8ecca;white-space:nowrap;">💰 \${lead.valor_imovel_sdr}</span>\` : ''}</span>
+    </div>
     <div class="lead-meta">\${lead.whatsapp || 'sem WhatsApp'} · chegou em \${data}</div>
     \${lead.origem ? \`<span class="badge origem">\${lead.origem}</span>\` : ''}
     \${duplicado ? \`<span class="badge warn">⚠️ Já foi para \${envolvidos.length}: \${envolvidos.join(', ')} — não reenvie, reaqueça direto</span>\` : (lead.corretor ? \`<span class="badge origem">Corretor: \${lead.corretor}</span>\` : '')}
@@ -505,8 +547,16 @@ function abrirModalLead(id) {
     <label>Tarefa</label>
     <input type="text" id="modal-tarefa" placeholder="Próximo passo, ex: ligar amanhã 14h" value="\${lead.tarefa_sdr || ''}">
 
-    <label>Atualizado até (data)</label>
-    <input type="date" id="modal-ultima-atualizacao" value="\${lead.ultima_atualizacao_sdr ? String(lead.ultima_atualizacao_sdr).slice(0, 10) : ''}">
+    <div style="display:flex;gap:8px;">
+      <div style="flex:1;">
+        <label>Atualizado até (data)</label>
+        <input type="date" id="modal-ultima-atualizacao" value="\${lead.ultima_atualizacao_sdr ? String(lead.ultima_atualizacao_sdr).slice(0, 10) : ''}">
+      </div>
+      <div style="flex:1;">
+        <label>Valor do imóvel buscado</label>
+        <input type="text" id="modal-valor-imovel" placeholder="Ex: R$ 350.000" value="\${lead.valor_imovel_sdr || ''}">
+      </div>
+    </div>
 
     <label>Notas</label>
     <textarea id="modal-notas" placeholder="O que já foi conversado, quando retomar...">\${lead.notas_sdr || ''}</textarea>
@@ -538,6 +588,18 @@ function abrirModalLead(id) {
   });
   document.getElementById('modal-ultima-atualizacao').addEventListener('change', e => {
     salvarCampo(id, 'ultima_atualizacao_sdr', e.target.value, () => { render(); flashModal(); });
+  });
+  document.getElementById('modal-valor-imovel').addEventListener('blur', e => {
+    salvarCampo(id, 'valor_imovel_sdr', e.target.value, () => {
+      render();
+      flashModal();
+      const badgeSpan = document.getElementById('badge-valor-imovel');
+      if (badgeSpan) {
+        badgeSpan.innerHTML = e.target.value
+          ? \`<span class="badge" style="background:#eafcea;color:#17a34a;border:1px solid #a8ecca;white-space:nowrap;">💰 \${e.target.value}</span>\`
+          : '';
+      }
+    });
   });
 
   const chipsContainer = document.getElementById('modal-chips-corretores');
