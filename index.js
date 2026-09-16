@@ -8,6 +8,24 @@ const { CRM_HTML } = require('./crm-template');
 const app = express();
 app.use(express.json());
 
+// ─── OAUTH DO GOOGLE DRIVE (conta pessoal, não a de serviço) ─
+// Contas de serviço não têm espaço de armazenamento no Drive pessoal — por
+// isso o backup no Drive usa OAuth normal (a mesma conta de Bruno), guardando
+// só o refresh_token (permanente) numa tabela do Postgres depois da autorização.
+const GOOGLE_OAUTH_REDIRECT_PATH = '/api/admin/drive-auth/callback';
+
+function getOAuthClient() {
+  if (!process.env.GOOGLE_OAUTH_CLIENT_ID || !process.env.GOOGLE_OAUTH_CLIENT_SECRET) return null;
+  const baseUrl = process.env.RAILWAY_PUBLIC_DOMAIN
+    ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
+    : (process.env.APP_BASE_URL || '');
+  return new google.auth.OAuth2(
+    process.env.GOOGLE_OAUTH_CLIENT_ID,
+    process.env.GOOGLE_OAUTH_CLIENT_SECRET,
+    `${baseUrl}${GOOGLE_OAUTH_REDIRECT_PATH}`
+  );
+}
+
 // ─── CONFIGURAÇÕES ───────────────────────────────────────────
 const EVOLUTION_URL = 'https://evolution-api-production-5e4f.up.railway.app';
 const EVOLUTION_INSTANCE = 'diniz-leads-olx';
@@ -91,6 +109,14 @@ async function initDb() {
       criado_em TIMESTAMPTZ DEFAULT now(),
       total_leads INTEGER,
       dados JSONB
+    );
+  `);
+
+  // ─── Configurações simples (guarda o refresh_token do Drive, entre outras) ─
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS config_sistema (
+      chave TEXT PRIMARY KEY,
+      valor TEXT
     );
   `);
 
@@ -338,10 +364,9 @@ async function importarLeadsEmLote(leads) {
 // ─── SINCRONIZAÇÃO AUTOMÁTICA COM GOOGLE SHEETS ──────────────
 let googleAuthCache = null;
 let sheetsClientCache = null;
-let driveClientCache = null;
 
-// Autenticação única, reaproveitada tanto pra ler a planilha (Sheets)
-// quanto pra subir os backups (Drive) — mesma credencial de serviço.
+// Autenticação da conta de serviço — usada só pra ler a planilha (Sheets).
+// O backup no Drive usa outra autenticação (OAuth pessoal), veja mais abaixo.
 async function getGoogleAuth() {
   if (googleAuthCache) return googleAuthCache;
   if (!process.env.GOOGLE_SERVICE_ACCOUNT_KEY) return null;
@@ -351,10 +376,7 @@ async function getGoogleAuth() {
     credentials.client_email,
     null,
     credentials.private_key,
-    [
-      'https://www.googleapis.com/auth/spreadsheets.readonly',
-      'https://www.googleapis.com/auth/drive.file',
-    ]
+    ['https://www.googleapis.com/auth/spreadsheets.readonly']
   );
   await auth.authorize();
   googleAuthCache = auth;
@@ -367,14 +389,6 @@ async function getSheetsClient() {
   if (!auth) return null;
   sheetsClientCache = google.sheets({ version: 'v4', auth });
   return sheetsClientCache;
-}
-
-async function getDriveClient() {
-  if (driveClientCache) return driveClientCache;
-  const auth = await getGoogleAuth();
-  if (!auth) return null;
-  driveClientCache = google.drive({ version: 'v3', auth });
-  return driveClientCache;
 }
 
 async function sincronizarPlanilhaGoogle() {
@@ -571,29 +585,52 @@ async function fazerBackupDiario() {
   }
 }
 
-// Sobe o JSON do backup pra uma pasta do seu Google Drive. A pasta precisa
-// ser compartilhada com o e-mail da conta de serviço (campo "client_email"
-// dentro do GOOGLE_SERVICE_ACCOUNT_KEY), com permissão de Editor — senão o
-// Drive recusa o upload, já que a conta de serviço não tem acesso a pastas
-// pessoais por padrão.
-async function salvarBackupNoDrive(dados, nomeArquivo) {
-  if (!process.env.GOOGLE_DRIVE_BACKUP_FOLDER_ID) {
-    const msg = 'GOOGLE_DRIVE_BACKUP_FOLDER_ID não configurada';
-    console.warn(`⚠️  ${msg} — backup no Drive desativado (só fica salvo no Postgres).`);
-    return { ok: false, erro: msg };
+async function lerConfig(chave) {
+  const result = await pool.query('SELECT valor FROM config_sistema WHERE chave = $1', [chave]);
+  return result.rows[0]?.valor || null;
+}
+
+async function salvarConfig(chave, valor) {
+  await pool.query(
+    `INSERT INTO config_sistema (chave, valor) VALUES ($1, $2)
+     ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor`,
+    [chave, valor]
+  );
+}
+
+let driveOAuthClientCache = null;
+async function getDriveClientOAuth() {
+  const refreshToken = await lerConfig('google_drive_refresh_token');
+  if (!refreshToken) return null;
+
+  const oauthClient = getOAuthClient();
+  if (!oauthClient) return null;
+
+  if (!driveOAuthClientCache || driveOAuthClientCache._refreshToken !== refreshToken) {
+    oauthClient.setCredentials({ refresh_token: refreshToken });
+    driveOAuthClientCache = google.drive({ version: 'v3', auth: oauthClient });
+    driveOAuthClientCache._refreshToken = refreshToken;
   }
-  const drive = await getDriveClient();
+  return driveOAuthClientCache;
+}
+
+// Sobe o JSON do backup pro Drive PESSOAL de Bruno (via OAuth, não conta de
+// serviço — contas de serviço não têm espaço próprio no Drive). Precisa que
+// /api/admin/drive-auth já tenha sido autorizado uma vez.
+async function salvarBackupNoDrive(dados, nomeArquivo) {
+  const drive = await getDriveClientOAuth();
   if (!drive) {
-    const msg = 'GOOGLE_SERVICE_ACCOUNT_KEY não configurada';
-    console.warn(`⚠️  ${msg} — backup no Drive desativado.`);
+    const msg = 'Drive ainda não autorizado — acesse /api/admin/drive-auth pra autorizar uma vez';
+    console.warn(`⚠️  ${msg}`);
     return { ok: false, erro: msg };
   }
   try {
+    const requestBody = { name: nomeArquivo };
+    if (process.env.GOOGLE_DRIVE_BACKUP_FOLDER_ID) {
+      requestBody.parents = [process.env.GOOGLE_DRIVE_BACKUP_FOLDER_ID];
+    }
     await drive.files.create({
-      requestBody: {
-        name: nomeArquivo,
-        parents: [process.env.GOOGLE_DRIVE_BACKUP_FOLDER_ID],
-      },
+      requestBody,
       media: {
         mimeType: 'application/json',
         body: Readable.from(JSON.stringify(dados, null, 2)),
@@ -1582,6 +1619,52 @@ app.get('/dashboard', basicAuth, (req, res) => {
 });
 
 // ─── ROTAS: BACKUPS AUTOMÁTICOS ──────────────────────────────
+// Passo 1: inicia a autorização do Google Drive (conta pessoal) — visita
+// essa rota no navegador, loga com sua conta Google, autoriza, e pronto.
+// Só precisa fazer isso uma vez (o token fica salvo no Postgres).
+app.get('/api/admin/drive-auth', basicAuth, (req, res) => {
+  const oauthClient = getOAuthClient();
+  if (!oauthClient) {
+    return res.status(503).send('GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET não configuradas no Railway.');
+  }
+  const url = oauthClient.generateAuthUrl({
+    access_type: 'offline',
+    prompt: 'consent', // força gerar um refresh_token novo toda vez
+    scope: ['https://www.googleapis.com/auth/drive.file'],
+  });
+  res.redirect(url);
+});
+
+// Passo 2: o Google chama essa rota sozinho depois que você autoriza —
+// troca o código por um token permanente e salva no Postgres.
+app.get(GOOGLE_OAUTH_REDIRECT_PATH, basicAuth, async (req, res) => {
+  const oauthClient = getOAuthClient();
+  if (!oauthClient) {
+    return res.status(503).send('GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET não configuradas no Railway.');
+  }
+  const { code, error } = req.query;
+  if (error) {
+    return res.status(400).send(`Autorização recusada pelo Google: ${error}`);
+  }
+  if (!code) {
+    return res.status(400).send('Código de autorização não recebido.');
+  }
+  try {
+    const { tokens } = await oauthClient.getToken(code);
+    if (!tokens.refresh_token) {
+      return res.status(400).send(
+        'O Google não devolveu um token permanente. Isso acontece se você já tinha autorizado antes — ' +
+        'vá em https://myaccount.google.com/permissions, remova o acesso do app, e tente de novo pelo /api/admin/drive-auth.'
+      );
+    }
+    await salvarConfig('google_drive_refresh_token', tokens.refresh_token);
+    res.send('✅ Google Drive autorizado com sucesso! Pode fechar essa aba. O backup diário já vai subir pro seu Drive a partir de agora.');
+  } catch (err) {
+    console.error('Erro ao trocar código por token:', err);
+    res.status(500).send(`Erro ao autorizar: ${err.message}`);
+  }
+});
+
 // Lista os backups diários guardados (mais recente primeiro)
 app.get('/api/admin/backups', basicAuth, async (req, res) => {
   if (!process.env.DATABASE_URL) {
