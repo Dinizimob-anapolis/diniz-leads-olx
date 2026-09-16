@@ -59,7 +59,7 @@ const pool = new Pool({
 const THROTTLE_AVISO_MS = 6 * 60 * 60 * 1000; // 6 horas
 
 // Campos do funil que podem ser editados manualmente pelo dashboard
-const CAMPOS_EDITAVEIS = ['nome', 'origem', 'corretor', 'interesse', 'status', 'aprovado', 'visita', 'proposta', 'venda', 'imovel_desc', 'sem_retorno', 'em_andamento', 'notas_sdr'];
+const CAMPOS_EDITAVEIS = ['nome', 'origem', 'corretor', 'interesse', 'status', 'aprovado', 'visita', 'proposta', 'venda', 'imovel_desc', 'sem_retorno', 'em_andamento', 'notas_sdr', 'carteira_sdr', 'tarefa_sdr', 'corretores_repassados'];
 
 async function initDb() {
   if (!process.env.DATABASE_URL) {
@@ -100,7 +100,9 @@ async function initDb() {
       ADD COLUMN IF NOT EXISTS em_andamento BOOLEAN DEFAULT false,
       ADD COLUMN IF NOT EXISTS notas_sdr TEXT,
       ADD COLUMN IF NOT EXISTS reaquecido_em TIMESTAMPTZ,
-      ADD COLUMN IF NOT EXISTS carteira_sdr BOOLEAN DEFAULT false;
+      ADD COLUMN IF NOT EXISTS carteira_sdr BOOLEAN DEFAULT false,
+      ADD COLUMN IF NOT EXISTS tarefa_sdr TEXT,
+      ADD COLUMN IF NOT EXISTS corretores_repassados TEXT;
   `);
 
   // ─── Tabela de backups automáticos (dump diário de todos os leads) ─
@@ -1104,7 +1106,7 @@ function basicAuthAdminOuSdr(req, res, next) {
 
 // Campos que a SDR pode editar pelo CRM — o resto (aprovado, visita, proposta,
 // venda, corretor, origem etc.) continua só pra quem loga como admin.
-const CAMPOS_EDITAVEIS_SDR = ['status', 'notas_sdr'];
+const CAMPOS_EDITAVEIS_SDR = ['status', 'notas_sdr', 'carteira_sdr', 'tarefa_sdr', 'corretores_repassados'];
 
 // ─── ROTA: API DE LEADS (alimenta o dashboard) ───────────────
 app.get('/api/leads', basicAuthAdminOuSdr, async (req, res) => {
@@ -1393,7 +1395,7 @@ app.get('/api/leads/carteira-sdr', basicAuthAdminOuSdr, async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT id, whatsapp, nome, corretor, origem, status, distribuido_em,
-              outros_corretores, notas_sdr, reaquecido_em
+              outros_corretores, notas_sdr, reaquecido_em, tarefa_sdr, corretores_repassados
        FROM leads
        WHERE carteira_sdr = true
        ORDER BY distribuido_em DESC`
