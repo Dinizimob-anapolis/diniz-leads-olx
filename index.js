@@ -1,8 +1,10 @@
 const express = require('express');
 const fs = require('fs');
+const { Readable } = require('stream');
 const { Pool } = require('pg');
 const { google } = require('googleapis');
 const { DASHBOARD_HTML } = require('./dashboard-template');
+const { CRM_HTML } = require('./crm-template');
 const app = express();
 app.use(express.json());
 
@@ -39,7 +41,7 @@ const pool = new Pool({
 const THROTTLE_AVISO_MS = 6 * 60 * 60 * 1000; // 6 horas
 
 // Campos do funil que podem ser editados manualmente pelo dashboard
-const CAMPOS_EDITAVEIS = ['nome', 'origem', 'corretor', 'interesse', 'status', 'aprovado', 'visita', 'proposta', 'venda', 'imovel_desc', 'sem_retorno', 'em_andamento'];
+const CAMPOS_EDITAVEIS = ['nome', 'origem', 'corretor', 'interesse', 'status', 'aprovado', 'visita', 'proposta', 'venda', 'imovel_desc', 'sem_retorno', 'em_andamento', 'notas_sdr'];
 
 async function initDb() {
   if (!process.env.DATABASE_URL) {
@@ -77,7 +79,19 @@ async function initDb() {
       ADD COLUMN IF NOT EXISTS whatsapp_bruto TEXT,
       ADD COLUMN IF NOT EXISTS outros_corretores TEXT,
       ADD COLUMN IF NOT EXISTS sem_retorno BOOLEAN DEFAULT false,
-      ADD COLUMN IF NOT EXISTS em_andamento BOOLEAN DEFAULT false;
+      ADD COLUMN IF NOT EXISTS em_andamento BOOLEAN DEFAULT false,
+      ADD COLUMN IF NOT EXISTS notas_sdr TEXT,
+      ADD COLUMN IF NOT EXISTS reaquecido_em TIMESTAMPTZ;
+  `);
+
+  // ─── Tabela de backups automáticos (dump diário de todos os leads) ─
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS backups_leads (
+      id SERIAL PRIMARY KEY,
+      criado_em TIMESTAMPTZ DEFAULT now(),
+      total_leads INTEGER,
+      dados JSONB
+    );
   `);
 
   await pool.query(`
@@ -322,10 +336,14 @@ async function importarLeadsEmLote(leads) {
 }
 
 // ─── SINCRONIZAÇÃO AUTOMÁTICA COM GOOGLE SHEETS ──────────────
+let googleAuthCache = null;
 let sheetsClientCache = null;
+let driveClientCache = null;
 
-async function getSheetsClient() {
-  if (sheetsClientCache) return sheetsClientCache;
+// Autenticação única, reaproveitada tanto pra ler a planilha (Sheets)
+// quanto pra subir os backups (Drive) — mesma credencial de serviço.
+async function getGoogleAuth() {
+  if (googleAuthCache) return googleAuthCache;
   if (!process.env.GOOGLE_SERVICE_ACCOUNT_KEY) return null;
 
   const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_KEY);
@@ -333,11 +351,30 @@ async function getSheetsClient() {
     credentials.client_email,
     null,
     credentials.private_key,
-    ['https://www.googleapis.com/auth/spreadsheets.readonly']
+    [
+      'https://www.googleapis.com/auth/spreadsheets.readonly',
+      'https://www.googleapis.com/auth/drive.file',
+    ]
   );
   await auth.authorize();
+  googleAuthCache = auth;
+  return googleAuthCache;
+}
+
+async function getSheetsClient() {
+  if (sheetsClientCache) return sheetsClientCache;
+  const auth = await getGoogleAuth();
+  if (!auth) return null;
   sheetsClientCache = google.sheets({ version: 'v4', auth });
   return sheetsClientCache;
+}
+
+async function getDriveClient() {
+  if (driveClientCache) return driveClientCache;
+  const auth = await getGoogleAuth();
+  if (!auth) return null;
+  driveClientCache = google.drive({ version: 'v3', auth });
+  return driveClientCache;
 }
 
 async function sincronizarPlanilhaGoogle() {
@@ -506,7 +543,65 @@ function limparMensagem(msg) {
   return msg.trim();
 }
 
-// ─── LEAD ROUTER: PARSER DA MENSAGEM DE DISTRIBUIÇÃO ─────────
+// ─── BACKUP AUTOMÁTICO DIÁRIO ─────────────────────────────────
+// Guarda um dump completo da tabela leads dentro do próprio Postgres
+// (persistente — diferente do /tmp, que é apagado a cada deploy/restart).
+// Mantém só os últimos 30 backups; os mais antigos são apagados sozinhos.
+// Também sobe uma cópia pro Google Drive, se estiver configurado.
+async function fazerBackupDiario() {
+  if (!process.env.DATABASE_URL) return;
+  try {
+    const leadsResult = await pool.query('SELECT * FROM leads ORDER BY id');
+    await pool.query(
+      `INSERT INTO backups_leads (total_leads, dados) VALUES ($1, $2)`,
+      [leadsResult.rows.length, JSON.stringify(leadsResult.rows)]
+    );
+    await pool.query(`
+      DELETE FROM backups_leads
+      WHERE id NOT IN (SELECT id FROM backups_leads ORDER BY criado_em DESC LIMIT 30)
+    `);
+    console.log(`✅ Backup diário salvo: ${leadsResult.rows.length} leads`);
+
+    const nomeArquivo = `backup-leads-${new Date().toISOString().slice(0, 10)}.json`;
+    await salvarBackupNoDrive(leadsResult.rows, nomeArquivo);
+  } catch (err) {
+    console.error('Erro ao fazer backup diário:', err);
+  }
+}
+
+// Sobe o JSON do backup pra uma pasta do seu Google Drive. A pasta precisa
+// ser compartilhada com o e-mail da conta de serviço (campo "client_email"
+// dentro do GOOGLE_SERVICE_ACCOUNT_KEY), com permissão de Editor — senão o
+// Drive recusa o upload, já que a conta de serviço não tem acesso a pastas
+// pessoais por padrão.
+async function salvarBackupNoDrive(dados, nomeArquivo) {
+  if (!process.env.GOOGLE_DRIVE_BACKUP_FOLDER_ID) {
+    console.warn('⚠️  GOOGLE_DRIVE_BACKUP_FOLDER_ID não configurada — backup no Drive desativado (só fica salvo no Postgres).');
+    return;
+  }
+  const drive = await getDriveClient();
+  if (!drive) {
+    console.warn('⚠️  GOOGLE_SERVICE_ACCOUNT_KEY não configurada — backup no Drive desativado.');
+    return;
+  }
+  try {
+    await drive.files.create({
+      requestBody: {
+        name: nomeArquivo,
+        parents: [process.env.GOOGLE_DRIVE_BACKUP_FOLDER_ID],
+      },
+      media: {
+        mimeType: 'application/json',
+        body: Readable.from(JSON.stringify(dados, null, 2)),
+      },
+    });
+    console.log(`✅ Backup também salvo no Google Drive: ${nomeArquivo}`);
+  } catch (err) {
+    console.error('Erro ao salvar backup no Google Drive:', err.message);
+  }
+}
+
+
 function parseDistribuicao(texto) {
   if (!texto) return null;
 
@@ -842,13 +937,14 @@ app.post('/webhook-mensagens-tiktok', async (req, res) => {
   }
 });
 
-// ─── AUTENTICAÇÃO BÁSICA DO PAINEL ───────────────────────────
+// ─── AUTENTICAÇÃO BÁSICA DO PAINEL (admin — dashboard completo) ─
 function basicAuth(req, res, next) {
   const user = process.env.DASHBOARD_USER || 'diniz';
   const pass = process.env.DASHBOARD_PASS;
 
   if (!pass) {
     console.warn('⚠️  DASHBOARD_PASS não configurada — painel está SEM proteção por senha.');
+    req.authTipo = 'admin';
     return next();
   }
 
@@ -859,14 +955,59 @@ function basicAuth(req, res, next) {
   }
 
   const [u, p] = Buffer.from(auth.slice(6), 'base64').toString().split(':');
-  if (u === user && p === pass) return next();
+  if (u === user && p === pass) {
+    req.authTipo = 'admin';
+    return next();
+  }
 
   res.set('WWW-Authenticate', 'Basic realm="Painel de Leads"');
   return res.status(401).send('Credenciais inválidas');
 }
 
+// ─── AUTENTICAÇÃO BÁSICA — admin OU SDR (usada nas rotas que o /crm chama) ─
+// Login separado pra SDR (CRM_USER/CRM_PASS), com acesso só ao /crm e à API
+// de leads — sem as rotas administrativas (/dashboard, importação, correções).
+// Usa o MESMO realm do basicAuth admin de propósito: assim, quando o admin já
+// autenticou no /dashboard, o navegador reaproveita a credencial cacheada nas
+// chamadas de API, sem pedir senha de novo.
+function basicAuthAdminOuSdr(req, res, next) {
+  const adminUser = process.env.DASHBOARD_USER || 'diniz';
+  const adminPass = process.env.DASHBOARD_PASS;
+  const sdrUser = process.env.CRM_USER || 'sdr';
+  const sdrPass = process.env.CRM_PASS;
+
+  if (!adminPass && !sdrPass) {
+    console.warn('⚠️  Nenhuma senha configurada (DASHBOARD_PASS/CRM_PASS) — CRM está SEM proteção por senha.');
+    req.authTipo = 'admin';
+    return next();
+  }
+
+  const auth = req.headers.authorization;
+  if (!auth || !auth.startsWith('Basic ')) {
+    res.set('WWW-Authenticate', 'Basic realm="Painel de Leads"');
+    return res.status(401).send('Autenticação necessária');
+  }
+
+  const [u, p] = Buffer.from(auth.slice(6), 'base64').toString().split(':');
+  if (adminPass && u === adminUser && p === adminPass) {
+    req.authTipo = 'admin';
+    return next();
+  }
+  if (sdrPass && u === sdrUser && p === sdrPass) {
+    req.authTipo = 'sdr';
+    return next();
+  }
+
+  res.set('WWW-Authenticate', 'Basic realm="Painel de Leads"');
+  return res.status(401).send('Credenciais inválidas');
+}
+
+// Campos que a SDR pode editar pelo CRM — o resto (aprovado, visita, proposta,
+// venda, corretor, origem etc.) continua só pra quem loga como admin.
+const CAMPOS_EDITAVEIS_SDR = ['status', 'notas_sdr'];
+
 // ─── ROTA: API DE LEADS (alimenta o dashboard) ───────────────
-app.get('/api/leads', basicAuth, async (req, res) => {
+app.get('/api/leads', basicAuthAdminOuSdr, async (req, res) => {
   if (!process.env.DATABASE_URL) {
     return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
   }
@@ -875,7 +1016,8 @@ app.get('/api/leads', basicAuth, async (req, res) => {
       `SELECT id, whatsapp, nome, email, corretor, imovel_codigo, imovel_desc,
               distribuido_em, contatou, primeiro_contato_em,
               origem, interesse, status, ultimo_contato, aprovado, visita, proposta, venda,
-              numero_invalido, whatsapp_bruto, outros_corretores, sem_retorno, em_andamento
+              numero_invalido, whatsapp_bruto, outros_corretores, sem_retorno, em_andamento,
+              notas_sdr, reaquecido_em
        FROM leads
        ORDER BY distribuido_em DESC
        LIMIT 1000`
@@ -1392,7 +1534,7 @@ app.patch('/api/leads/:id/corrigir-whatsapp', basicAuth, async (req, res) => {
 // ─── ROTA: EDITAR CAMPOS MANUAIS DO FUNIL ────────────────────
 // Body esperado: { campo: 'origem', valor: 'TikTok' }
 // campo precisa estar em CAMPOS_EDITAVEIS.
-app.patch('/api/leads/:id', basicAuth, async (req, res) => {
+app.patch('/api/leads/:id', basicAuthAdminOuSdr, async (req, res) => {
   if (!process.env.DATABASE_URL) {
     return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
   }
@@ -1402,12 +1544,24 @@ app.patch('/api/leads/:id', basicAuth, async (req, res) => {
   if (!CAMPOS_EDITAVEIS.includes(campo)) {
     return res.status(400).json({ ok: false, erro: `Campo '${campo}' não é editável` });
   }
+  if (req.authTipo === 'sdr' && !CAMPOS_EDITAVEIS_SDR.includes(campo)) {
+    return res.status(403).json({ ok: false, erro: `Login da SDR não pode editar o campo '${campo}'` });
+  }
 
   try {
-    await pool.query(
-      `UPDATE leads SET ${campo} = $1 WHERE id = $2`,
-      [valor, id]
-    );
+    // Quando a SDR marca o lead como "Reaquecendo", registra o momento —
+    // ajuda a saber há quanto tempo está nessa fila de reaquecimento.
+    if (campo === 'status' && valor === 'Reaquecendo') {
+      await pool.query(
+        `UPDATE leads SET status = $1, reaquecido_em = now() WHERE id = $2`,
+        [valor, id]
+      );
+    } else {
+      await pool.query(
+        `UPDATE leads SET ${campo} = $1 WHERE id = $2`,
+        [valor, id]
+      );
+    }
     res.json({ ok: true });
   } catch (err) {
     console.error('Erro ao editar lead:', err);
@@ -1420,6 +1574,66 @@ app.get('/dashboard', basicAuth, (req, res) => {
   res.send(DASHBOARD_HTML);
 });
 
+// ─── ROTAS: BACKUPS AUTOMÁTICOS ──────────────────────────────
+// Lista os backups diários guardados (mais recente primeiro)
+app.get('/api/admin/backups', basicAuth, async (req, res) => {
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  }
+  try {
+    const result = await pool.query(
+      `SELECT id, criado_em, total_leads FROM backups_leads ORDER BY criado_em DESC`
+    );
+    res.json({ ok: true, backups: result.rows });
+  } catch (err) {
+    console.error('Erro ao listar backups:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
+// Baixa um backup específico como arquivo JSON
+app.get('/api/admin/backups/:id/download', basicAuth, async (req, res) => {
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  }
+  try {
+    const result = await pool.query('SELECT * FROM backups_leads WHERE id = $1', [req.params.id]);
+    if (result.rows.length === 0) {
+      return res.status(404).json({ ok: false, erro: 'Backup não encontrado' });
+    }
+    const backup = result.rows[0];
+    const dataFormatada = new Date(backup.criado_em).toISOString().slice(0, 10);
+    res.setHeader('Content-Disposition', `attachment; filename="backup-leads-${dataFormatada}.json"`);
+    res.setHeader('Content-Type', 'application/json');
+    res.send(JSON.stringify(backup.dados, null, 2));
+  } catch (err) {
+    console.error('Erro ao baixar backup:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
+// Dispara um backup manualmente, sem esperar o horário automático
+// (aceita GET também, pra poder testar só colando o link no navegador)
+app.all('/api/admin/backups/agora', basicAuth, async (req, res) => {
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  }
+  try {
+    await fazerBackupDiario();
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
+// ─── ROTA: CRM DA SDR ─────────────────────────────────────────
+// Painel enxuto pra SDR organizar a carteira de leads: usa a mesma API
+// (/api/leads e /api/leads/:id) do dashboard principal, só que com uma
+// visão focada em reaquecimento e histórico de corretores.
+app.get('/crm', basicAuthAdminOuSdr, (req, res) => {
+  res.send(CRM_HTML);
+});
+
 // ─── ROTA DE TESTE ───────────────────────────────────────────
 app.get('/', (req, res) => {
   res.send('✅ Diniz Leads OLX rodando!');
@@ -1430,6 +1644,16 @@ const PORT = process.env.PORT || 3001;
 app.listen(PORT, async () => {
   console.log(`Servidor rodando na porta ${PORT}`);
   await initDb();
+
+  // Backup automático diário — roda uma vez ao iniciar e depois a cada 24h.
+  // Como o servidor pode reiniciar a qualquer hora (deploy), isso não é num
+  // horário fixo do relógio, mas garante que nunca passa mais de ~24h sem backup.
+  if (process.env.DATABASE_URL) {
+    fazerBackupDiario().catch(err => console.error('Erro no backup inicial:', err));
+    setInterval(() => {
+      fazerBackupDiario().catch(err => console.error('Erro no backup automático:', err));
+    }, 24 * 60 * 60 * 1000);
+  }
 
   // Sincronização automática com a planilha do Google, a cada 10 minutos
   // (só ativa se GOOGLE_SHEET_ID e GOOGLE_SERVICE_ACCOUNT_KEY estiverem configuradas)
