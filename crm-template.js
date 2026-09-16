@@ -21,7 +21,7 @@ const CRM_HTML = `<!DOCTYPE html>
   * { box-sizing: border-box; }
   body {
     margin: 0;
-    background: #ffffff;
+    background: #f2f3f8;
     color: var(--text);
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     padding: 14px;
@@ -71,9 +71,9 @@ const CRM_HTML = `<!DOCTYPE html>
 
   .board {
     display: flex;
-    gap: 12px;
+    gap: 16px;
     overflow-x: auto;
-    padding-bottom: 14px;
+    padding: 6px 6px 22px 6px;
     -webkit-overflow-scrolling: touch;
   }
   .column {
@@ -83,9 +83,22 @@ const CRM_HTML = `<!DOCTYPE html>
     display: flex;
     flex-direction: column;
     max-height: calc(100vh - 200px);
-    border: 1px solid rgba(0,0,0,0.05);
+    border: none;
+    box-shadow:
+      0 1px 2px rgba(20,20,40,0.04),
+      0 10px 24px -6px rgba(20,20,40,0.16),
+      0 4px 10px -4px rgba(20,20,40,0.10);
+    transform: translateY(0);
+    transition: transform 0.25s ease, box-shadow 0.25s ease;
   }
-  .column.dragover { outline: 2px dashed rgba(0,0,0,0.2); outline-offset: -4px; }
+  .column:hover {
+    transform: translateY(-5px);
+    box-shadow:
+      0 2px 4px rgba(20,20,40,0.05),
+      0 20px 34px -8px rgba(20,20,40,0.22),
+      0 8px 16px -4px rgba(20,20,40,0.14);
+  }
+  .column.dragover { outline: 2px dashed rgba(0,0,0,0.25); outline-offset: -4px; }
   .column-header {
     padding: 11px 13px;
     font-size: 13px;
