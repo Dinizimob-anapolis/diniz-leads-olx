@@ -124,6 +124,8 @@ const CRM_HTML = `<!DOCTYPE html>
     flex-direction: column;
     gap: 9px;
     flex: 1;
+    background: #ffffff;
+    border-radius: 0 0 var(--radius) var(--radius);
   }
 
   .lead {
@@ -396,7 +398,7 @@ function render() {
     const leadsColuna = leads.filter(l => statusDoLead(l) === coluna);
     const cor = CORES_COLUNA[coluna];
     return \`
-      <div class="column" data-coluna="\${coluna}" style="background:\${cor.bg}">
+      <div class="column" data-coluna="\${coluna}">
         <div class="column-header" style="background:\${cor.header};color:\${cor.texto}">
           \${coluna}
           <span class="column-count">\${leadsColuna.length}</span>
