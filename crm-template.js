@@ -465,32 +465,32 @@ function formatarData(dataStr) {
 // Entende valores digitados livremente: "R$ 350.000", "350 mil", "1,2 milhão"...
 function parseValorImovel(texto) {
   if (!texto) return 0;
-  let s = String(texto).toLowerCase().replace(/r\$/g, '').trim();
+  let s = String(texto).toLowerCase().replace(/r\\$/g, '').trim();
   let multiplicador = 1;
-  if (/milh(a|ã)o|milh(o|õ)es|\bmi\b/.test(s)) {
+  if (/milh(a|ã)o|milh(o|õ)es|\\bmi\\b/.test(s)) {
     multiplicador = 1000000;
-    s = s.replace(/milh(a|ã)o|milh(o|õ)es|\bmi\b/g, '');
-  } else if (/\bmil\b/.test(s)) {
+    s = s.replace(/milh(a|ã)o|milh(o|õ)es|\\bmi\\b/g, '');
+  } else if (/\\bmil\\b/.test(s)) {
     multiplicador = 1000;
-    s = s.replace(/\bmil\b/g, '');
+    s = s.replace(/\\bmil\\b/g, '');
   }
-  s = s.replace(/[^\d.,]/g, '').trim();
+  s = s.replace(/[^\\d.,]/g, '').trim();
   if (!s) return 0;
   if (s.includes('.') && s.includes(',')) {
-    s = s.replace(/\./g, '').replace(',', '.');
+    s = s.replace(/\\./g, '').replace(',', '.');
   } else if (s.includes(',')) {
     const partes = s.split(',');
     s = (partes[1] && partes[1].length <= 2) ? s.replace(',', '.') : s.replace(/,/g, '');
   } else if (s.includes('.')) {
     const partes = s.split('.');
-    if (partes.length > 1 && partes[partes.length - 1].length === 3) s = s.replace(/\./g, '');
+    if (partes.length > 1 && partes[partes.length - 1].length === 3) s = s.replace(/\\./g, '');
   }
   const num = parseFloat(s);
   return isNaN(num) ? 0 : num * multiplicador;
 }
 
 function formatarReais(valor) {
-  return valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
+  return valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 function cardHtml(lead, corBorda) {
@@ -590,13 +590,16 @@ function abrirModalLead(id) {
     salvarCampo(id, 'ultima_atualizacao_sdr', e.target.value, () => { render(); flashModal(); });
   });
   document.getElementById('modal-valor-imovel').addEventListener('blur', e => {
-    salvarCampo(id, 'valor_imovel_sdr', e.target.value, () => {
+    const numero = parseValorImovel(e.target.value);
+    const formatado = numero > 0 ? formatarReais(numero) : '';
+    e.target.value = formatado;
+    salvarCampo(id, 'valor_imovel_sdr', formatado, () => {
       render();
       flashModal();
       const badgeSpan = document.getElementById('badge-valor-imovel');
       if (badgeSpan) {
-        badgeSpan.innerHTML = e.target.value
-          ? \`<span class="badge" style="background:#eafcea;color:#17a34a;border:1px solid #a8ecca;white-space:nowrap;">💰 \${e.target.value}</span>\`
+        badgeSpan.innerHTML = formatado
+          ? \`<span class="badge" style="background:#eafcea;color:#17a34a;border:1px solid #a8ecca;white-space:nowrap;">💰 \${formatado}</span>\`
           : '';
       }
     });
