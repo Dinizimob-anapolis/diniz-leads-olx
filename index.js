@@ -8,7 +8,10 @@ const { CRM_HTML } = require('./crm-template');
 const app = express();
 app.use(express.json());
 
-// ─── OAUTH DO GOOGLE DRIVE ────────────────────────────────────
+// ─── OAUTH DO GOOGLE DRIVE (conta pessoal, não a de serviço) ─
+// Contas de serviço não têm espaço de armazenamento no Drive pessoal — por
+// isso o backup no Drive usa OAuth normal (a mesma conta de Bruno), guardando
+// só o refresh_token (permanente) numa tabela do Postgres depois da autorização.
 const GOOGLE_OAUTH_REDIRECT_PATH = '/api/admin/drive-auth/callback';
 
 function getOAuthClient() {
@@ -32,37 +35,20 @@ const EVOLUTION_TOKEN = 'A0929C1CF6C5-4E04-9FFB-3A4B073EE943';
 const JULIANE_LL = '5562992166458';
 const CYDA       = '5562993652226';
 
-// ─── CORRETORES NO ROUND-ROBIN ───────────────────────────────
 const CORRETORES = [
   { nome: 'Laís',   fone: '5562992754858' },
+  { nome: 'Nalcio', fone: '5562982077466' },
   { nome: 'Renata', fone: '5562992670935' },
   { nome: 'Junior', fone: '5562981625610' },
+  { nome: 'Thayná', fone: '5562991749547' },
 ];
 
-const CORRETORES_EXTRA_DASHBOARD = ['Amanda', 'Juliane', 'Bruno', 'Nalcio', 'Thayná'];
+// Nomes extras que aparecem como opção no dropdown de corretor do dashboard,
+// mas NÃO entram na fila de distribuição automática (round-robin) do Canal Pro
+// — pra isso precisaria do telefone de cada um, cadastrado em CORRETORES acima.
+const CORRETORES_EXTRA_DASHBOARD = ['Amanda', 'Juliane', 'Bruno'];
 
-// ─── CRMs FIXOS PARA LAÍS ────────────────────────────────────
-// Qualquer lead com CRM contendo "LAIS" ou com um desses códigos vai direto pra Laís,
-// sem entrar no round-robin.
-const CRMS_LAIS = [
-  '1096','1095','1094','1093','1092','1091','1090',
-  '1089','1088','1087','1086','1085','1083','1037',
-  '1082','1081'
-];
-
-function definirCorretor(codigoImovel) {
-  const codigo = String(codigoImovel || '').toUpperCase();
-  if (codigo.includes('LAIS') || CRMS_LAIS.includes(String(codigoImovel))) {
-    console.log(`CRM ${codigoImovel} → Laís (fixo)`);
-    return { nome: 'Laís', fone: '5562992754858' };
-  }
-  const indexAtual = lerIndice();
-  const corretor = CORRETORES[indexAtual];
-  salvarIndice((indexAtual + 1) % CORRETORES.length);
-  return corretor;
-}
-
-// ─── BANCO DE DADOS ──────────────────────────────────────────
+// ─── BANCO DE DADOS (leads distribuídos por texto) ───────────
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.DATABASE_URL && process.env.DATABASE_URL.includes('railway')
@@ -70,8 +56,9 @@ const pool = new Pool({
     : false,
 });
 
-const THROTTLE_AVISO_MS = 6 * 60 * 60 * 1000;
+const THROTTLE_AVISO_MS = 6 * 60 * 60 * 1000; // 6 horas
 
+// Campos do funil que podem ser editados manualmente pelo dashboard
 const CAMPOS_EDITAVEIS = ['nome', 'origem', 'corretor', 'interesse', 'status', 'aprovado', 'visita', 'proposta', 'venda', 'imovel_desc', 'sem_retorno', 'em_andamento', 'notas_sdr'];
 
 async function initDb() {
@@ -95,6 +82,7 @@ async function initDb() {
     );
   `);
 
+  // ─── Migração: novas colunas do funil completo ─────────────
   await pool.query(`
     ALTER TABLE leads
       ADD COLUMN IF NOT EXISTS origem TEXT,
@@ -111,9 +99,11 @@ async function initDb() {
       ADD COLUMN IF NOT EXISTS sem_retorno BOOLEAN DEFAULT false,
       ADD COLUMN IF NOT EXISTS em_andamento BOOLEAN DEFAULT false,
       ADD COLUMN IF NOT EXISTS notas_sdr TEXT,
-      ADD COLUMN IF NOT EXISTS reaquecido_em TIMESTAMPTZ;
+      ADD COLUMN IF NOT EXISTS reaquecido_em TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS carteira_sdr BOOLEAN DEFAULT false;
   `);
 
+  // ─── Tabela de backups automáticos (dump diário de todos os leads) ─
   await pool.query(`
     CREATE TABLE IF NOT EXISTS backups_leads (
       id SERIAL PRIMARY KEY,
@@ -123,6 +113,7 @@ async function initDb() {
     );
   `);
 
+  // ─── Configurações simples (guarda o refresh_token do Drive, entre outras) ─
   await pool.query(`
     CREATE TABLE IF NOT EXISTS config_sistema (
       chave TEXT PRIMARY KEY,
@@ -143,6 +134,13 @@ async function initDb() {
   await pool.query(`ALTER TABLE leads_nao_identificados ADD COLUMN IF NOT EXISTS corretor TEXT;`);
   console.log('✅ Tabelas do lead router prontas (leads, leads_nao_identificados)');
 
+  // ─── Correção automática de origens antigas mal classificadas ─────────
+  // Leads que ficaram marcados como 'OLX/Canal Pro' antes da inferência existir,
+  // mas que na verdade têm código de imóvel (tipo VD01) e nenhuma evidência de CRM
+  // — esses são Patrocinado de verdade. Roda em todo início, mas é seguro repetir:
+  // uma vez corrigido, o lead deixa de bater no WHERE e não é tocado de novo.
+  // Nunca mexe em TikTok nem em origem explícita, porque o WHERE só pega quem já
+  // está marcado como OLX/Canal Pro especificamente.
   try {
     const corrigidos = await pool.query(`
       UPDATE leads
@@ -155,12 +153,16 @@ async function initDb() {
       RETURNING id
     `);
     if (corrigidos.rowCount > 0) {
-      console.log(`✅ Correção automática de origem: ${corrigidos.rowCount} lead(s) corrigidos para 'Patrocinado'.`);
+      console.log(`✅ Correção automática de origem: ${corrigidos.rowCount} lead(s) que estavam como 'OLX/Canal Pro' com código de imóvel (sem CRM) foram corrigidos para 'Patrocinado'.`);
     }
   } catch (err) {
     console.error('Erro na correção automática de origens antigas:', err);
   }
 
+  // Leads importados direto do export da OLX vêm com o canal de contato INTERNO da OLX
+  // ("Telefone", "Chat OLX", "Formulário", "WhatsApp") no campo Origem — isso não é uma
+  // categoria nossa, é só como o cliente contatou dentro da OLX. Todos esses são, na
+  // prática, leads do OLX/Canal Pro, então padroniza pra isso.
   try {
     const corrigidosCanal = await pool.query(`
       UPDATE leads
@@ -169,22 +171,31 @@ async function initDb() {
       RETURNING id
     `);
     if (corrigidosCanal.rowCount > 0) {
-      console.log(`✅ Correção automática: ${corrigidosCanal.rowCount} lead(s) com canal interno da OLX corrigidos.`);
+      console.log(`✅ Correção automática de origem: ${corrigidosCanal.rowCount} lead(s) com canal interno da OLX (Telefone/Chat OLX/Formulário/WhatsApp) foram corrigidos para 'OLX/Canal Pro'.`);
     }
   } catch (err) {
     console.error('Erro na correção de canais internos da OLX:', err);
   }
 
+  // Alguns leads ficaram com a palavra literal "null" salva como origem (provavelmente
+  // uma célula vazia da planilha exportada). Isso não é uma origem real — limpa pra
+  // ficar sem origem mesmo, como qualquer outro pendente.
   try {
-    const corrigidosNull = await pool.query(`UPDATE leads SET origem = NULL WHERE origem = 'null' RETURNING id`);
+    const corrigidosNull = await pool.query(`
+      UPDATE leads SET origem = NULL WHERE origem = 'null' RETURNING id
+    `);
     if (corrigidosNull.rowCount > 0) {
-      console.log(`✅ Correção automática: ${corrigidosNull.rowCount} lead(s) com origem literal "null" limpos.`);
+      console.log(`✅ Correção automática de origem: ${corrigidosNull.rowCount} lead(s) com origem literal "null" foram limpos (ficam sem origem).`);
     }
   } catch (err) {
     console.error('Erro na correção da origem literal "null":', err);
   }
 }
 
+// ─── IMPORTAÇÃO EM LOTE (reutilizada pelo upload manual e pela sincronização com Google Sheets) ─
+// Origem inferida a partir de um texto livre (mensagem original ou distribuição):
+// se tiver "CRM" escrito, é lead do OLX/Canal Pro; se tiver um código de imóvel
+// (ex: VD01) sem CRM, é lead Patrocinado (Insta/Face); senão, fica pendente.
 function inferirOrigemDeTexto(texto, imovelCodigoJaExtraido) {
   if (!texto) return null;
   if (/\bCRM\b/i.test(texto)) return 'OLX/Canal Pro';
@@ -197,24 +208,43 @@ function normalizarTexto(s) {
   return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
 }
 
+// Normaliza qualquer número de WhatsApp pro MESMO formato sempre (55 + DDD + 9 dígitos),
+// resolvendo o problema clássico do "9º dígito" do celular no Brasil, que causa
+// duplicidade de contatos quando o número chega em formatos diferentes por canais diferentes.
+// Retorna null quando o número não tem dígitos suficientes pra ser válido (em vez de
+// devolver algo incompleto que colidiria com outros leads sem número).
 function canonicalizarWhatsapp(bruto) {
   let d = String(bruto || '').replace(/\D/g, '');
   if (!d) return null;
+
+  // Remove o código do país se já vier com ele, pra normalizar a partir do DDD
   if (d.startsWith('55') && d.length > 11) d = d.slice(2);
-  if (d.length === 10) d = d.slice(0, 2) + '9' + d.slice(2);
+
+  // DDD (2 dígitos) + 8 dígitos = celular sem o "9" na frente — adiciona
+  if (d.length === 10) {
+    d = d.slice(0, 2) + '9' + d.slice(2);
+  }
+
+  // Precisa de pelo menos DDD (2) + 8 dígitos = 10 dígitos locais pra ser um número real
   if (d.length < 10) return null;
+
   return '55' + d;
 }
 
+// Gera um identificador único pra leads sem número de WhatsApp válido — assim eles não
+// colidem uns com os outros (cada um vira sua própria linha, editável depois no dashboard)
 let contadorSemNumero = 0;
 function gerarPlaceholderSemNumero() {
   contadorSemNumero++;
   return `SEMNUM-${Date.now()}-${contadorSemNumero}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
+// Gera um identificador ESTÁVEL (sempre igual pra mesma pessoa) quando não há WhatsApp válido,
+// baseado em nome + email. Isso evita que a mesma linha, sem telefone, vire um lead novo
+// toda vez que a planilha for sincronizada de novo (a cada 10 min).
 function gerarChaveSemNumero(nome, email) {
   const base = normalizarTexto(`${nome || ''}|${email || ''}`);
-  if (!base.replace(/\|/g, '')) return gerarPlaceholderSemNumero();
+  if (!base.replace(/\|/g, '')) return gerarPlaceholderSemNumero(); // nada pra basear, usa aleatório mesmo
   let hash = 0;
   for (let i = 0; i < base.length; i++) {
     hash = (hash * 31 + base.charCodeAt(i)) >>> 0;
@@ -222,6 +252,7 @@ function gerarChaveSemNumero(nome, email) {
   return `SEMNUM-${hash.toString(36)}`;
 }
 
+// Reconhece a coluna certa pelo nome do cabeçalho, mesmo com variações (acento, maiúscula, espaço)
 function mapearColunas(headers) {
   const mapa = {
     nome: ['nome', 'cliente', 'nome do cliente'],
@@ -241,48 +272,66 @@ function mapearColunas(headers) {
   return idx;
 }
 
+// Entende data tanto em formato ISO (2026-08-26T19:39:00.000Z) quanto brasileiro
+// (26/08/2026 19:39, com ou sem hora). Retorna null se não conseguir entender.
 function parseDataChegada(valor) {
   if (!valor) return null;
   if (valor instanceof Date && !isNaN(valor)) return valor;
+
   const s = String(valor).trim();
   if (!s) return null;
+
   if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
     const d = new Date(s);
     if (!isNaN(d)) return d;
   }
+
   const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
   if (m) {
     const [, dia, mes, ano, hora, min, seg] = m;
     const d = new Date(Number(ano), Number(mes) - 1, Number(dia), Number(hora || 0), Number(min || 0), Number(seg || 0));
     if (!isNaN(d)) return d;
   }
+
   return null;
 }
 
 async function importarLeadsEmLote(leads) {
-  let inseridos = 0, jaExistiam = 0, incompletos = 0;
-  const linhasIncompletas = [], erros = [];
+  let inseridos = 0;
+  let jaExistiam = 0;
+  let incompletos = 0;
+  const linhasIncompletas = [];
+  const erros = [];
 
   leads.forEach((item, i) => {
-    if (!(item.nome || '').trim()) {
+    const nome = (item.nome || '').trim();
+    const whatsappBruto = (item.whatsapp || '').trim();
+    if (!nome) {
       incompletos++;
-      linhasIncompletas.push(`linha ${i + 2} (sem nome)`);
+      linhasIncompletas.push(`linha ${i + 2} (sem nome)`); // +2: cabeçalho + índice base 1
     }
   });
 
   for (const item of leads) {
     const nome = (item.nome || '').trim();
     const whatsappBruto = (item.whatsapp || '').trim();
+
     if (!nome) continue;
 
     const whatsappValido = canonicalizarWhatsapp(whatsappBruto);
     const numeroInvalido = !whatsappValido;
     const whatsapp = whatsappValido || gerarChaveSemNumero(nome, item.email);
+    // dataReal: só preenchida quando o arquivo trouxe uma data que deu pra entender de verdade.
+    // dataFinal: sempre tem um valor (cai pra agora se não tiver data), usada só na criação do lead novo.
     const dataReal = parseDataChegada(item.dataChegada);
     if (!dataReal && item.dataChegada) {
-      console.log(`[DIAGNÓSTICO DATA] Não consegui entender a data de "${nome}". Valor: ${JSON.stringify(item.dataChegada)}`);
+      console.log(`[DIAGNÓSTICO DATA] Não consegui entender a data de "${nome}". Valor bruto recebido: ${JSON.stringify(item.dataChegada)} (tipo: ${typeof item.dataChegada})`);
     }
     const dataFinal = dataReal || new Date();
+
+    // Origem: usa a que a planilha já trouxer; se não trouxer, tenta inferir pelo
+    // código/nome do imóvel (CRM → OLX/Canal Pro; código tipo VD01 → Patrocinado);
+    // se não tiver nenhuma evidência, fica sem origem (nada de forçar um padrão).
     const origemFinal = item.origem || inferirOrigemDeTexto(item.imovelDesc) || null;
 
     try {
@@ -313,16 +362,21 @@ async function importarLeadsEmLote(leads) {
   return { inseridos, jaExistiam, incompletos, linhasIncompletas, erros };
 }
 
-// ─── GOOGLE SHEETS ───────────────────────────────────────────
+// ─── SINCRONIZAÇÃO AUTOMÁTICA COM GOOGLE SHEETS ──────────────
 let googleAuthCache = null;
 let sheetsClientCache = null;
 
+// Autenticação da conta de serviço — usada só pra ler a planilha (Sheets).
+// O backup no Drive usa outra autenticação (OAuth pessoal), veja mais abaixo.
 async function getGoogleAuth() {
   if (googleAuthCache) return googleAuthCache;
   if (!process.env.GOOGLE_SERVICE_ACCOUNT_KEY) return null;
+
   const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_KEY);
   const auth = new google.auth.JWT(
-    credentials.client_email, null, credentials.private_key,
+    credentials.client_email,
+    null,
+    credentials.private_key,
     ['https://www.googleapis.com/auth/spreadsheets.readonly']
   );
   await auth.authorize();
@@ -339,19 +393,28 @@ async function getSheetsClient() {
 }
 
 async function sincronizarPlanilhaGoogle() {
-  if (!process.env.GOOGLE_SHEET_ID) return { ok: false, erro: 'GOOGLE_SHEET_ID não configurada' };
+  if (!process.env.GOOGLE_SHEET_ID) {
+    return { ok: false, erro: 'GOOGLE_SHEET_ID não configurada' };
+  }
+
   const sheets = await getSheetsClient();
-  if (!sheets) return { ok: false, erro: 'GOOGLE_SERVICE_ACCOUNT_KEY não configurada' };
+  if (!sheets) {
+    return { ok: false, erro: 'GOOGLE_SERVICE_ACCOUNT_KEY não configurada' };
+  }
 
   const range = process.env.GOOGLE_SHEET_RANGE || 'A1:Z10000';
-  const response = await sheets.spreadsheets.values.get({ spreadsheetId: process.env.GOOGLE_SHEET_ID, range });
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId: process.env.GOOGLE_SHEET_ID,
+    range,
+  });
+
   const linhas = response.data.values || [];
   if (linhas.length < 2) return { ok: true, inseridos: 0, ignorados: 0, erros: [] };
 
   const headers = linhas[0];
   const idx = mapearColunas(headers);
-  console.log('[DIAGNÓSTICO PLANILHA] Cabeçalhos:', JSON.stringify(headers));
-  console.log('[DIAGNÓSTICO PLANILHA] Mapeamento:', JSON.stringify(idx));
+  console.log('[DIAGNÓSTICO PLANILHA] Cabeçalhos encontrados:', JSON.stringify(headers));
+  console.log('[DIAGNÓSTICO PLANILHA] Mapeamento de colunas:', JSON.stringify(idx));
 
   const leads = linhas.slice(1).map(linha => ({
     nome: idx.nome !== undefined ? linha[idx.nome] : '',
@@ -362,11 +425,16 @@ async function sincronizarPlanilhaGoogle() {
     dataChegada: idx.dataChegada !== undefined ? linha[idx.dataChegada] : null,
   }));
 
+  console.log('[DIAGNÓSTICO PLANILHA] 3 primeiras linhas brutas:', JSON.stringify(linhas.slice(1, 4)));
+  console.log('[DIAGNÓSTICO PLANILHA] 3 primeiras datas extraídas:', JSON.stringify(leads.slice(0, 3).map(l => ({ nome: l.nome, dataChegada: l.dataChegada }))));
+
   const resultado = await importarLeadsEmLote(leads);
-  console.log(`[Google Sheets] Sincronizado: ${resultado.inseridos} novos, ${resultado.jaExistiam} já existiam, ${resultado.incompletos} incompletos`);
+  console.log(`[Google Sheets] Sincronizado: ${resultado.inseridos} novos, ${resultado.jaExistiam} já existiam, ${resultado.incompletos} incompletos (sem nome/whatsapp)`);
   return { ok: true, ...resultado };
 }
 
+// Reconhece o código do imóvel (ex: VD01, AP02) dentro do código já salvo ou da descrição,
+// e agrupa por esse código — assim "VD01" e "PATRICIA VD01 - GRAN VENEZA" viram a mesma campanha.
 function extrairCodigoImovel(imovelCodigo, imovelDesc) {
   const texto = `${imovelCodigo || ''} ${imovelDesc || ''}`.toUpperCase();
   const match = texto.match(/[A-Z]{2}\d{2,}/);
@@ -376,19 +444,33 @@ function extrairCodigoImovel(imovelCodigo, imovelDesc) {
 
 function agruparCampanhas(linhas) {
   const grupos = new Map();
+
   for (const linha of linhas) {
     const chave = extrairCodigoImovel(linha.imovel_codigo, linha.imovel_desc);
     const total = parseInt(linha.total, 10) || 0;
     const totalContataram = parseInt(linha.total_contataram, 10) || 0;
-    if (!grupos.has(chave)) grupos.set(chave, { imovel_codigo: linha.imovel_codigo, imovel_desc: linha.imovel_desc, total: 0, total_contataram: 0 });
+
+    if (!grupos.has(chave)) {
+      grupos.set(chave, {
+        imovel_codigo: linha.imovel_codigo,
+        imovel_desc: linha.imovel_desc,
+        total: 0,
+        total_contataram: 0,
+      });
+    }
+
     const grupo = grupos.get(chave);
     grupo.total += total;
     grupo.total_contataram += totalContataram;
-    if ((linha.imovel_desc || '').length > (grupo.imovel_desc || '').length) {
+    // Mantém a descrição mais completa (mais longa) como a exibida pro grupo
+    const descAtual = (grupo.imovel_desc || '').length;
+    const descNova = (linha.imovel_desc || '').length;
+    if (descNova > descAtual) {
       grupo.imovel_codigo = linha.imovel_codigo || grupo.imovel_codigo;
       grupo.imovel_desc = linha.imovel_desc;
     }
   }
+
   return Array.from(grupos.values()).sort((a, b) => b.total - a.total);
 }
 
@@ -396,22 +478,26 @@ function agruparCampanhas(linhas) {
 const INDEX_FILE = '/tmp/index.json';
 
 function lerIndice() {
-  try { const data = fs.readFileSync(INDEX_FILE, 'utf8'); return JSON.parse(data).index || 0; }
-  catch { return 0; }
+  try {
+    const data = fs.readFileSync(INDEX_FILE, 'utf8');
+    return JSON.parse(data).index || 0;
+  } catch { return 0; }
 }
 
 function salvarIndice(index) {
-  try { fs.writeFileSync(INDEX_FILE, JSON.stringify({ index })); }
-  catch (e) { console.error('Erro ao salvar índice:', e); }
+  try {
+    fs.writeFileSync(INDEX_FILE, JSON.stringify({ index }));
+  } catch (e) { console.error('Erro ao salvar índice:', e); }
 }
 
 // ─── BUFFER DE MENSAGENS (agrupamento 10 min) ────────────────
-const bufferMensagens = {};
+const bufferMensagens = {}; // { numero: [{ texto, hora }] }
 let timerResumo = null;
 
 function adicionarAoBuffer(de, conteudo) {
   if (!bufferMensagens[de]) bufferMensagens[de] = [];
   bufferMensagens[de].push(conteudo);
+
   if (!timerResumo) {
     timerResumo = setTimeout(enviarResumo, 10 * 60 * 1000);
     console.log('Timer de resumo iniciado (10 min)');
@@ -422,27 +508,38 @@ async function enviarResumo() {
   timerResumo = null;
   const contatos = Object.keys(bufferMensagens);
   if (contatos.length === 0) return;
-  let texto = `📱 *Resumo de mensagens*\n_Últimos 10 minutos_\n`;
+
+  let texto = `📱 *Resumo de mensagens*\n`;
+  texto += `_Últimos 10 minutos_\n`;
+
   for (const numero of contatos) {
     const msgs = bufferMensagens[numero];
     texto += `\n👤 *${numero}*\n`;
-    for (const msg of msgs) texto += `• ${msg}\n`;
+    for (const msg of msgs) {
+      texto += `• ${msg}\n`;
+    }
     delete bufferMensagens[numero];
   }
+
   await enviarWhatsApp(JULIANE_LL, texto);
   console.log('Resumo enviado para Juliane LL');
 }
 
 // ─── FUNÇÃO: ENVIAR MENSAGEM WHATSAPP ────────────────────────
+// instancia opcional — usa a instância principal por padrão
 async function enviarWhatsApp(fone, mensagem, instancia = EVOLUTION_INSTANCE) {
   const res = await fetch(`${EVOLUTION_URL}/message/sendText/${instancia}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'apikey': EVOLUTION_TOKEN },
+    headers: {
+      'Content-Type': 'application/json',
+      'apikey': EVOLUTION_TOKEN,
+    },
     body: JSON.stringify({ number: fone, text: mensagem }),
   });
   return res.json();
 }
 
+// ─── FUNÇÃO: FORMATAR TELEFONE ───────────────────────────────
 function formatarTelefone(ddd, phone) {
   if (ddd && phone) {
     const p = phone.replace(/\D/g, '');
@@ -453,6 +550,7 @@ function formatarTelefone(ddd, phone) {
   return 'Não informado';
 }
 
+// ─── FUNÇÃO: LIMPAR MENSAGEM DO CLIENTE ──────────────────────
 function limparMensagem(msg) {
   if (!msg) return '';
   const corte = msg.indexOf('A seguir, dados para contato');
@@ -460,14 +558,25 @@ function limparMensagem(msg) {
   return msg.trim();
 }
 
-// ─── BACKUP DIÁRIO ───────────────────────────────────────────
+// ─── BACKUP AUTOMÁTICO DIÁRIO ─────────────────────────────────
+// Guarda um dump completo da tabela leads dentro do próprio Postgres
+// (persistente — diferente do /tmp, que é apagado a cada deploy/restart).
+// Mantém só os últimos 30 backups; os mais antigos são apagados sozinhos.
+// Também sobe uma cópia pro Google Drive, se estiver configurado.
 async function fazerBackupDiario() {
   if (!process.env.DATABASE_URL) return { ok: false, erro: 'DATABASE_URL não configurada' };
   try {
     const leadsResult = await pool.query('SELECT * FROM leads ORDER BY id');
-    await pool.query(`INSERT INTO backups_leads (total_leads, dados) VALUES ($1, $2)`, [leadsResult.rows.length, JSON.stringify(leadsResult.rows)]);
-    await pool.query(`DELETE FROM backups_leads WHERE id NOT IN (SELECT id FROM backups_leads ORDER BY criado_em DESC LIMIT 30)`);
+    await pool.query(
+      `INSERT INTO backups_leads (total_leads, dados) VALUES ($1, $2)`,
+      [leadsResult.rows.length, JSON.stringify(leadsResult.rows)]
+    );
+    await pool.query(`
+      DELETE FROM backups_leads
+      WHERE id NOT IN (SELECT id FROM backups_leads ORDER BY criado_em DESC LIMIT 30)
+    `);
     console.log(`✅ Backup diário salvo: ${leadsResult.rows.length} leads`);
+
     const nomeArquivo = `backup-leads-${new Date().toISOString().slice(0, 10)}.json`;
     const resultadoDrive = await salvarBackupNoDrive(leadsResult.rows, nomeArquivo);
     return { ok: true, totalLeads: leadsResult.rows.length, drive: resultadoDrive };
@@ -484,7 +593,8 @@ async function lerConfig(chave) {
 
 async function salvarConfig(chave, valor) {
   await pool.query(
-    `INSERT INTO config_sistema (chave, valor) VALUES ($1, $2) ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor`,
+    `INSERT INTO config_sistema (chave, valor) VALUES ($1, $2)
+     ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor`,
     [chave, valor]
   );
 }
@@ -493,8 +603,10 @@ let driveOAuthClientCache = null;
 async function getDriveClientOAuth() {
   const refreshToken = await lerConfig('google_drive_refresh_token');
   if (!refreshToken) return null;
+
   const oauthClient = getOAuthClient();
   if (!oauthClient) return null;
+
   if (!driveOAuthClientCache || driveOAuthClientCache._refreshToken !== refreshToken) {
     oauthClient.setCredentials({ refresh_token: refreshToken });
     driveOAuthClientCache = google.drive({ version: 'v3', auth: oauthClient });
@@ -503,6 +615,62 @@ async function getDriveClientOAuth() {
   return driveOAuthClientCache;
 }
 
+// Calcula a "semana ISO" de uma data, no formato AAAA-Wnn — usada pra
+// agrupar os backups do Drive e saber quais já são de semanas passadas.
+function semanaISO(data) {
+  const d = new Date(Date.UTC(data.getFullYear(), data.getMonth(), data.getDate()));
+  const diaSemana = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - diaSemana);
+  const inicioAno = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  const semana = Math.ceil((((d - inicioAno) / 86400000) + 1) / 7);
+  return `${d.getUTCFullYear()}-W${String(semana).padStart(2, '0')}`;
+}
+
+// Limpa os backups antigos do Drive: mantém TODOS os da semana atual (um por
+// dia, pra recuperação rápida), mas de semanas anteriores mantém só 1 — o
+// mais recente daquela semana. Semanas mais velhas vão ficando com só 1 arquivo.
+async function limparBackupsAntigosNoDrive() {
+  const drive = await getDriveClientOAuth();
+  if (!drive || !process.env.GOOGLE_DRIVE_BACKUP_FOLDER_ID) return;
+  try {
+    const folderId = process.env.GOOGLE_DRIVE_BACKUP_FOLDER_ID;
+    const listaResult = await drive.files.list({
+      q: `'${folderId}' in parents and trashed = false`,
+      fields: 'files(id, name, createdTime)',
+      orderBy: 'createdTime desc',
+      pageSize: 1000,
+    });
+    const arquivos = listaResult.data.files || [];
+    const semanaAtual = semanaISO(new Date());
+
+    const grupos = new Map();
+    for (const arq of arquivos) {
+      const semana = semanaISO(new Date(arq.createdTime));
+      if (!grupos.has(semana)) grupos.set(semana, []);
+      grupos.get(semana).push(arq);
+    }
+
+    let removidos = 0;
+    for (const [semana, arqs] of grupos) {
+      if (semana === semanaAtual) continue; // semana atual: mantém todos os diários
+      arqs.sort((a, b) => new Date(b.createdTime) - new Date(a.createdTime));
+      const excedentes = arqs.slice(1); // mantém só o mais recente da semana
+      for (const arq of excedentes) {
+        await drive.files.delete({ fileId: arq.id });
+        removidos++;
+      }
+    }
+    if (removidos > 0) {
+      console.log(`✅ Limpeza de backups antigos no Drive: ${removidos} arquivo(s) removido(s), mantendo 1 por semana passada`);
+    }
+  } catch (err) {
+    console.error('Erro ao limpar backups antigos no Drive:', err.message);
+  }
+}
+
+// Sobe o JSON do backup pro Drive PESSOAL de Bruno (via OAuth, não conta de
+// serviço — contas de serviço não têm espaço próprio no Drive). Precisa que
+// /api/admin/drive-auth já tenha sido autorizado uma vez.
 async function salvarBackupNoDrive(dados, nomeArquivo) {
   const drive = await getDriveClientOAuth();
   if (!drive) {
@@ -512,58 +680,98 @@ async function salvarBackupNoDrive(dados, nomeArquivo) {
   }
   try {
     const requestBody = { name: nomeArquivo };
-    if (process.env.GOOGLE_DRIVE_BACKUP_FOLDER_ID) requestBody.parents = [process.env.GOOGLE_DRIVE_BACKUP_FOLDER_ID];
-    await drive.files.create({ requestBody, media: { mimeType: 'application/json', body: Readable.from(JSON.stringify(dados, null, 2)) } });
+    if (process.env.GOOGLE_DRIVE_BACKUP_FOLDER_ID) {
+      requestBody.parents = [process.env.GOOGLE_DRIVE_BACKUP_FOLDER_ID];
+    }
+    await drive.files.create({
+      requestBody,
+      media: {
+        mimeType: 'application/json',
+        body: Readable.from(JSON.stringify(dados, null, 2)),
+      },
+    });
     console.log(`✅ Backup também salvo no Google Drive: ${nomeArquivo}`);
+    await limparBackupsAntigosNoDrive();
     return { ok: true };
   } catch (err) {
     const detalhe = err?.errors?.[0]?.message || err.message;
     console.error('Erro ao salvar backup no Google Drive:', detalhe);
     return { ok: false, erro: detalhe };
   }
+
 }
 
-// ─── PARSER DE DISTRIBUIÇÃO ──────────────────────────────────
+
 function parseDistribuicao(texto) {
   if (!texto) return null;
+
   const corretorMatch = texto.match(/corretor\s*[:\-]?\s*(.+)/i);
   const whatsappMatch = texto.match(/(?:\+?55\s*)?\(?\d{2}\)?\s*9?\d{4}[-\s]?\d{4}/);
+
   if (!corretorMatch || !whatsappMatch) return null;
+
   const nomeMatch = texto.match(/nome\s*[:\-]?\s*(.+)/i);
   const emailMatch = texto.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+
+  // Origem: reconhece se a própria mensagem de distribuição já disser de onde veio o lead
+  // (ex: "origem: TikTok", "canal: Instagram", "veio de: Patrocinado")
   const origemMatch = texto.match(/(?:origem|canal|veio de)\s*[:\-]?\s*(.+)/i);
+
   const primeiraLinha = texto.split('\n')[0].trim();
   let imovelDesc = primeiraLinha;
   const prefixMatch = primeiraLinha.match(/interessado\s+(.+)/i);
   if (prefixMatch) imovelDesc = prefixMatch[1].trim();
+
   let imovelCodigo = '';
   const codigoMatch = imovelDesc.match(/^([A-Z]{2}\d+)\s*-?\s*(.*)$/);
-  if (codigoMatch) { imovelCodigo = codigoMatch[1]; imovelDesc = codigoMatch[2].trim(); }
+  if (codigoMatch) {
+    imovelCodigo = codigoMatch[1];
+    imovelDesc = codigoMatch[2].trim();
+  }
+
+  const whatsappNormalizado = canonicalizarWhatsapp(whatsappMatch[0]);
+
+  // Origem inferida quando a mensagem não diz explicitamente ("origem:"):
+  // se tiver "CRM" escrito, é lead do OLX/Canal Pro (padrão dessas mensagens);
+  // se tiver só o código do imóvel (ex: VD01) sem CRM, é lead Patrocinado (Insta/Face).
+  let origemInferida = inferirOrigemDeTexto(texto, imovelCodigo);
+
   return {
     nome: nomeMatch ? nomeMatch[1].trim() : 'Sem nome',
     email: emailMatch ? emailMatch[0] : null,
-    whatsapp: canonicalizarWhatsapp(whatsappMatch[0]),
+    whatsapp: whatsappNormalizado,
     corretor: corretorMatch[1].trim(),
-    origem: origemMatch ? origemMatch[1].trim() : inferirOrigemDeTexto(texto, imovelCodigo),
-    imovelCodigo, imovelDesc, mensagemOriginal: texto,
+    origem: origemMatch ? origemMatch[1].trim() : origemInferida,
+    imovelCodigo,
+    imovelDesc,
+    mensagemOriginal: texto,
   };
 }
 
+// origemPadrao: usada só se a mensagem em si não tiver a origem escrita (dados.origem).
+// Prioridade: origem escrita na própria mensagem > origem padrão do canal > pendente (null)
 async function salvarDistribuicao(dados, origemPadrao = null) {
   const origem = dados.origem || origemPadrao || null;
   const numeroInvalido = !dados.whatsapp;
   const whatsappFinal = dados.whatsapp || gerarChaveSemNumero(dados.nome, dados.email);
   const whatsappBruto = numeroInvalido ? (dados.whatsappBruto || null) : null;
   const interesse = dados.mensagemOriginal || null;
+
   await pool.query(
     `INSERT INTO leads (whatsapp, nome, email, corretor, imovel_codigo, imovel_desc, origem, numero_invalido, whatsapp_bruto, interesse)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
      ON CONFLICT (whatsapp) DO UPDATE SET
-       nome = EXCLUDED.nome, email = EXCLUDED.email, corretor = EXCLUDED.corretor,
-       imovel_codigo = EXCLUDED.imovel_codigo, imovel_desc = EXCLUDED.imovel_desc,
+       nome = EXCLUDED.nome,
+       email = EXCLUDED.email,
+       corretor = EXCLUDED.corretor,
+       imovel_codigo = EXCLUDED.imovel_codigo,
+       imovel_desc = EXCLUDED.imovel_desc,
        origem = COALESCE(leads.origem, EXCLUDED.origem),
        interesse = COALESCE(EXCLUDED.interesse, leads.interesse),
-       distribuido_em = now(), contatou = false, primeiro_contato_em = NULL, avisado_em = NULL,
+       distribuido_em = now(),
+       contatou = false,
+       primeiro_contato_em = NULL,
+       avisado_em = NULL,
        outros_corretores = CASE
          WHEN leads.corretor IS NOT NULL AND EXCLUDED.corretor IS NOT NULL
               AND leads.corretor <> EXCLUDED.corretor
@@ -573,20 +781,28 @@ async function salvarDistribuicao(dados, origemPadrao = null) {
        END`,
     [whatsappFinal, dados.nome, dados.email, dados.corretor, dados.imovelCodigo, dados.imovelDesc, origem, numeroInvalido, whatsappBruto, interesse]
   );
-  console.log(`Lead distribuído salvo: ${dados.nome} → ${dados.corretor} (${whatsappFinal}) [origem: ${origem || 'pendente'}]`);
+  console.log(`Lead distribuído salvo: ${dados.nome} → ${dados.corretor} (${whatsappFinal}) [origem: ${origem || 'pendente'}]${numeroInvalido ? ' [SEM NÚMERO VÁLIDO]' : ''}`);
 }
 
+// ─── REGISTRO AUTOMÁTICO DE NOVO CONTATO (número do TikTok) ──
+// Diferente do fluxo do Canal Pro/Juliane, esse número não recebe mensagem de
+// distribuição formatada — então todo contato novo já vira uma linha no funil,
+// com origem = 'TikTok' e corretor em branco (editável no dashboard).
 async function registrarLeadAutomatico(whatsapp, nome, mensagem, origemPadrao) {
   const existente = await pool.query('SELECT id FROM leads WHERE whatsapp = $1', [whatsapp]);
-  if (existente.rows.length > 0) return false;
+  if (existente.rows.length > 0) return false; // já está na base, não sobrescreve
+
   await pool.query(
-    `INSERT INTO leads (whatsapp, nome, corretor, origem, interesse) VALUES ($1, $2, NULL, $3, $4) ON CONFLICT (whatsapp) DO NOTHING`,
+    `INSERT INTO leads (whatsapp, nome, corretor, origem, interesse)
+     VALUES ($1, $2, NULL, $3, $4)
+     ON CONFLICT (whatsapp) DO NOTHING`,
     [whatsapp, nome || 'Sem nome', origemPadrao, mensagem || null]
   );
   console.log(`[Auto] Novo contato registrado: ${nome || whatsapp} (${whatsapp}) [origem: ${origemPadrao}]`);
   return true;
 }
 
+// ─── LEAD ROUTER: IDENTIFICAÇÃO QUANDO O LEAD ESCREVE ────────
 function precisaAvisar(avisadoEm) {
   if (!avisadoEm) return true;
   return (Date.now() - new Date(avisadoEm).getTime()) > THROTTLE_AVISO_MS;
@@ -594,23 +810,55 @@ function precisaAvisar(avisadoEm) {
 
 async function identificarLead(whatsapp, mensagemTexto) {
   const leadResult = await pool.query('SELECT * FROM leads WHERE whatsapp = $1', [whatsapp]);
+
   if (leadResult.rows.length > 0) {
     const lead = leadResult.rows[0];
-    await pool.query(`UPDATE leads SET contatou = true, primeiro_contato_em = COALESCE(primeiro_contato_em, now()) WHERE whatsapp = $1`, [whatsapp]);
+
+    await pool.query(
+      `UPDATE leads SET contatou = true, primeiro_contato_em = COALESCE(primeiro_contato_em, now())
+       WHERE whatsapp = $1`,
+      [whatsapp]
+    );
+
     if (precisaAvisar(lead.avisado_em)) {
       const imovel = [lead.imovel_codigo, lead.imovel_desc].filter(Boolean).join(' - ') || 'não informado';
-      await enviarWhatsApp(JULIANE_LL, `✅ Lead identificado\nNome: ${lead.nome}\nWhatsApp: +${whatsapp}\nCorretor: ${lead.corretor}\nImóvel: ${imovel}`);
+      const texto =
+        `✅ Lead identificado\n` +
+        `Nome: ${lead.nome}\n` +
+        `WhatsApp: +${whatsapp}\n` +
+        `Corretor: ${lead.corretor}\n` +
+        `Imóvel: ${imovel}`;
+      await enviarWhatsApp(JULIANE_LL, texto);
       await pool.query('UPDATE leads SET avisado_em = now() WHERE whatsapp = $1', [whatsapp]);
       console.log(`Juliane avisada: ${lead.nome} → ${lead.corretor}`);
     }
     return;
   }
-  const naoIdentResult = await pool.query('SELECT * FROM leads_nao_identificados WHERE whatsapp = $1', [whatsapp]);
+
+  const naoIdentResult = await pool.query(
+    'SELECT * FROM leads_nao_identificados WHERE whatsapp = $1',
+    [whatsapp]
+  );
   const existente = naoIdentResult.rows[0];
-  if (existente) await pool.query('UPDATE leads_nao_identificados SET mensagem = $1 WHERE whatsapp = $2', [mensagemTexto, whatsapp]);
-  else await pool.query('INSERT INTO leads_nao_identificados (whatsapp, mensagem) VALUES ($1, $2)', [whatsapp, mensagemTexto]);
+
+  if (existente) {
+    await pool.query(
+      'UPDATE leads_nao_identificados SET mensagem = $1 WHERE whatsapp = $2',
+      [mensagemTexto, whatsapp]
+    );
+  } else {
+    await pool.query(
+      'INSERT INTO leads_nao_identificados (whatsapp, mensagem) VALUES ($1, $2)',
+      [whatsapp, mensagemTexto]
+    );
+  }
+
   if (precisaAvisar(existente?.avisado_em)) {
-    await enviarWhatsApp(JULIANE_LL, `⚠️ Lead SEM corretor identificado\nWhatsApp: +${whatsapp}\nMensagem: "${mensagemTexto}"`);
+    const texto =
+      `⚠️ Lead SEM corretor identificado\n` +
+      `WhatsApp: +${whatsapp}\n` +
+      `Mensagem: "${mensagemTexto}"`;
+    await enviarWhatsApp(JULIANE_LL, texto);
     await pool.query('UPDATE leads_nao_identificados SET avisado_em = now() WHERE whatsapp = $1', [whatsapp]);
     console.log(`Juliane avisada: lead sem corretor (${whatsapp})`);
   }
@@ -621,34 +869,59 @@ app.post('/lead-canalpro', async (req, res) => {
   try {
     const body = req.body;
     console.log('Lead recebido:', JSON.stringify(body, null, 2));
+
     const transactionType = body?.transactionType || '';
     const codigoImovel = body?.clientListingId || 'Não informado';
-    const nomeCliente  = body?.name  || 'Não informado';
-    const emailCliente = body?.email || 'Não informado';
-    const ddd   = body?.ddd   || '';
-    const phone = body?.phone || '';
-    const telefone   = formatarTelefone(ddd, phone);
-    const msgCliente = limparMensagem(body?.message);
+    const nomeCliente  = body?.name            || 'Não informado';
+    const emailCliente = body?.email           || 'Não informado';
+    const ddd          = body?.ddd             || '';
+    const phone        = body?.phone           || '';
+    const telefone     = formatarTelefone(ddd, phone);
+    const msgCliente   = limparMensagem(body?.message);
 
     if (transactionType === 'RENT') {
-      const texto = `Segue um lead de ALUGUEL via Canal Pro\n\nCRM : ${codigoImovel}\nNome : ${nomeCliente}\n${telefone}\n${emailCliente}\nOBS: ${msgCliente}`;
+      const texto =
+        `Segue um lead de ALUGUEL via Canal Pro\n\n` +
+        `CRM : ${codigoImovel}\n` +
+        `Nome : ${nomeCliente}\n` +
+        `${telefone}\n` +
+        `${emailCliente}\n` +
+        `OBS: ${msgCliente}`;
+
       await enviarWhatsApp(CYDA, texto);
       console.log('Lead de aluguel enviado para Cyda');
       return res.status(200).json({ ok: true, msg: 'Aluguel enviado para Cyda' });
     }
 
-    // ─── DEFINE CORRETOR (fixo para Laís ou round-robin) ─────
-    const corretor = definirCorretor(codigoImovel);
+    const indexAtual = lerIndice();
+    const corretor = CORRETORES[indexAtual];
+    salvarIndice((indexAtual + 1) % CORRETORES.length);
 
-    const texto = `Segue um lead que veio através do Canal Pro\n\nCRM : ${codigoImovel}\nNome : ${nomeCliente}\n${telefone}\n${emailCliente}\nOBS: ${msgCliente}\nENVIADO CORRETOR ${corretor.nome.toUpperCase()}`;
+    const texto =
+      `Segue um lead que veio através do Canal Pro\n\n` +
+      `CRM : ${codigoImovel}\n` +
+      `Nome : ${nomeCliente}\n` +
+      `${telefone}\n` +
+      `${emailCliente}\n` +
+      `OBS: ${msgCliente}\n` +
+      `ENVIADO CORRETOR ${corretor.nome.toUpperCase()}`;
+
     await enviarWhatsApp(corretor.fone, texto);
 
-    const textoControle = `✅ Lead de venda distribuído\n\nCRM : ${codigoImovel}\nNome : ${nomeCliente}\n${telefone}\nCorretor: ${corretor.nome}`;
+    const textoControle =
+      `✅ Lead de venda distribuído\n\n` +
+      `CRM : ${codigoImovel}\n` +
+      `Nome : ${nomeCliente}\n` +
+      `${telefone}\n` +
+      `Corretor: ${corretor.nome}`;
+
     await enviarWhatsApp(JULIANE_LL, textoControle);
 
+    // Registra no funil já com a origem conhecida
     if (process.env.DATABASE_URL) {
+      const whatsappNormalizado = canonicalizarWhatsapp(telefone);
       await salvarDistribuicao({
-        whatsapp: canonicalizarWhatsapp(telefone),
+        whatsapp: whatsappNormalizado,
         whatsappBruto: telefone,
         nome: nomeCliente,
         email: emailCliente,
@@ -660,26 +933,37 @@ app.post('/lead-canalpro', async (req, res) => {
 
     console.log(`Lead enviado para ${corretor.nome} (${corretor.fone})`);
     res.status(200).json({ ok: true, corretor: corretor.nome });
+
   } catch (err) {
     console.error('Erro ao processar lead:', err);
     res.status(500).json({ ok: false, erro: err.message });
   }
 });
 
-// ─── ROTA: ESPELHO DE MENSAGENS ──────────────────────────────
+// ─── ROTA: ESPELHO DE MENSAGENS + LEAD ROUTER (Juliane) ──────
 app.post('/webhook-mensagens', async (req, res) => {
   try {
     const body = req.body;
+
     const fromMe = body?.data?.key?.fromMe || body?.key?.fromMe || false;
     const jid = body?.data?.key?.remoteJid || body?.key?.remoteJid || '';
-    if (jid.includes('@g.us')) { console.log('Mensagem de grupo ignorada'); return res.status(200).json({ ok: true }); }
+
+    if (jid.includes('@g.us')) {
+      console.log('Mensagem de grupo ignorada');
+      return res.status(200).json({ ok: true });
+    }
+
     const de = canonicalizarWhatsapp(jid.replace('@s.whatsapp.net', '').replace('@c.us', ''));
     const msg = body?.data?.message || body?.message || {};
     const conteudo = msg?.conversation || msg?.extendedTextMessage?.text || msg?.imageMessage?.caption || '[mídia]';
+
     if (fromMe) {
       if (process.env.DATABASE_URL) {
         const distribuicao = parseDistribuicao(conteudo);
         if (distribuicao) {
+          // Distribuição feita pelo WhatsApp da Juliane. A origem já vem de dentro de
+          // parseDistribuicao (explícita, ou inferida por CRM/código de imóvel). Se não
+          // tiver nenhuma evidência, fica sem origem — não força mais 'Patrocinado' aqui.
           await salvarDistribuicao(distribuicao, null);
           await enviarWhatsApp(JULIANE_LL, `📋 Nova distribuição de lead:\n\n${conteudo}`);
           console.log(`Distribuição espelhada pra Juliane: ${distribuicao.nome} → ${distribuicao.corretor}`);
@@ -687,27 +971,49 @@ app.post('/webhook-mensagens', async (req, res) => {
       }
       return res.status(200).json({ ok: true });
     }
+
     adicionarAoBuffer(de, conteudo);
     console.log(`Mensagem de ${de} adicionada ao buffer`);
-    if (process.env.DATABASE_URL) await identificarLead(de, conteudo);
+
+    if (process.env.DATABASE_URL) {
+      await identificarLead(de, conteudo);
+    }
+
     res.status(200).json({ ok: true });
-  } catch (err) { console.error('Erro ao processar mensagem:', err); res.status(500).json({ ok: false, erro: err.message }); }
+
+  } catch (err) {
+    console.error('Erro ao processar mensagem:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
 });
 
-// ─── ROTA: WEBHOOK TIKTOK ────────────────────────────────────
+// ─── ROTA: WEBHOOK DO NÚMERO DO TIKTOK ───────────────────────
+// Aponte o webhook da instância `diniz-tiktok` na Evolution API pra essa rota.
+// Reaproveita o mesmo parser de distribuição — quando o número do TikTok manda
+// a mensagem de distribuição pro corretor, o sistema já grava o lead com origem = 'TikTok'.
 app.post('/webhook-mensagens-tiktok', async (req, res) => {
   try {
     const body = req.body;
+
     const fromMe = body?.data?.key?.fromMe || body?.key?.fromMe || false;
     const jid = body?.data?.key?.remoteJid || body?.key?.remoteJid || '';
-    if (jid.includes('@g.us')) { console.log('[TikTok] Mensagem de grupo ignorada'); return res.status(200).json({ ok: true }); }
+
+    if (jid.includes('@g.us')) {
+      console.log('[TikTok] Mensagem de grupo ignorada');
+      return res.status(200).json({ ok: true });
+    }
+
     const de = canonicalizarWhatsapp(jid.replace('@s.whatsapp.net', '').replace('@c.us', ''));
     const msg = body?.data?.message || body?.message || {};
     const conteudo = msg?.conversation || msg?.extendedTextMessage?.text || msg?.imageMessage?.caption || '[mídia]';
+
     if (fromMe) {
       if (process.env.DATABASE_URL) {
         const distribuicao = parseDistribuicao(conteudo);
         if (distribuicao) {
+          // Origem já conhecida: veio pelo número do TikTok.
+          // Se quiser diferenciar TikTok / Instagram / Comentário manualmente,
+          // deixe origem = null aqui e ajuste depois pelo dashboard.
           await salvarDistribuicao(distribuicao, 'TikTok');
           await enviarWhatsApp(JULIANE_LL, `📋 Nova distribuição de lead (TikTok):\n\n${conteudo}`);
           console.log(`[TikTok] Distribuição espelhada pra Juliane: ${distribuicao.nome} → ${distribuicao.corretor}`);
@@ -715,47 +1021,96 @@ app.post('/webhook-mensagens-tiktok', async (req, res) => {
       }
       return res.status(200).json({ ok: true });
     }
+
+    // Mensagem recebida de fora no número do TikTok — registra como lead automaticamente,
+    // mesmo sem formato de distribuição (esse número não dispara aquela mensagem padrão)
     if (process.env.DATABASE_URL) {
       const pushName = body?.data?.pushName || body?.pushName || null;
       await registrarLeadAutomatico(de, pushName, conteudo, 'TikTok');
     }
+
     res.status(200).json({ ok: true });
-  } catch (err) { console.error('[TikTok] Erro:', err); res.status(500).json({ ok: false, erro: err.message }); }
+
+  } catch (err) {
+    console.error('[TikTok] Erro ao processar mensagem:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
 });
 
-// ─── AUTENTICAÇÃO ─────────────────────────────────────────────
+// ─── AUTENTICAÇÃO BÁSICA DO PAINEL (admin — dashboard completo) ─
 function basicAuth(req, res, next) {
   const user = process.env.DASHBOARD_USER || 'diniz';
   const pass = process.env.DASHBOARD_PASS;
-  if (!pass) { console.warn('⚠️  DASHBOARD_PASS não configurada — painel SEM senha.'); req.authTipo = 'admin'; return next(); }
+
+  if (!pass) {
+    console.warn('⚠️  DASHBOARD_PASS não configurada — painel está SEM proteção por senha.');
+    req.authTipo = 'admin';
+    return next();
+  }
+
   const auth = req.headers.authorization;
-  if (!auth || !auth.startsWith('Basic ')) { res.set('WWW-Authenticate', 'Basic realm="Painel de Leads"'); return res.status(401).send('Autenticação necessária'); }
+  if (!auth || !auth.startsWith('Basic ')) {
+    res.set('WWW-Authenticate', 'Basic realm="Painel de Leads"');
+    return res.status(401).send('Autenticação necessária');
+  }
+
   const [u, p] = Buffer.from(auth.slice(6), 'base64').toString().split(':');
-  if (u === user && p === pass) { req.authTipo = 'admin'; return next(); }
+  if (u === user && p === pass) {
+    req.authTipo = 'admin';
+    return next();
+  }
+
   res.set('WWW-Authenticate', 'Basic realm="Painel de Leads"');
   return res.status(401).send('Credenciais inválidas');
 }
 
+// ─── AUTENTICAÇÃO BÁSICA — admin OU SDR (usada nas rotas que o /crm chama) ─
+// Login separado pra SDR (CRM_USER/CRM_PASS), com acesso só ao /crm e à API
+// de leads — sem as rotas administrativas (/dashboard, importação, correções).
+// Usa o MESMO realm do basicAuth admin de propósito: assim, quando o admin já
+// autenticou no /dashboard, o navegador reaproveita a credencial cacheada nas
+// chamadas de API, sem pedir senha de novo.
 function basicAuthAdminOuSdr(req, res, next) {
   const adminUser = process.env.DASHBOARD_USER || 'diniz';
   const adminPass = process.env.DASHBOARD_PASS;
   const sdrUser = process.env.CRM_USER || 'sdr';
   const sdrPass = process.env.CRM_PASS;
-  if (!adminPass && !sdrPass) { console.warn('⚠️  Nenhuma senha configurada — CRM SEM senha.'); req.authTipo = 'admin'; return next(); }
+
+  if (!adminPass && !sdrPass) {
+    console.warn('⚠️  Nenhuma senha configurada (DASHBOARD_PASS/CRM_PASS) — CRM está SEM proteção por senha.');
+    req.authTipo = 'admin';
+    return next();
+  }
+
   const auth = req.headers.authorization;
-  if (!auth || !auth.startsWith('Basic ')) { res.set('WWW-Authenticate', 'Basic realm="Painel de Leads"'); return res.status(401).send('Autenticação necessária'); }
+  if (!auth || !auth.startsWith('Basic ')) {
+    res.set('WWW-Authenticate', 'Basic realm="Painel de Leads"');
+    return res.status(401).send('Autenticação necessária');
+  }
+
   const [u, p] = Buffer.from(auth.slice(6), 'base64').toString().split(':');
-  if (adminPass && u === adminUser && p === adminPass) { req.authTipo = 'admin'; return next(); }
-  if (sdrPass && u === sdrUser && p === sdrPass) { req.authTipo = 'sdr'; return next(); }
+  if (adminPass && u === adminUser && p === adminPass) {
+    req.authTipo = 'admin';
+    return next();
+  }
+  if (sdrPass && u === sdrUser && p === sdrPass) {
+    req.authTipo = 'sdr';
+    return next();
+  }
+
   res.set('WWW-Authenticate', 'Basic realm="Painel de Leads"');
   return res.status(401).send('Credenciais inválidas');
 }
 
+// Campos que a SDR pode editar pelo CRM — o resto (aprovado, visita, proposta,
+// venda, corretor, origem etc.) continua só pra quem loga como admin.
 const CAMPOS_EDITAVEIS_SDR = ['status', 'notas_sdr'];
 
-// ─── ROTA: API DE LEADS ──────────────────────────────────────
+// ─── ROTA: API DE LEADS (alimenta o dashboard) ───────────────
 app.get('/api/leads', basicAuthAdminOuSdr, async (req, res) => {
-  if (!process.env.DATABASE_URL) return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  }
   try {
     const leadsResult = await pool.query(
       `SELECT id, whatsapp, nome, email, corretor, imovel_codigo, imovel_desc,
@@ -763,11 +1118,19 @@ app.get('/api/leads', basicAuthAdminOuSdr, async (req, res) => {
               origem, interesse, status, ultimo_contato, aprovado, visita, proposta, venda,
               numero_invalido, whatsapp_bruto, outros_corretores, sem_retorno, em_andamento,
               notas_sdr, reaquecido_em
-       FROM leads ORDER BY distribuido_em DESC LIMIT 1000`
+       FROM leads
+       ORDER BY distribuido_em DESC
+       LIMIT 1000`
     );
+
     const naoIdentResult = await pool.query(
-      `SELECT id, whatsapp, mensagem, corretor, criado_em FROM leads_nao_identificados WHERE criado_em > now() - interval '7 days' ORDER BY criado_em DESC LIMIT 50`
+      `SELECT id, whatsapp, mensagem, corretor, criado_em
+       FROM leads_nao_identificados
+       WHERE criado_em > now() - interval '7 days'
+       ORDER BY criado_em DESC
+       LIMIT 50`
     );
+
     const statsResult = await pool.query(`
       SELECT
         count(*) FILTER (WHERE distribuido_em > now() - interval '7 days') AS total_distribuidos,
@@ -776,31 +1139,71 @@ app.get('/api/leads', basicAuthAdminOuSdr, async (req, res) => {
         count(*) FILTER (WHERE distribuido_em > now() - interval '7 days' AND aprovado) AS total_aprovados,
         count(*) FILTER (WHERE distribuido_em > now() - interval '7 days' AND visita) AS total_visitas,
         count(*) FILTER (WHERE distribuido_em > now() - interval '7 days' AND venda) AS total_vendas,
-        avg(primeiro_contato_em - distribuido_em) FILTER (WHERE contatou AND distribuido_em > now() - interval '7 days') AS tempo_medio_contato
+        avg(primeiro_contato_em - distribuido_em)
+          FILTER (WHERE contatou AND distribuido_em > now() - interval '7 days') AS tempo_medio_contato
       FROM leads
     `);
-    const semCorretor24hResult = await pool.query(`SELECT count(*) AS total FROM leads_nao_identificados WHERE criado_em > now() - interval '24 hours'`);
-    const porCorretorResult = await pool.query(`SELECT corretor, count(*) AS total FROM leads GROUP BY corretor ORDER BY total DESC`);
+
+    const semCorretor24hResult = await pool.query(`
+      SELECT count(*) AS total
+      FROM leads_nao_identificados
+      WHERE criado_em > now() - interval '24 hours'
+    `);
+
+    const porCorretorResult = await pool.query(`
+      SELECT corretor, count(*) AS total
+      FROM leads
+      GROUP BY corretor
+      ORDER BY total DESC
+    `);
+
+    // Sem limite de tempo — usado nas abas de "Atividade por corretor", pra bater
+    // com o total real (a lista principal de leads é limitada a 100 linhas, essa não)
     const porCorretorDetalhadoResult = await pool.query(`
-      SELECT corretor, count(*) AS total,
+      SELECT
+        corretor,
+        count(*) AS total,
         count(*) FILTER (WHERE contatou) AS contataram,
         count(*) FILTER (WHERE aprovado) AS aprovados,
         count(*) FILTER (WHERE visita) AS visitas,
         count(*) FILTER (WHERE proposta) AS propostas,
         count(*) FILTER (WHERE venda) AS vendas
-      FROM leads WHERE corretor IS NOT NULL GROUP BY corretor ORDER BY total DESC
+      FROM leads
+      WHERE corretor IS NOT NULL
+      GROUP BY corretor
+      ORDER BY total DESC
     `);
+
     const totalGeralResult = await pool.query(`
-      SELECT count(*) AS total, count(*) FILTER (WHERE contatou) AS contataram,
-        count(*) FILTER (WHERE aprovado) AS aprovados, count(*) FILTER (WHERE visita) AS visitas,
-        count(*) FILTER (WHERE proposta) AS propostas, count(*) FILTER (WHERE venda) AS vendas,
-        count(*) FILTER (WHERE numero_invalido) AS sem_numero_valido FROM leads
+      SELECT
+        count(*) AS total,
+        count(*) FILTER (WHERE contatou) AS contataram,
+        count(*) FILTER (WHERE aprovado) AS aprovados,
+        count(*) FILTER (WHERE visita) AS visitas,
+        count(*) FILTER (WHERE proposta) AS propostas,
+        count(*) FILTER (WHERE venda) AS vendas,
+        count(*) FILTER (WHERE numero_invalido) AS sem_numero_valido
+      FROM leads
     `);
+
     const porCampanhaResult = await pool.query(`
-      SELECT imovel_codigo, imovel_desc, count(*) AS total, count(*) FILTER (WHERE contatou) AS total_contataram
-      FROM leads GROUP BY imovel_codigo, imovel_desc ORDER BY total DESC
+      SELECT
+        imovel_codigo,
+        imovel_desc,
+        count(*) AS total,
+        count(*) FILTER (WHERE contatou) AS total_contataram
+      FROM leads
+      GROUP BY imovel_codigo, imovel_desc
+      ORDER BY total DESC
     `);
-    const porOrigemResult = await pool.query(`SELECT COALESCE(origem, 'Não informado') AS origem, count(*) AS total FROM leads GROUP BY origem ORDER BY total DESC`);
+    const campanhasAgrupadas = agruparCampanhas(porCampanhaResult.rows);
+
+    const porOrigemResult = await pool.query(`
+      SELECT COALESCE(origem, 'Não informado') AS origem, count(*) AS total
+      FROM leads
+      GROUP BY origem
+      ORDER BY total DESC
+    `);
 
     res.json({
       ok: true,
@@ -815,14 +1218,20 @@ app.get('/api/leads', basicAuthAdminOuSdr, async (req, res) => {
         totalVendas: parseInt(statsResult.rows[0].total_vendas, 10) || 0,
         semCorretor24h: parseInt(semCorretor24hResult.rows[0].total, 10) || 0,
         tempoMedioContatoSegundos: statsResult.rows[0].tempo_medio_contato
-          ? Math.round(statsResult.rows[0].tempo_medio_contato.hours * 3600 + statsResult.rows[0].tempo_medio_contato.minutes * 60 + (statsResult.rows[0].tempo_medio_contato.seconds || 0))
+          ? Math.round(statsResult.rows[0].tempo_medio_contato.hours * 3600
+              + statsResult.rows[0].tempo_medio_contato.minutes * 60
+              + (statsResult.rows[0].tempo_medio_contato.seconds || 0))
           : null,
       },
       porCorretor: porCorretorResult.rows,
       porCorretorDetalhado: porCorretorDetalhadoResult.rows.map(r => ({
-        corretor: r.corretor, total: parseInt(r.total, 10) || 0,
-        contataram: parseInt(r.contataram, 10) || 0, aprovados: parseInt(r.aprovados, 10) || 0,
-        visitas: parseInt(r.visitas, 10) || 0, propostas: parseInt(r.propostas, 10) || 0, vendas: parseInt(r.vendas, 10) || 0,
+        corretor: r.corretor,
+        total: parseInt(r.total, 10) || 0,
+        contataram: parseInt(r.contataram, 10) || 0,
+        aprovados: parseInt(r.aprovados, 10) || 0,
+        visitas: parseInt(r.visitas, 10) || 0,
+        propostas: parseInt(r.propostas, 10) || 0,
+        vendas: parseInt(r.vendas, 10) || 0,
       })),
       totalGeral: {
         total: parseInt(totalGeralResult.rows[0].total, 10) || 0,
@@ -833,266 +1242,638 @@ app.get('/api/leads', basicAuthAdminOuSdr, async (req, res) => {
         vendas: parseInt(totalGeralResult.rows[0].vendas, 10) || 0,
         semNumeroValido: parseInt(totalGeralResult.rows[0].sem_numero_valido, 10) || 0,
       },
-      porCampanha: agruparCampanhas(porCampanhaResult.rows),
+      porCampanha: campanhasAgrupadas,
       porOrigem: porOrigemResult.rows,
       corretoresDisponiveis: [...CORRETORES.map(c => c.nome), ...CORRETORES_EXTRA_DASHBOARD],
     });
-  } catch (err) { console.error('Erro ao buscar leads:', err); res.status(500).json({ ok: false, erro: err.message }); }
+  } catch (err) {
+    console.error('Erro ao buscar leads:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
 });
 
+// ─── ROTA: IMPORTAR LEADS EM LOTE (via planilha enviada no dashboard) ─
+// Body esperado: { leads: [{ nome, whatsapp, origem, corretor, imovelDesc }, ...] }
+// Ignora silenciosamente quem já existe (mesmo WhatsApp) — não sobrescreve.
 app.post('/api/leads/import', basicAuth, async (req, res) => {
-  if (!process.env.DATABASE_URL) return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  }
   const { leads } = req.body;
-  if (!Array.isArray(leads) || leads.length === 0) return res.status(400).json({ ok: false, erro: 'Nenhum lead recebido' });
+  if (!Array.isArray(leads) || leads.length === 0) {
+    return res.status(400).json({ ok: false, erro: 'Nenhum lead recebido' });
+  }
+
   const resultado = await importarLeadsEmLote(leads);
   console.log(`Importação manual: ${resultado.inseridos} inseridos, ${resultado.jaExistiam} já existiam, ${resultado.incompletos} incompletos`);
   res.json({ ok: true, ...resultado });
 });
 
+// ─── ROTA: SINCRONIZAR AGORA COM A PLANILHA DO GOOGLE ────────
 app.post('/api/sincronizar-planilha', basicAuth, async (req, res) => {
-  try { const resultado = await sincronizarPlanilhaGoogle(); if (!resultado.ok) return res.status(400).json(resultado); res.json(resultado); }
-  catch (err) { console.error('Erro ao sincronizar planilha:', err); res.status(500).json({ ok: false, erro: err.message }); }
+  try {
+    const resultado = await sincronizarPlanilhaGoogle();
+    if (!resultado.ok) return res.status(400).json(resultado);
+    res.json(resultado);
+  } catch (err) {
+    console.error('Erro ao sincronizar planilha:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
 });
 
+// ─── ROTA: ADICIONAR LEAD MANUALMENTE ────────────────────────
+// Body esperado: { nome, whatsapp, origem, corretor, imovelDesc (opcional) }
 app.post('/api/leads', basicAuth, async (req, res) => {
-  if (!process.env.DATABASE_URL) return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  }
   const { nome, whatsapp, origem, corretor, imovelDesc } = req.body;
-  if (!nome || !whatsapp || !corretor) return res.status(400).json({ ok: false, erro: 'nome, whatsapp e corretor são obrigatórios' });
+
+  if (!nome || !whatsapp || !corretor) {
+    return res.status(400).json({ ok: false, erro: 'nome, whatsapp e corretor são obrigatórios' });
+  }
+
   const whatsappValido = canonicalizarWhatsapp(whatsapp);
   const numeroInvalido = !whatsappValido;
   const whatsappNormalizado = whatsappValido || gerarPlaceholderSemNumero();
+
   try {
     const result = await pool.query(
-      `INSERT INTO leads (whatsapp, nome, corretor, imovel_desc, origem, numero_invalido, whatsapp_bruto) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+      `INSERT INTO leads (whatsapp, nome, corretor, imovel_desc, origem, numero_invalido, whatsapp_bruto)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING id`,
       [whatsappNormalizado, nome, corretor, imovelDesc || null, origem || null, numeroInvalido, numeroInvalido ? whatsapp : null]
     );
-    console.log(`Lead adicionado manualmente: ${nome} → ${corretor} (${whatsappNormalizado})`);
+    console.log(`Lead adicionado manualmente: ${nome} → ${corretor} (${whatsappNormalizado})${numeroInvalido ? ' [SEM NÚMERO VÁLIDO]' : ''}`);
     res.json({ ok: true, id: result.rows[0].id });
   } catch (err) {
-    if (err.code === '23505') return res.status(409).json({ ok: false, erro: 'Já existe um lead com esse WhatsApp' });
+    if (err.code === '23505') {
+      return res.status(409).json({ ok: false, erro: 'Já existe um lead com esse WhatsApp' });
+    }
     console.error('Erro ao adicionar lead manual:', err);
     res.status(500).json({ ok: false, erro: err.message });
   }
 });
 
+// ─── ROTA: CONFERIR CONTATO (fluxo da SDR, um contato por vez) ──
+// GET: só verifica se o WhatsApp já existe na base e pra quem já foi.
+app.get('/api/leads/conferir', basicAuthAdminOuSdr, async (req, res) => {
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  }
+  const whatsappValido = canonicalizarWhatsapp(req.query.whatsapp);
+  if (!whatsappValido) {
+    return res.status(400).json({ ok: false, erro: 'WhatsApp inválido — confere o DDD e os dígitos.' });
+  }
+  try {
+    const result = await pool.query('SELECT * FROM leads WHERE whatsapp = $1', [whatsappValido]);
+    if (result.rows.length > 0) {
+      return res.json({ ok: true, encontrado: true, lead: result.rows[0] });
+    }
+    res.json({ ok: true, encontrado: false, whatsapp: whatsappValido });
+  } catch (err) {
+    console.error('Erro ao conferir contato:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
+// POST: se ainda não existir, cadastra como novo lead (origem "SDR", sem
+// corretor ainda). Se já existir, apenas marca esse lead como parte da
+// carteira da SDR (carteira_sdr = true) — assim ele passa a aparecer no
+// Kanban dela, sem duplicar nem mexer no lead original.
+app.post('/api/leads/conferir', basicAuthAdminOuSdr, async (req, res) => {
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  }
+  const { nome, whatsapp } = req.body;
+  const whatsappValido = canonicalizarWhatsapp(whatsapp);
+  if (!whatsappValido) {
+    return res.status(400).json({ ok: false, erro: 'WhatsApp inválido — confere o DDD e os dígitos.' });
+  }
+  if (!nome || !nome.trim()) {
+    return res.status(400).json({ ok: false, erro: 'Nome é obrigatório' });
+  }
+  try {
+    const existente = await pool.query('SELECT * FROM leads WHERE whatsapp = $1', [whatsappValido]);
+    if (existente.rows.length > 0) {
+      const atualizado = await pool.query(
+        `UPDATE leads SET carteira_sdr = true WHERE id = $1 RETURNING *`,
+        [existente.rows[0].id]
+      );
+      return res.json({ ok: true, encontrado: true, criado: false, lead: atualizado.rows[0] });
+    }
+    const result = await pool.query(
+      `INSERT INTO leads (whatsapp, nome, origem, status, carteira_sdr)
+       VALUES ($1, $2, 'SDR', 'Novo', true)
+       RETURNING *`,
+      [whatsappValido, nome.trim()]
+    );
+    res.json({ ok: true, encontrado: false, criado: true, lead: result.rows[0] });
+  } catch (err) {
+    if (err.code === '23505') {
+      const existente = await pool.query('SELECT * FROM leads WHERE whatsapp = $1', [whatsappValido]);
+      const atualizado = await pool.query(
+        `UPDATE leads SET carteira_sdr = true WHERE id = $1 RETURNING *`,
+        [existente.rows[0].id]
+      );
+      return res.json({ ok: true, encontrado: true, criado: false, lead: atualizado.rows[0] });
+    }
+    console.error('Erro ao adicionar contato conferido:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
+// Lista só os leads que a SDR já adicionou (carteira_sdr = true) — usada
+// pelo Kanban do /crm, que começa vazio e vai crescendo conforme ela sobe
+// os contatos, sem mostrar os leads do sistema todo.
+app.get('/api/leads/carteira-sdr', basicAuthAdminOuSdr, async (req, res) => {
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  }
+  try {
+    const result = await pool.query(
+      `SELECT id, whatsapp, nome, corretor, origem, status, distribuido_em,
+              outros_corretores, notas_sdr, reaquecido_em
+       FROM leads
+       WHERE carteira_sdr = true
+       ORDER BY distribuido_em DESC`
+    );
+    res.json({ ok: true, leads: result.rows });
+  } catch (err) {
+    console.error('Erro ao listar carteira da SDR:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
+
+// Ao editar QUALQUER campo (Origem, Corretor, Status, Visita, Proposta, Venda),
+// o contato "sobe de nível": vira um lead completo e some da lista de não identificados.
 app.patch('/api/leads-nao-identificados/:id', basicAuth, async (req, res) => {
-  if (!process.env.DATABASE_URL) return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  }
   const { id } = req.params;
   const { campo, valor } = req.body;
-  if (!CAMPOS_EDITAVEIS.includes(campo)) return res.status(400).json({ ok: false, erro: `Campo '${campo}' não é editável` });
+
+  if (!CAMPOS_EDITAVEIS.includes(campo)) {
+    return res.status(400).json({ ok: false, erro: `Campo '${campo}' não é editável` });
+  }
+
   try {
     const naoIdentResult = await pool.query('SELECT whatsapp, mensagem FROM leads_nao_identificados WHERE id = $1', [id]);
-    if (naoIdentResult.rows.length === 0) return res.status(404).json({ ok: false, erro: 'Não encontrado' });
+    if (naoIdentResult.rows.length === 0) {
+      return res.status(404).json({ ok: false, erro: 'Não encontrado' });
+    }
     const { whatsapp, mensagem } = naoIdentResult.rows[0];
+
+    // Se o campo editado for o próprio 'nome', usa o valor digitado como nome
+    // (em vez do placeholder 'Sem nome') e evita listar a coluna nome duas vezes.
     const nomeInicial = campo === 'nome' ? valor : 'Sem nome';
     const colunaExtra = campo === 'nome' ? null : campo;
+
     const colunas = ['whatsapp', 'nome', 'interesse'];
     const valores = [whatsapp, nomeInicial, mensagem || null];
-    if (colunaExtra) { colunas.push(colunaExtra); valores.push(valor); }
+    if (colunaExtra) {
+      colunas.push(colunaExtra);
+      valores.push(valor);
+    }
+
+    // Se não foi a origem que acabou de ser editada, tenta descobrir sozinho
+    // (CRM na mensagem → OLX/Canal Pro; código de imóvel sem CRM → Patrocinado)
     let setClauseOrigem = '';
     if (campo !== 'origem') {
       const origemInferida = inferirOrigemDeTexto(mensagem);
-      if (origemInferida) { colunas.push('origem'); valores.push(origemInferida); setClauseOrigem = ', origem = COALESCE(leads.origem, EXCLUDED.origem)'; }
+      if (origemInferida) {
+        colunas.push('origem');
+        valores.push(origemInferida);
+        setClauseOrigem = ', origem = COALESCE(leads.origem, EXCLUDED.origem)';
+      }
     }
+
     const placeholders = valores.map((_, i) => `$${i + 1}`).join(', ');
     const setClause = (colunaExtra ? `${colunaExtra} = EXCLUDED.${colunaExtra}` : 'nome = EXCLUDED.nome') + setClauseOrigem;
+
     const insertResult = await pool.query(
-      `INSERT INTO leads (${colunas.join(', ')}) VALUES (${placeholders}) ON CONFLICT (whatsapp) DO UPDATE SET ${setClause} RETURNING id`,
+      `INSERT INTO leads (${colunas.join(', ')})
+       VALUES (${placeholders})
+       ON CONFLICT (whatsapp) DO UPDATE SET ${setClause}
+       RETURNING id`,
       valores
     );
     await pool.query('DELETE FROM leads_nao_identificados WHERE id = $1', [id]);
+
     console.log(`Contato promovido a lead: ${whatsapp} [${campo} = ${valor}]`);
     res.json({ ok: true, promovido: true, id: insertResult.rows[0].id });
-  } catch (err) { console.error('Erro ao editar não identificado:', err); res.status(500).json({ ok: false, erro: err.message }); }
+  } catch (err) {
+    console.error('Erro ao editar não identificado:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
 });
 
+// ─── ROTA: INFERIR ORIGEM DOS LEADS PENDENTES (uso único/pontual) ─
+// Passa por todo lead sem origem definida e tenta descobrir sozinho, olhando o
+// código/nome do imóvel e a mensagem guardada (CRM → OLX/Canal Pro; código tipo
+// VD01 sem CRM → Patrocinado). Não sobrescreve quem já tem origem definida.
 app.post('/api/admin/inferir-origens-pendentes', basicAuth, async (req, res) => {
-  if (!process.env.DATABASE_URL) return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  }
   try {
-    const pendentes = await pool.query(`SELECT id, imovel_codigo, imovel_desc, interesse FROM leads WHERE origem IS NULL`);
+    const pendentes = await pool.query(
+      `SELECT id, imovel_codigo, imovel_desc, interesse FROM leads WHERE origem IS NULL`
+    );
+
     let atualizados = 0;
     for (const lead of pendentes.rows) {
       const codigo = (lead.imovel_codigo || '').trim();
-      let origemInferida = /^\d+$/.test(codigo) ? 'OLX/Canal Pro' : inferirOrigemDeTexto([lead.imovel_codigo, lead.imovel_desc, lead.interesse].filter(Boolean).join(' '));
-      if (origemInferida) { await pool.query('UPDATE leads SET origem = $1 WHERE id = $2', [origemInferida, lead.id]); atualizados++; }
+      let origemInferida;
+      if (/^\d+$/.test(codigo)) {
+        // Código só com números (ex: 111, 1046) — é o CRM do Canal Pro/OLX
+        origemInferida = 'OLX/Canal Pro';
+      } else {
+        const textoBase = [lead.imovel_codigo, lead.imovel_desc, lead.interesse].filter(Boolean).join(' ');
+        origemInferida = inferirOrigemDeTexto(textoBase);
+      }
+      if (origemInferida) {
+        await pool.query('UPDATE leads SET origem = $1 WHERE id = $2', [origemInferida, lead.id]);
+        atualizados++;
+      }
     }
-    console.log(`Inferência de origem em massa: ${atualizados} de ${pendentes.rows.length} atualizados`);
+
+    console.log(`Inferência de origem em massa: ${atualizados} de ${pendentes.rows.length} pendentes atualizados`);
     res.json({ ok: true, atualizados, totalPendentes: pendentes.rows.length });
-  } catch (err) { console.error('Erro ao inferir origens pendentes:', err); res.status(500).json({ ok: false, erro: err.message }); }
+  } catch (err) {
+    console.error('Erro ao inferir origens pendentes:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
 });
 
+// ─── ROTA: MESCLAR DUPLICADOS DE FORMATO ANTIGO DO NÚMERO (uso único) ─
+// Antes da normalização (9º dígito), a mesma pessoa podia ficar salva duas vezes,
+// com o número em formatos ligeiramente diferentes. Agrupa por número já normalizado
+// e mantém só o lead mais antigo de cada grupo, com o número no formato certo.
 app.post('/api/admin/mesclar-duplicados-numero-formato', basicAuth, async (req, res) => {
-  if (!process.env.DATABASE_URL) return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  }
   try {
-    const todos = await pool.query(`SELECT id, whatsapp, distribuido_em, corretor, outros_corretores FROM leads WHERE numero_invalido = false`);
+    const todos = await pool.query(
+      `SELECT id, whatsapp, distribuido_em, corretor, outros_corretores FROM leads WHERE numero_invalido = false`
+    );
+
     const grupos = new Map();
     for (const lead of todos.rows) {
       const chave = canonicalizarWhatsapp(lead.whatsapp) || lead.whatsapp;
       if (!grupos.has(chave)) grupos.set(chave, []);
       grupos.get(chave).push(lead);
     }
+
     let mesclados = 0;
     for (const [chave, leads] of grupos) {
       if (leads.length <= 1) continue;
       leads.sort((a, b) => new Date(a.distribuido_em) - new Date(b.distribuido_em));
       const [sobrevivente, ...restantes] = leads;
-      const corretoresExtras = new Set((sobrevivente.outros_corretores || '').split(',').map(s => s.trim()).filter(Boolean));
+
+      // Junta todos os corretores diferentes dos duplicados apagados, sem repetir
+      const corretoresExtras = new Set(
+        (sobrevivente.outros_corretores || '').split(',').map(s => s.trim()).filter(Boolean)
+      );
       for (const l of restantes) {
         if (l.corretor && l.corretor !== sobrevivente.corretor) corretoresExtras.add(l.corretor);
         await pool.query('DELETE FROM leads WHERE id = $1', [l.id]);
         mesclados++;
       }
       const novosOutrosCorretores = corretoresExtras.size > 0 ? Array.from(corretoresExtras).join(', ') : null;
+
       if (sobrevivente.whatsapp !== chave || novosOutrosCorretores !== sobrevivente.outros_corretores) {
-        await pool.query('UPDATE leads SET whatsapp = $1, outros_corretores = $2 WHERE id = $3', [chave, novosOutrosCorretores, sobrevivente.id]);
+        await pool.query(
+          'UPDATE leads SET whatsapp = $1, outros_corretores = $2 WHERE id = $3',
+          [chave, novosOutrosCorretores, sobrevivente.id]
+        );
       }
     }
-    const obsoletosResult = await pool.query(`DELETE FROM leads inv USING leads bom WHERE inv.numero_invalido = true AND bom.numero_invalido = false AND inv.nome = bom.nome RETURNING inv.id`);
+
+    // Segunda passada: remove leads "sem número válido" (SEMNUM) que ficaram obsoletos
+    // porque a mesma pessoa (mesmo nome) já tem um lead com número de verdade.
+    const obsoletosResult = await pool.query(`
+      DELETE FROM leads inv
+      USING leads bom
+      WHERE inv.numero_invalido = true
+        AND bom.numero_invalido = false
+        AND inv.nome = bom.nome
+      RETURNING inv.id
+    `);
     mesclados += obsoletosResult.rowCount;
-    console.log(`Mesclagem de duplicados: ${mesclados} removidos`);
+
+    console.log(`Mesclagem de duplicados por formato: ${mesclados} removidos`);
     res.json({ ok: true, mesclados });
-  } catch (err) { console.error('Erro ao mesclar duplicados:', err); res.status(500).json({ ok: false, erro: err.message }); }
+  } catch (err) {
+    console.error('Erro ao mesclar duplicados por formato:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
 });
 
+// ─── ROTA: CORRIGIR CORRETOR + DATA DOS 52 LEADS DO CANAL PRO (uso único) ─
+// Dados fixos, já cruzados manualmente com as conversas do WhatsApp — corrige
+// direto no banco, sem depender de nenhum upload de arquivo.
 const DADOS_CORRIGIDOS_CANALPRO = [
-  { whatsapp: '5511997771727', corretor: 'Laís', data: '26/08/2026 19:39' },{ whatsapp: '5562993767420', corretor: 'Laís', data: '25/08/2026 12:40' },
-  { whatsapp: '5541988481366', corretor: 'Laís', data: '24/08/2026 11:55' },{ whatsapp: '5562992699641', corretor: 'Junior', data: '23/08/2026 21:45' },
-  { whatsapp: '5562994442693', corretor: 'Nalcio', data: '22/08/2026 19:22' },{ whatsapp: '5562992671240', corretor: 'Laís', data: '21/08/2026 12:55' },
-  { whatsapp: '5562994084045', corretor: 'Nalcio', data: '20/08/2026 10:45' },{ whatsapp: '5562994546023', corretor: 'Laís', data: '19/08/2026 14:32' },
-  { whatsapp: '5562991071195', corretor: 'Renata', data: '19/08/2026 12:37' },{ whatsapp: '5516988505505', corretor: 'Laís', data: '17/08/2026 23:17' },
-  { whatsapp: '5562996448898', corretor: 'Renata', data: '17/08/2026 08:48' },{ whatsapp: '5562991814817', corretor: 'Junior', data: '14/08/2026 07:35' },
-  { whatsapp: '5562992295892', corretor: 'Nalcio', data: '14/08/2026 04:09' },{ whatsapp: '5562982679938', corretor: 'Laís', data: '12/08/2026 22:25' },
-  { whatsapp: '5562981224201', corretor: 'Junior', data: '10/08/2026 10:07' },{ whatsapp: '5562992795220', corretor: 'Renata', data: '09/08/2026 16:17' },
-  { whatsapp: '5562992402227', corretor: 'Nalcio', data: '08/08/2026 19:24' },{ whatsapp: '5535383361855', corretor: 'Laís', data: '08/08/2026 17:41' },
-  { whatsapp: '5562984111295', corretor: 'Nalcio', data: '08/08/2026 08:52' },{ whatsapp: '5561984172632', corretor: 'Laís', data: '05/08/2026 16:02' },
-  { whatsapp: '5511945655849', corretor: 'Nalcio', data: '05/08/2026 10:43' },{ whatsapp: '5562996973237', corretor: 'Laís', data: '04/08/2026 16:02' },
-  { whatsapp: '5562994069875', corretor: 'Nalcio', data: '04/08/2026 06:28' },{ whatsapp: '5562992638241', corretor: 'Nalcio', data: '02/08/2026 21:48' },
-  { whatsapp: '5564996432984', corretor: 'Nalcio', data: '02/08/2026 16:53' },{ whatsapp: '5562991481170', corretor: 'Laís', data: '31/07/2026 19:01' },
-  { whatsapp: '5562994891474', corretor: 'Nalcio', data: '29/07/2026 12:01' },{ whatsapp: '5562982249292', corretor: 'Laís', data: '27/07/2026 15:40' },
-  { whatsapp: '5562991681084', corretor: 'Renata', data: '27/07/2026 13:57' },{ whatsapp: '5562991876319', corretor: 'Nalcio', data: '25/07/2026 08:10' },
-  { whatsapp: '5563999167720', corretor: 'Nalcio', data: '23/07/2026 08:01' },{ whatsapp: '5562995393451', corretor: 'Renata', data: '21/07/2026 11:54' },
-  { whatsapp: '5562992296303', corretor: 'Nalcio', data: '20/07/2026 09:22' },{ whatsapp: '5562981007075', corretor: 'Nalcio', data: '16/07/2026 19:35' },
-  { whatsapp: '5562991754544', corretor: 'Laís', data: '16/07/2026 19:14' },{ whatsapp: '5562985993485', corretor: 'Renata', data: '15/07/2026 13:34' },
-  { whatsapp: '5511951268877', corretor: 'Nalcio', data: '14/07/2026 12:09' },{ whatsapp: '5562993908306', corretor: 'Laís', data: '12/07/2026 06:57' },
-  { whatsapp: '5562992118453', corretor: 'Nalcio', data: '12/07/2026 00:14' },{ whatsapp: '5562991075395', corretor: 'Laís', data: '11/07/2026 12:38' },
-  { whatsapp: '5562991724840', corretor: 'Nalcio', data: '10/07/2026 18:30' },{ whatsapp: '5562993456060', corretor: 'Nalcio', data: '09/07/2026 14:20' },
-  { whatsapp: '5562992474585', corretor: 'Nalcio', data: '09/07/2026 00:03' },{ whatsapp: '5562994933970', corretor: 'Laís', data: '07/07/2026 18:09' },
-  { whatsapp: '5562993580158', corretor: 'Laís', data: '02/07/2026 09:46' },{ whatsapp: '5562998368040', corretor: 'Nalcio', data: '01/07/2026 12:44' },
-  { whatsapp: '5562994057532', corretor: 'Laís', data: '01/07/2026 04:55' },{ whatsapp: '5562995675744', corretor: 'Nalcio', data: '30/06/2026 10:00' },
-  { whatsapp: '5562981502498', corretor: 'Laís', data: '30/06/2026 02:12' },{ whatsapp: '5562994679355', corretor: 'Nalcio', data: '29/06/2026 11:41' },
-  { whatsapp: '5511982795830', corretor: 'Laís', data: '28/06/2026 21:32' },{ whatsapp: '5562996986440', corretor: 'Laís', data: '23/06/2026 19:44' },
+  { whatsapp: '5511997771727', corretor: 'Laís', data: '26/08/2026 19:39' },
+  { whatsapp: '5562993767420', corretor: 'Laís', data: '25/08/2026 12:40' },
+  { whatsapp: '5541988481366', corretor: 'Laís', data: '24/08/2026 11:55' },
+  { whatsapp: '5562992699641', corretor: 'Junior', data: '23/08/2026 21:45' },
+  { whatsapp: '5562994442693', corretor: 'Nalcio', data: '22/08/2026 19:22' },
+  { whatsapp: '5562992671240', corretor: 'Laís', data: '21/08/2026 12:55' },
+  { whatsapp: '5562994084045', corretor: 'Nalcio', data: '20/08/2026 10:45' },
+  { whatsapp: '5562994546023', corretor: 'Laís', data: '19/08/2026 14:32' },
+  { whatsapp: '5562991071195', corretor: 'Renata', data: '19/08/2026 12:37' },
+  { whatsapp: '5516988505505', corretor: 'Laís', data: '17/08/2026 23:17' },
+  { whatsapp: '5562996448898', corretor: 'Renata', data: '17/08/2026 08:48' },
+  { whatsapp: '5562991814817', corretor: 'Junior', data: '14/08/2026 07:35' },
+  { whatsapp: '5562992295892', corretor: 'Nalcio', data: '14/08/2026 04:09' },
+  { whatsapp: '5562982679938', corretor: 'Laís', data: '12/08/2026 22:25' },
+  { whatsapp: '5562981224201', corretor: 'Junior', data: '10/08/2026 10:07' },
+  { whatsapp: '5562992795220', corretor: 'Renata', data: '09/08/2026 16:17' },
+  { whatsapp: '5562992402227', corretor: 'Nalcio', data: '08/08/2026 19:24' },
+  { whatsapp: '5535383361855', corretor: 'Laís', data: '08/08/2026 17:41' },
+  { whatsapp: '5562984111295', corretor: 'Nalcio', data: '08/08/2026 08:52' },
+  { whatsapp: '5561984172632', corretor: 'Laís', data: '05/08/2026 16:02' },
+  { whatsapp: '5511945655849', corretor: 'Nalcio', data: '05/08/2026 10:43' },
+  { whatsapp: '5562996973237', corretor: 'Laís', data: '04/08/2026 16:02' },
+  { whatsapp: '5562994069875', corretor: 'Nalcio', data: '04/08/2026 06:28' },
+  { whatsapp: '5562992638241', corretor: 'Nalcio', data: '02/08/2026 21:48' },
+  { whatsapp: '5564996432984', corretor: 'Nalcio', data: '02/08/2026 16:53' },
+  { whatsapp: '5562991481170', corretor: 'Laís', data: '31/07/2026 19:01' },
+  { whatsapp: '5562994891474', corretor: 'Nalcio', data: '29/07/2026 12:01' },
+  { whatsapp: '5562982249292', corretor: 'Laís', data: '27/07/2026 15:40' },
+  { whatsapp: '5562991681084', corretor: 'Renata', data: '27/07/2026 13:57' },
+  { whatsapp: '5562991876319', corretor: 'Nalcio', data: '25/07/2026 08:10' },
+  { whatsapp: '5563999167720', corretor: 'Nalcio', data: '23/07/2026 08:01' },
+  { whatsapp: '5562995393451', corretor: 'Renata', data: '21/07/2026 11:54' },
+  { whatsapp: '5562992296303', corretor: 'Nalcio', data: '20/07/2026 09:22' },
+  { whatsapp: '5562981007075', corretor: 'Nalcio', data: '16/07/2026 19:35' },
+  { whatsapp: '5562991754544', corretor: 'Laís', data: '16/07/2026 19:14' },
+  { whatsapp: '5562985993485', corretor: 'Renata', data: '15/07/2026 13:34' },
+  { whatsapp: '5511951268877', corretor: 'Nalcio', data: '14/07/2026 12:09' },
+  { whatsapp: '5562993908306', corretor: 'Laís', data: '12/07/2026 06:57' },
+  { whatsapp: '5562992118453', corretor: 'Nalcio', data: '12/07/2026 00:14' },
+  { whatsapp: '5562991075395', corretor: 'Laís', data: '11/07/2026 12:38' },
+  { whatsapp: '5562991724840', corretor: 'Nalcio', data: '10/07/2026 18:30' },
+  { whatsapp: '5562993456060', corretor: 'Nalcio', data: '09/07/2026 14:20' },
+  { whatsapp: '5562992474585', corretor: 'Nalcio', data: '09/07/2026 00:03' },
+  { whatsapp: '5562994933970', corretor: 'Laís', data: '07/07/2026 18:09' },
+  { whatsapp: '5562993580158', corretor: 'Laís', data: '02/07/2026 09:46' },
+  { whatsapp: '5562998368040', corretor: 'Nalcio', data: '01/07/2026 12:44' },
+  { whatsapp: '5562994057532', corretor: 'Laís', data: '01/07/2026 04:55' },
+  { whatsapp: '5562995675744', corretor: 'Nalcio', data: '30/06/2026 10:00' },
+  { whatsapp: '5562981502498', corretor: 'Laís', data: '30/06/2026 02:12' },
+  { whatsapp: '5562994679355', corretor: 'Nalcio', data: '29/06/2026 11:41' },
+  { whatsapp: '5511982795830', corretor: 'Laís', data: '28/06/2026 21:32' },
+  { whatsapp: '5562996986440', corretor: 'Laís', data: '23/06/2026 19:44' },
 ];
 
 app.post('/api/admin/corrigir-canalpro-fixo', basicAuth, async (req, res) => {
-  if (!process.env.DATABASE_URL) return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  }
   try {
-    let corrigidos = 0, naoEncontrados = 0;
+    let corrigidos = 0;
+    let naoEncontrados = 0;
+
     for (const item of DADOS_CORRIGIDOS_CANALPRO) {
-      const result = await pool.query(`UPDATE leads SET corretor = $1, distribuido_em = $2 WHERE whatsapp = $3 RETURNING id`, [item.corretor, parseDataChegada(item.data), item.whatsapp]);
-      if (result.rowCount > 0) corrigidos++; else naoEncontrados++;
+      const dataParseada = parseDataChegada(item.data);
+      const result = await pool.query(
+        `UPDATE leads SET corretor = $1, distribuido_em = $2 WHERE whatsapp = $3 RETURNING id`,
+        [item.corretor, dataParseada, item.whatsapp]
+      );
+      if (result.rowCount > 0) corrigidos++;
+      else naoEncontrados++;
     }
+
     console.log(`Correção fixa Canal Pro: ${corrigidos} corrigidos, ${naoEncontrados} não encontrados`);
     res.json({ ok: true, corrigidos, naoEncontrados, total: DADOS_CORRIGIDOS_CANALPRO.length });
-  } catch (err) { console.error('Erro ao corrigir Canal Pro:', err); res.status(500).json({ ok: false, erro: err.message }); }
+  } catch (err) {
+    console.error('Erro ao corrigir Canal Pro:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
 });
 
+// ─── ROTA: LIMPAR DUPLICADOS SEM NÚMERO VÁLIDO (uso único) ───
+// Remove duplicatas geradas pelo bug do identificador aleatório (antes da correção):
+// mantém só o lead mais antigo de cada grupo com mesmo nome entre os "sem número válido".
 app.post('/api/admin/limpar-duplicados-sem-numero', basicAuth, async (req, res) => {
-  if (!process.env.DATABASE_URL) return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  }
   try {
-    const result = await pool.query(`DELETE FROM leads a USING leads b WHERE a.numero_invalido = true AND b.numero_invalido = true AND a.nome = b.nome AND COALESCE(a.email, '') = COALESCE(b.email, '') AND a.id > b.id RETURNING a.id`);
+    const result = await pool.query(`
+      DELETE FROM leads a
+      USING leads b
+      WHERE a.numero_invalido = true
+        AND b.numero_invalido = true
+        AND a.nome = b.nome
+        AND COALESCE(a.email, '') = COALESCE(b.email, '')
+        AND a.id > b.id
+      RETURNING a.id
+    `);
     console.log(`Limpeza de duplicados sem número: ${result.rowCount} removidos`);
     res.json({ ok: true, removidos: result.rowCount });
-  } catch (err) { console.error('Erro ao limpar duplicados:', err); res.status(500).json({ ok: false, erro: err.message }); }
+  } catch (err) {
+    console.error('Erro ao limpar duplicados:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
 });
 
+// ─── ROTA: CORRIGIR NÚMERO DE WHATSAPP INVÁLIDO ──────────────
+// Única forma de editar o WhatsApp de um lead — só serve pra leads marcados
+// como numero_invalido (que nunca tiveram um número real salvo).
 app.patch('/api/leads/:id/corrigir-whatsapp', basicAuth, async (req, res) => {
-  if (!process.env.DATABASE_URL) return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  }
   const { id } = req.params;
   const { whatsapp } = req.body;
+
   const whatsappValido = canonicalizarWhatsapp(whatsapp);
-  if (!whatsappValido) return res.status(400).json({ ok: false, erro: 'Esse número não parece válido. Confere o DDD e os dígitos.' });
+  if (!whatsappValido) {
+    return res.status(400).json({ ok: false, erro: 'Esse número não parece válido. Confere o DDD e os dígitos.' });
+  }
+
   try {
     const leadResult = await pool.query('SELECT numero_invalido FROM leads WHERE id = $1', [id]);
-    if (leadResult.rows.length === 0) return res.status(404).json({ ok: false, erro: 'Lead não encontrado' });
-    if (!leadResult.rows[0].numero_invalido) return res.status(400).json({ ok: false, erro: 'Esse lead já tem um WhatsApp válido — não dá pra editar por aqui.' });
-    await pool.query(`UPDATE leads SET whatsapp = $1, numero_invalido = false, whatsapp_bruto = NULL WHERE id = $2`, [whatsappValido, id]);
+    if (leadResult.rows.length === 0) {
+      return res.status(404).json({ ok: false, erro: 'Lead não encontrado' });
+    }
+    if (!leadResult.rows[0].numero_invalido) {
+      return res.status(400).json({ ok: false, erro: 'Esse lead já tem um WhatsApp válido — não dá pra editar por aqui.' });
+    }
+
+    await pool.query(
+      `UPDATE leads SET whatsapp = $1, numero_invalido = false, whatsapp_bruto = NULL WHERE id = $2`,
+      [whatsappValido, id]
+    );
     res.json({ ok: true });
   } catch (err) {
-    if (err.code === '23505') return res.status(409).json({ ok: false, erro: 'Já existe outro lead com esse WhatsApp — pode ser a mesma pessoa duplicada.' });
+    if (err.code === '23505') {
+      return res.status(409).json({ ok: false, erro: 'Já existe outro lead com esse WhatsApp — pode ser a mesma pessoa duplicada.' });
+    }
     console.error('Erro ao corrigir WhatsApp:', err);
     res.status(500).json({ ok: false, erro: err.message });
   }
 });
 
+// ─── ROTA: EDITAR CAMPOS MANUAIS DO FUNIL ────────────────────
+// Body esperado: { campo: 'origem', valor: 'TikTok' }
+// campo precisa estar em CAMPOS_EDITAVEIS.
 app.patch('/api/leads/:id', basicAuthAdminOuSdr, async (req, res) => {
-  if (!process.env.DATABASE_URL) return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  }
   const { id } = req.params;
   const { campo, valor } = req.body;
-  if (!CAMPOS_EDITAVEIS.includes(campo)) return res.status(400).json({ ok: false, erro: `Campo '${campo}' não é editável` });
-  if (req.authTipo === 'sdr' && !CAMPOS_EDITAVEIS_SDR.includes(campo)) return res.status(403).json({ ok: false, erro: `Login da SDR não pode editar o campo '${campo}'` });
+
+  if (!CAMPOS_EDITAVEIS.includes(campo)) {
+    return res.status(400).json({ ok: false, erro: `Campo '${campo}' não é editável` });
+  }
+  if (req.authTipo === 'sdr' && !CAMPOS_EDITAVEIS_SDR.includes(campo)) {
+    return res.status(403).json({ ok: false, erro: `Login da SDR não pode editar o campo '${campo}'` });
+  }
+
   try {
+    // Quando a SDR marca o lead como "Reaquecendo", registra o momento —
+    // ajuda a saber há quanto tempo está nessa fila de reaquecimento.
     if (campo === 'status' && valor === 'Reaquecendo') {
-      await pool.query(`UPDATE leads SET status = $1, reaquecido_em = now() WHERE id = $2`, [valor, id]);
+      await pool.query(
+        `UPDATE leads SET status = $1, reaquecido_em = now() WHERE id = $2`,
+        [valor, id]
+      );
     } else {
-      await pool.query(`UPDATE leads SET ${campo} = $1 WHERE id = $2`, [valor, id]);
+      await pool.query(
+        `UPDATE leads SET ${campo} = $1 WHERE id = $2`,
+        [valor, id]
+      );
     }
     res.json({ ok: true });
-  } catch (err) { console.error('Erro ao editar lead:', err); res.status(500).json({ ok: false, erro: err.message }); }
+  } catch (err) {
+    console.error('Erro ao editar lead:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
 });
 
-app.get('/dashboard', basicAuth, (req, res) => { res.send(DASHBOARD_HTML); });
-app.get('/crm', basicAuthAdminOuSdr, (req, res) => { res.send(CRM_HTML); });
+// ─── ROTA: DASHBOARD ──────────────────────────────────────────
+app.get('/dashboard', basicAuth, (req, res) => {
+  res.send(DASHBOARD_HTML);
+});
 
-// ─── ROTAS: BACKUPS ──────────────────────────────────────────
+// ─── ROTAS: BACKUPS AUTOMÁTICOS ──────────────────────────────
+// Passo 1: inicia a autorização do Google Drive (conta pessoal) — visita
+// essa rota no navegador, loga com sua conta Google, autoriza, e pronto.
+// Só precisa fazer isso uma vez (o token fica salvo no Postgres).
 app.get('/api/admin/drive-auth', basicAuth, (req, res) => {
   const oauthClient = getOAuthClient();
-  if (!oauthClient) return res.status(503).send('GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET não configuradas.');
-  const url = oauthClient.generateAuthUrl({ access_type: 'offline', prompt: 'consent', scope: ['https://www.googleapis.com/auth/drive.file'] });
+  if (!oauthClient) {
+    return res.status(503).send('GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET não configuradas no Railway.');
+  }
+  const url = oauthClient.generateAuthUrl({
+    access_type: 'offline',
+    prompt: 'consent', // força gerar um refresh_token novo toda vez
+    scope: ['https://www.googleapis.com/auth/drive.file'],
+  });
   res.redirect(url);
 });
 
+// Passo 2: o Google chama essa rota sozinho depois que você autoriza —
+// troca o código por um token permanente e salva no Postgres.
 app.get(GOOGLE_OAUTH_REDIRECT_PATH, basicAuth, async (req, res) => {
   const oauthClient = getOAuthClient();
-  if (!oauthClient) return res.status(503).send('GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET não configuradas.');
+  if (!oauthClient) {
+    return res.status(503).send('GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET não configuradas no Railway.');
+  }
   const { code, error } = req.query;
-  if (error) return res.status(400).send(`Autorização recusada: ${error}`);
-  if (!code) return res.status(400).send('Código de autorização não recebido.');
+  if (error) {
+    return res.status(400).send(`Autorização recusada pelo Google: ${error}`);
+  }
+  if (!code) {
+    return res.status(400).send('Código de autorização não recebido.');
+  }
   try {
     const { tokens } = await oauthClient.getToken(code);
-    if (!tokens.refresh_token) return res.status(400).send('Token permanente não recebido. Remova o acesso em myaccount.google.com/permissions e tente de novo.');
+    if (!tokens.refresh_token) {
+      return res.status(400).send(
+        'O Google não devolveu um token permanente. Isso acontece se você já tinha autorizado antes — ' +
+        'vá em https://myaccount.google.com/permissions, remova o acesso do app, e tente de novo pelo /api/admin/drive-auth.'
+      );
+    }
     await salvarConfig('google_drive_refresh_token', tokens.refresh_token);
-    res.send('✅ Google Drive autorizado com sucesso!');
-  } catch (err) { console.error('Erro ao trocar código por token:', err); res.status(500).send(`Erro ao autorizar: ${err.message}`); }
+    res.send('✅ Google Drive autorizado com sucesso! Pode fechar essa aba. O backup diário já vai subir pro seu Drive a partir de agora.');
+  } catch (err) {
+    console.error('Erro ao trocar código por token:', err);
+    res.status(500).send(`Erro ao autorizar: ${err.message}`);
+  }
 });
 
+// Lista os backups diários guardados (mais recente primeiro)
 app.get('/api/admin/backups', basicAuth, async (req, res) => {
-  if (!process.env.DATABASE_URL) return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  }
   try {
-    const result = await pool.query(`SELECT id, criado_em, total_leads FROM backups_leads ORDER BY criado_em DESC`);
+    const result = await pool.query(
+      `SELECT id, criado_em, total_leads FROM backups_leads ORDER BY criado_em DESC`
+    );
     res.json({ ok: true, backups: result.rows });
-  } catch (err) { res.status(500).json({ ok: false, erro: err.message }); }
+  } catch (err) {
+    console.error('Erro ao listar backups:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
 });
 
+// Baixa um backup específico como arquivo JSON
 app.get('/api/admin/backups/:id/download', basicAuth, async (req, res) => {
-  if (!process.env.DATABASE_URL) return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  }
   try {
     const result = await pool.query('SELECT * FROM backups_leads WHERE id = $1', [req.params.id]);
-    if (result.rows.length === 0) return res.status(404).json({ ok: false, erro: 'Backup não encontrado' });
+    if (result.rows.length === 0) {
+      return res.status(404).json({ ok: false, erro: 'Backup não encontrado' });
+    }
     const backup = result.rows[0];
     const dataFormatada = new Date(backup.criado_em).toISOString().slice(0, 10);
     res.setHeader('Content-Disposition', `attachment; filename="backup-leads-${dataFormatada}.json"`);
     res.setHeader('Content-Type', 'application/json');
     res.send(JSON.stringify(backup.dados, null, 2));
-  } catch (err) { res.status(500).json({ ok: false, erro: err.message }); }
+  } catch (err) {
+    console.error('Erro ao baixar backup:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
 });
 
+// Dispara um backup manualmente, sem esperar o horário automático
+// (aceita GET também, pra poder testar só colando o link no navegador)
 app.all('/api/admin/backups/agora', basicAuth, async (req, res) => {
-  if (!process.env.DATABASE_URL) return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
-  try { const resultado = await fazerBackupDiario(); res.json(resultado); }
-  catch (err) { res.status(500).json({ ok: false, erro: err.message }); }
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  }
+  try {
+    const resultado = await fazerBackupDiario();
+    res.json(resultado);
+  } catch (err) {
+    res.status(500).json({ ok: false, erro: err.message });
+  }
 });
 
-app.get('/', (req, res) => { res.send('✅ Diniz Leads OLX rodando!'); });
+// ─── ROTA: CRM DA SDR ─────────────────────────────────────────
+// Painel enxuto pra SDR organizar a carteira de leads: usa a mesma API
+// (/api/leads e /api/leads/:id) do dashboard principal, só que com uma
+// visão focada em reaquecimento e histórico de corretores.
+app.get('/crm', basicAuthAdminOuSdr, (req, res) => {
+  res.send(CRM_HTML);
+});
+
+// ─── ROTA DE TESTE ───────────────────────────────────────────
+app.get('/', (req, res) => {
+  res.send('✅ Diniz Leads OLX rodando!');
+});
 
 // ─── INICIA SERVIDOR ─────────────────────────────────────────
 const PORT = process.env.PORT || 3001;
@@ -1100,16 +1881,25 @@ app.listen(PORT, async () => {
   console.log(`Servidor rodando na porta ${PORT}`);
   await initDb();
 
+  // Backup automático diário — roda uma vez ao iniciar e depois a cada 24h.
+  // Como o servidor pode reiniciar a qualquer hora (deploy), isso não é num
+  // horário fixo do relógio, mas garante que nunca passa mais de ~24h sem backup.
   if (process.env.DATABASE_URL) {
     fazerBackupDiario().catch(err => console.error('Erro no backup inicial:', err));
-    setInterval(() => { fazerBackupDiario().catch(err => console.error('Erro no backup automático:', err)); }, 24 * 60 * 60 * 1000);
+    setInterval(() => {
+      fazerBackupDiario().catch(err => console.error('Erro no backup automático:', err));
+    }, 24 * 60 * 60 * 1000);
   }
 
+  // Sincronização automática com a planilha do Google, a cada 10 minutos
+  // (só ativa se GOOGLE_SHEET_ID e GOOGLE_SERVICE_ACCOUNT_KEY estiverem configuradas)
   if (process.env.GOOGLE_SHEET_ID && process.env.GOOGLE_SERVICE_ACCOUNT_KEY) {
     const INTERVALO_SYNC_MS = 10 * 60 * 1000;
     console.log('✅ Sincronização automática com Google Sheets ativada (a cada 10 min)');
     sincronizarPlanilhaGoogle().catch(err => console.error('Erro na sincronização inicial:', err));
-    setInterval(() => { sincronizarPlanilhaGoogle().catch(err => console.error('Erro na sincronização automática:', err)); }, INTERVALO_SYNC_MS);
+    setInterval(() => {
+      sincronizarPlanilhaGoogle().catch(err => console.error('Erro na sincronização automática:', err));
+    }, INTERVALO_SYNC_MS);
   } else {
     console.warn('⚠️  Sincronização com Google Sheets desativada — configure GOOGLE_SHEET_ID e GOOGLE_SERVICE_ACCOUNT_KEY pra ativar.');
   }
