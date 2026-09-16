@@ -315,16 +315,20 @@ let BUSCA = '';
 let LEAD_ARRASTADO = null;
 let ULTIMO_ADICIONADO_ID = null;
 
-const COLUNAS = ['Novo', 'Reaquecendo', 'Contato feito', 'Aguardando retorno', 'Repassado ao corretor', 'Fechado', 'Sem interesse'];
+const COLUNAS = ['Novo', 'Reaquecendo', 'Contato feito', 'Aguardando retorno', 'Visita agendada', 'Repassado ao corretor', 'Compra futura', 'Já comprou', 'Sem retorno', 'Fechado', 'Sem interesse'];
 
-// Paleta viva, uma cor por coluna — usada no fundo da coluna, cabeçalho e
-// na barrinha lateral de cada cartão daquela coluna.
+// Paleta viva, uma cor por coluna — usada no cabeçalho e na barrinha
+// lateral de cada cartão daquela coluna.
 const CORES_COLUNA = {
   'Novo':                   { header: '#3b6cf0', accent: '#3b6cf0', texto: '#ffffff' },
   'Reaquecendo':            { header: '#f2941c', accent: '#f2941c', texto: '#ffffff' },
   'Contato feito':          { header: '#12b76a', accent: '#12b76a', texto: '#ffffff' },
   'Aguardando retorno':     { header: '#9b4de0', accent: '#9b4de0', texto: '#ffffff' },
+  'Visita agendada':        { header: '#0aa5c2', accent: '#0aa5c2', texto: '#ffffff' },
   'Repassado ao corretor':  { header: '#e8479e', accent: '#e8479e', texto: '#ffffff' },
+  'Compra futura':          { header: '#5b6bf5', accent: '#5b6bf5', texto: '#ffffff' },
+  'Já comprou':             { header: '#c9a20a', accent: '#c9a20a', texto: '#ffffff' },
+  'Sem retorno':            { header: '#6b7280', accent: '#6b7280', texto: '#ffffff' },
   'Fechado':                { header: '#17a34a', accent: '#17a34a', texto: '#ffffff' },
   'Sem interesse':          { header: '#e0453f', accent: '#e0453f', texto: '#ffffff' },
 };
@@ -447,18 +451,28 @@ function render() {
   }
 }
 
+function formatarData(dataStr) {
+  if (!dataStr) return null;
+  const d = new Date(dataStr);
+  if (isNaN(d)) return null;
+  return d.toLocaleDateString('pt-BR');
+}
+
 function cardHtml(lead, corBorda) {
   const duplicado = temHistoricoDuplicado(lead);
   const envolvidos = corretoresEnvolvidos(lead);
   const chipsRepassados = corretoresRepassadosLista(lead);
+  const dataEtapa = formatarData(lead.status_alterado_em || lead.distribuido_em);
   return \`
     <div class="lead \${duplicado ? 'reaquecer' : ''}" draggable="true" data-id="\${lead.id}" style="\${duplicado ? '' : \`border-left-color:\${corBorda}\`}">
       <div class="lead-nome">\${lead.nome || 'Sem nome'}</div>
       <div class="lead-meta">\${lead.whatsapp || 'sem WhatsApp'}</div>
+      \${dataEtapa ? \`<div class="lead-meta">Nessa etapa desde \${dataEtapa}</div>\` : ''}
       \${lead.origem ? \`<span class="badge origem">\${lead.origem}</span>\` : ''}
       \${duplicado ? \`<span class="badge warn">⚠️ \${envolvidos.length}: \${envolvidos.join(', ')}</span>\` : ''}
       \${chipsRepassados.length > 0 ? \`<div>\${chipsRepassados.map(nome => \`<span class="chip-corretor" style="border-color:\${corDoCorretor(nome)};color:\${corDoCorretor(nome)};background:\${corDoCorretor(nome)}1a">\${nome}</span>\`).join('')}</div>\` : ''}
       \${lead.tarefa_sdr ? \`<div class="tarefa-preview">📌 \${lead.tarefa_sdr}</div>\` : ''}
+      \${lead.ultima_atualizacao_sdr ? \`<div class="tarefa-preview" style="color:var(--muted);font-weight:600;">🗓️ Atualizado até \${formatarData(lead.ultima_atualizacao_sdr)}</div>\` : ''}
       \${lead.notas_sdr ? \`<div class="lead-notas">\${lead.notas_sdr}</div>\` : ''}
     </div>
   \`;
@@ -482,6 +496,7 @@ function abrirModalLead(id) {
     <select id="modal-status">
       \${COLUNAS.map(c => \`<option value="\${c}" \${statusDoLead(lead) === c ? 'selected' : ''}>\${c}</option>\`).join('')}
     </select>
+    \${lead.status_alterado_em ? \`<div class="lead-meta" style="margin-top:4px;">Nessa etapa desde \${formatarData(lead.status_alterado_em)}</div>\` : ''}
 
     \${statusDoLead(lead) === 'Repassado ao corretor' ? \`
       <label>Corretor(es)</label>
@@ -490,6 +505,9 @@ function abrirModalLead(id) {
 
     <label>Tarefa</label>
     <input type="text" id="modal-tarefa" placeholder="Próximo passo, ex: ligar amanhã 14h" value="\${lead.tarefa_sdr || ''}">
+
+    <label>Atualizado até (data)</label>
+    <input type="date" id="modal-ultima-atualizacao" value="\${lead.ultima_atualizacao_sdr ? String(lead.ultima_atualizacao_sdr).slice(0, 10) : ''}">
 
     <label>Notas</label>
     <textarea id="modal-notas" placeholder="O que já foi conversado, quando retomar...">\${lead.notas_sdr || ''}</textarea>
@@ -518,6 +536,9 @@ function abrirModalLead(id) {
   });
   document.getElementById('modal-tarefa').addEventListener('blur', e => {
     salvarCampo(id, 'tarefa_sdr', e.target.value, () => { render(); flashModal(); });
+  });
+  document.getElementById('modal-ultima-atualizacao').addEventListener('change', e => {
+    salvarCampo(id, 'ultima_atualizacao_sdr', e.target.value, () => { render(); flashModal(); });
   });
 
   const chipsContainer = document.getElementById('modal-chips-corretores');
