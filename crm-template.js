@@ -320,13 +320,13 @@ const COLUNAS = ['Novo', 'Reaquecendo', 'Contato feito', 'Aguardando retorno', '
 // Paleta viva, uma cor por coluna — usada no fundo da coluna, cabeçalho e
 // na barrinha lateral de cada cartão daquela coluna.
 const CORES_COLUNA = {
-  'Novo':                   { bg: '#eaf1ff', header: '#dbe8ff', accent: '#3b6cf0', texto: '#1d3a8f' },
-  'Reaquecendo':            { bg: '#fff1de', header: '#ffe3bd', accent: '#f2941c', texto: '#8a5406' },
-  'Contato feito':          { bg: '#e6faf1', header: '#c9f4de', accent: '#12b76a', texto: '#0a6b3d' },
-  'Aguardando retorno':     { bg: '#f4ecff', header: '#e6d5ff', accent: '#9b4de0', texto: '#5c2894' },
-  'Repassado ao corretor':  { bg: '#ffeaf5', header: '#ffd3ea', accent: '#e8479e', texto: '#93195e' },
-  'Fechado':                { bg: '#eafcea', header: '#d1f7d1', accent: '#2fa42f', texto: '#1c661c' },
-  'Sem interesse':          { bg: '#fdecec', header: '#fad2d2', accent: '#e0453f', texto: '#8f2723' },
+  'Novo':                   { header: '#3b6cf0', accent: '#3b6cf0', texto: '#ffffff' },
+  'Reaquecendo':            { header: '#f2941c', accent: '#f2941c', texto: '#ffffff' },
+  'Contato feito':          { header: '#12b76a', accent: '#12b76a', texto: '#ffffff' },
+  'Aguardando retorno':     { header: '#9b4de0', accent: '#9b4de0', texto: '#ffffff' },
+  'Repassado ao corretor':  { header: '#e8479e', accent: '#e8479e', texto: '#ffffff' },
+  'Fechado':                { header: '#17a34a', accent: '#17a34a', texto: '#ffffff' },
+  'Sem interesse':          { header: '#e0453f', accent: '#e0453f', texto: '#ffffff' },
 };
 
 function statusDoLead(lead) {
