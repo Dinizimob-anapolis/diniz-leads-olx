@@ -549,7 +549,7 @@ function limparMensagem(msg) {
 // Mantém só os últimos 30 backups; os mais antigos são apagados sozinhos.
 // Também sobe uma cópia pro Google Drive, se estiver configurado.
 async function fazerBackupDiario() {
-  if (!process.env.DATABASE_URL) return;
+  if (!process.env.DATABASE_URL) return { ok: false, erro: 'DATABASE_URL não configurada' };
   try {
     const leadsResult = await pool.query('SELECT * FROM leads ORDER BY id');
     await pool.query(
@@ -563,9 +563,11 @@ async function fazerBackupDiario() {
     console.log(`✅ Backup diário salvo: ${leadsResult.rows.length} leads`);
 
     const nomeArquivo = `backup-leads-${new Date().toISOString().slice(0, 10)}.json`;
-    await salvarBackupNoDrive(leadsResult.rows, nomeArquivo);
+    const resultadoDrive = await salvarBackupNoDrive(leadsResult.rows, nomeArquivo);
+    return { ok: true, totalLeads: leadsResult.rows.length, drive: resultadoDrive };
   } catch (err) {
     console.error('Erro ao fazer backup diário:', err);
+    return { ok: false, erro: err.message };
   }
 }
 
@@ -576,13 +578,15 @@ async function fazerBackupDiario() {
 // pessoais por padrão.
 async function salvarBackupNoDrive(dados, nomeArquivo) {
   if (!process.env.GOOGLE_DRIVE_BACKUP_FOLDER_ID) {
-    console.warn('⚠️  GOOGLE_DRIVE_BACKUP_FOLDER_ID não configurada — backup no Drive desativado (só fica salvo no Postgres).');
-    return;
+    const msg = 'GOOGLE_DRIVE_BACKUP_FOLDER_ID não configurada';
+    console.warn(`⚠️  ${msg} — backup no Drive desativado (só fica salvo no Postgres).`);
+    return { ok: false, erro: msg };
   }
   const drive = await getDriveClient();
   if (!drive) {
-    console.warn('⚠️  GOOGLE_SERVICE_ACCOUNT_KEY não configurada — backup no Drive desativado.');
-    return;
+    const msg = 'GOOGLE_SERVICE_ACCOUNT_KEY não configurada';
+    console.warn(`⚠️  ${msg} — backup no Drive desativado.`);
+    return { ok: false, erro: msg };
   }
   try {
     await drive.files.create({
@@ -596,8 +600,11 @@ async function salvarBackupNoDrive(dados, nomeArquivo) {
       },
     });
     console.log(`✅ Backup também salvo no Google Drive: ${nomeArquivo}`);
+    return { ok: true };
   } catch (err) {
-    console.error('Erro ao salvar backup no Google Drive:', err.message);
+    const detalhe = err?.errors?.[0]?.message || err.message;
+    console.error('Erro ao salvar backup no Google Drive:', detalhe);
+    return { ok: false, erro: detalhe };
   }
 }
 
@@ -1619,8 +1626,8 @@ app.all('/api/admin/backups/agora', basicAuth, async (req, res) => {
     return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
   }
   try {
-    await fazerBackupDiario();
-    res.json({ ok: true });
+    const resultado = await fazerBackupDiario();
+    res.json(resultado);
   } catch (err) {
     res.status(500).json({ ok: false, erro: err.message });
   }
