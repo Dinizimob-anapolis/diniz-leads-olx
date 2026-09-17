@@ -5,6 +5,7 @@ const { Pool } = require('pg');
 const { google } = require('googleapis');
 const { DASHBOARD_HTML } = require('./dashboard-template');
 const { CRM_HTML } = require('./crm-template');
+const { JULIANE_HTML } = require('./juliane-template');
 const app = express();
 app.use(express.json());
 
@@ -59,7 +60,7 @@ const pool = new Pool({
 const THROTTLE_AVISO_MS = 6 * 60 * 60 * 1000; // 6 horas
 
 // Campos do funil que podem ser editados manualmente pelo dashboard
-const CAMPOS_EDITAVEIS = ['nome', 'origem', 'corretor', 'interesse', 'status', 'aprovado', 'visita', 'proposta', 'venda', 'imovel_desc', 'sem_retorno', 'em_andamento', 'notas_sdr', 'carteira_sdr', 'tarefa_sdr', 'corretores_repassados', 'ultima_atualizacao_sdr', 'valor_imovel_sdr'];
+const CAMPOS_EDITAVEIS = ['nome', 'origem', 'corretor', 'interesse', 'status', 'aprovado', 'visita', 'proposta', 'venda', 'imovel_desc', 'sem_retorno', 'em_andamento', 'notas_sdr', 'carteira_sdr', 'tarefa_sdr', 'corretores_repassados', 'ultima_atualizacao_sdr', 'valor_imovel_sdr', 'carteira_juliane'];
 
 async function initDb() {
   if (!process.env.DATABASE_URL) {
@@ -105,7 +106,8 @@ async function initDb() {
       ADD COLUMN IF NOT EXISTS corretores_repassados TEXT,
       ADD COLUMN IF NOT EXISTS status_alterado_em TIMESTAMPTZ,
       ADD COLUMN IF NOT EXISTS ultima_atualizacao_sdr DATE,
-      ADD COLUMN IF NOT EXISTS valor_imovel_sdr TEXT;
+      ADD COLUMN IF NOT EXISTS valor_imovel_sdr TEXT,
+      ADD COLUMN IF NOT EXISTS carteira_juliane BOOLEAN DEFAULT false;
   `);
 
   // ─── Tabela de backups automáticos (dump diário de todos os leads) ─
@@ -1080,9 +1082,11 @@ function basicAuthAdminOuSdr(req, res, next) {
   const adminPass = process.env.DASHBOARD_PASS;
   const sdrUser = process.env.CRM_USER || 'sdr';
   const sdrPass = process.env.CRM_PASS;
+  const julianeUser = process.env.JULIANE_CRM_USER || 'juliane';
+  const julianePass = process.env.JULIANE_CRM_PASS;
 
-  if (!adminPass && !sdrPass) {
-    console.warn('⚠️  Nenhuma senha configurada (DASHBOARD_PASS/CRM_PASS) — CRM está SEM proteção por senha.');
+  if (!adminPass && !sdrPass && !julianePass) {
+    console.warn('⚠️  Nenhuma senha configurada (DASHBOARD_PASS/CRM_PASS/JULIANE_CRM_PASS) — CRM está SEM proteção por senha.');
     req.authTipo = 'admin';
     return next();
   }
@@ -1102,6 +1106,10 @@ function basicAuthAdminOuSdr(req, res, next) {
     req.authTipo = 'sdr';
     return next();
   }
+  if (julianePass && u === julianeUser && p === julianePass) {
+    req.authTipo = 'juliane';
+    return next();
+  }
 
   res.set('WWW-Authenticate', 'Basic realm="Painel de Leads"');
   return res.status(401).send('Credenciais inválidas');
@@ -1110,6 +1118,7 @@ function basicAuthAdminOuSdr(req, res, next) {
 // Campos que a SDR pode editar pelo CRM — o resto (aprovado, visita, proposta,
 // venda, corretor, origem etc.) continua só pra quem loga como admin.
 const CAMPOS_EDITAVEIS_SDR = ['status', 'notas_sdr', 'carteira_sdr', 'tarefa_sdr', 'corretores_repassados', 'ultima_atualizacao_sdr', 'valor_imovel_sdr'];
+const CAMPOS_EDITAVEIS_JULIANE = ['status', 'notas_sdr', 'carteira_juliane', 'tarefa_sdr', 'corretores_repassados', 'ultima_atualizacao_sdr', 'valor_imovel_sdr'];
 
 // ─── ROTA: API DE LEADS (alimenta o dashboard) ───────────────
 app.get('/api/leads', basicAuthAdminOuSdr, async (req, res) => {
@@ -1358,27 +1367,30 @@ app.post('/api/leads/conferir', basicAuthAdminOuSdr, async (req, res) => {
   if (!nome || !nome.trim()) {
     return res.status(400).json({ ok: false, erro: 'Nome é obrigatório' });
   }
+  // Quem está logado decide em qual carteira o contato entra.
+  const colunaCarteira = req.authTipo === 'juliane' ? 'carteira_juliane' : 'carteira_sdr';
+  const origemNovo = req.authTipo === 'juliane' ? 'Juliane' : 'SDR';
   try {
     const existente = await pool.query('SELECT * FROM leads WHERE whatsapp = $1', [whatsappValido]);
     if (existente.rows.length > 0) {
       const atualizado = await pool.query(
-        `UPDATE leads SET carteira_sdr = true, status_alterado_em = now() WHERE id = $1 RETURNING *`,
+        `UPDATE leads SET ${colunaCarteira} = true, status_alterado_em = now() WHERE id = $1 RETURNING *`,
         [existente.rows[0].id]
       );
       return res.json({ ok: true, encontrado: true, criado: false, lead: atualizado.rows[0] });
     }
     const result = await pool.query(
-      `INSERT INTO leads (whatsapp, nome, origem, status, carteira_sdr, status_alterado_em)
-       VALUES ($1, $2, 'SDR', 'Novo', true, now())
+      `INSERT INTO leads (whatsapp, nome, origem, status, ${colunaCarteira}, status_alterado_em)
+       VALUES ($1, $2, $3, 'Novo', true, now())
        RETURNING *`,
-      [whatsappValido, nome.trim()]
+      [whatsappValido, nome.trim(), origemNovo]
     );
     res.json({ ok: true, encontrado: false, criado: true, lead: result.rows[0] });
   } catch (err) {
     if (err.code === '23505') {
       const existente = await pool.query('SELECT * FROM leads WHERE whatsapp = $1', [whatsappValido]);
       const atualizado = await pool.query(
-        `UPDATE leads SET carteira_sdr = true, status_alterado_em = now() WHERE id = $1 RETURNING *`,
+        `UPDATE leads SET ${colunaCarteira} = true, status_alterado_em = now() WHERE id = $1 RETURNING *`,
         [existente.rows[0].id]
       );
       return res.json({ ok: true, encontrado: true, criado: false, lead: atualizado.rows[0] });
@@ -1407,6 +1419,29 @@ app.get('/api/leads/carteira-sdr', basicAuthAdminOuSdr, async (req, res) => {
     res.json({ ok: true, leads: result.rows });
   } catch (err) {
     console.error('Erro ao listar carteira da SDR:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
+// Lista os leads que passaram pra Juliane (carteira_juliane = true) — isso
+// acontece sozinho quando a SDR marca o status como "Visita agendada", sem
+// precisar recadastrar nada.
+app.get('/api/leads/carteira-juliane', basicAuthAdminOuSdr, async (req, res) => {
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  }
+  try {
+    const result = await pool.query(
+      `SELECT id, whatsapp, nome, corretor, origem, status, distribuido_em,
+              outros_corretores, notas_sdr, reaquecido_em, tarefa_sdr, corretores_repassados,
+              status_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr
+       FROM leads
+       WHERE carteira_juliane = true
+       ORDER BY distribuido_em DESC`
+    );
+    res.json({ ok: true, leads: result.rows });
+  } catch (err) {
+    console.error('Erro ao listar carteira da Juliane:', err);
     res.status(500).json({ ok: false, erro: err.message });
   }
 });
@@ -1743,6 +1778,9 @@ app.patch('/api/leads/:id', basicAuthAdminOuSdr, async (req, res) => {
   if (req.authTipo === 'sdr' && !CAMPOS_EDITAVEIS_SDR.includes(campo)) {
     return res.status(403).json({ ok: false, erro: `Login da SDR não pode editar o campo '${campo}'` });
   }
+  if (req.authTipo === 'juliane' && !CAMPOS_EDITAVEIS_JULIANE.includes(campo)) {
+    return res.status(403).json({ ok: false, erro: `Login da Juliane não pode editar o campo '${campo}'` });
+  }
 
   try {
     // Quando a SDR marca o lead como "Reaquecendo", registra o momento —
@@ -1750,9 +1788,16 @@ app.patch('/api/leads/:id', basicAuthAdminOuSdr, async (req, res) => {
     if (campo === 'status') {
       // Toda troca de status marca "entrou nessa etapa agora" — é a data
       // mostrada no card. Se for pra "Reaquecendo", também marca reaquecido_em.
+      // E se for pra "Visita agendada", é o ponto de virada: o lead passa
+      // sozinho a aparecer também no Kanban da Juliane, dali pra frente.
       if (valor === 'Reaquecendo') {
         await pool.query(
           `UPDATE leads SET status = $1, status_alterado_em = now(), reaquecido_em = now() WHERE id = $2`,
+          [valor, id]
+        );
+      } else if (valor === 'Visita agendada') {
+        await pool.query(
+          `UPDATE leads SET status = $1, status_alterado_em = now(), carteira_juliane = true WHERE id = $2`,
           [valor, id]
         );
       } else {
@@ -1883,6 +1928,11 @@ app.all('/api/admin/backups/agora', basicAuth, async (req, res) => {
 // visão focada em reaquecimento e histórico de corretores.
 app.get('/crm', basicAuthAdminOuSdr, (req, res) => {
   res.send(CRM_HTML);
+});
+
+// ─── ROTA: CRM DA JULIANE ─────────────────────────────────────
+app.get('/crm-juliane', basicAuthAdminOuSdr, (req, res) => {
+  res.send(JULIANE_HTML);
 });
 
 // ─── ROTA DE TESTE ───────────────────────────────────────────
