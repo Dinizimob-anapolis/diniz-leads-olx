@@ -298,6 +298,7 @@ const JULIANE_HTML = `<!DOCTYPE html>
 
 <div class="toolbar">
   <input type="text" id="busca" placeholder="Buscar por nome ou WhatsApp...">
+  <button class="add-contato-btn" id="btn-atualizar" style="background:#fff;color:var(--accent);border:1px solid var(--accent);box-shadow:none;">↻ Atualizar</button>
   <button class="add-contato-btn" id="btn-adicionar">+ Adicionar contato</button>
 </div>
 
@@ -565,6 +566,7 @@ function abrirModalLead(id) {
         <span class="saved-flash" id="modal-flash">salvo ✓</span>
       </div>
     </div>
+    <button class="primary-btn" id="modal-salvar" style="width:100%;margin-top:10px;">💾 Salvar</button>
     <button class="close-btn" id="modal-remover" style="width:100%;margin-top:8px;color:#b5720a;border-color:var(--warn-border);">Remover da carteira</button>
   \`;
 
@@ -577,28 +579,36 @@ function abrirModalLead(id) {
   document.getElementById('modal-status').addEventListener('change', e => {
     salvarCampo(id, 'status', e.target.value, () => { render(); abrirModalLead(id); });
   });
-  document.getElementById('modal-notas').addEventListener('blur', e => {
-    salvarCampo(id, 'notas_sdr', e.target.value, () => { render(); flashModal(); });
-  });
-  document.getElementById('modal-tarefa').addEventListener('blur', e => {
-    salvarCampo(id, 'tarefa_sdr', e.target.value, () => { render(); flashModal(); });
-  });
-  document.getElementById('modal-ultima-atualizacao').addEventListener('change', e => {
-    salvarCampo(id, 'ultima_atualizacao_sdr', e.target.value, () => { render(); flashModal(); });
-  });
-  document.getElementById('modal-valor-imovel').addEventListener('blur', e => {
-    const numero = parseValorImovel(e.target.value);
-    const formatado = numero > 0 ? formatarReais(numero) : '';
-    e.target.value = formatado;
-    salvarCampo(id, 'valor_imovel_sdr', formatado, () => {
+  document.getElementById('modal-salvar').addEventListener('click', () => {
+    const notas = document.getElementById('modal-notas').value;
+    const tarefa = document.getElementById('modal-tarefa').value;
+    const dataAtualizacao = document.getElementById('modal-ultima-atualizacao').value;
+    const valorDigitado = document.getElementById('modal-valor-imovel').value;
+    const numero = parseValorImovel(valorDigitado);
+    const valorFormatado = numero > 0 ? formatarReais(numero) : '';
+    document.getElementById('modal-valor-imovel').value = valorFormatado;
+
+    lead.notas_sdr = notas;
+    lead.tarefa_sdr = tarefa;
+    lead.ultima_atualizacao_sdr = dataAtualizacao;
+    lead.valor_imovel_sdr = valorFormatado;
+
+    Promise.all([
+      fetch(\`/api/leads/\${id}\`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ campo: 'notas_sdr', valor: notas }) }),
+      fetch(\`/api/leads/\${id}\`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ campo: 'tarefa_sdr', valor: tarefa }) }),
+      fetch(\`/api/leads/\${id}\`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ campo: 'ultima_atualizacao_sdr', valor: dataAtualizacao }) }),
+      fetch(\`/api/leads/\${id}\`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ campo: 'valor_imovel_sdr', valor: valorFormatado }) }),
+    ]).then(() => {
       render();
       flashModal();
       const badgeSpan = document.getElementById('badge-valor-imovel');
       if (badgeSpan) {
-        badgeSpan.innerHTML = formatado
-          ? \`<span class="badge" style="background:#eafcea;color:#17a34a;border:1px solid #a8ecca;white-space:nowrap;">💰 \${formatado}</span>\`
+        badgeSpan.innerHTML = valorFormatado
+          ? \`<span class="badge" style="background:#eafcea;color:#17a34a;border:1px solid #a8ecca;white-space:nowrap;">💰 \${valorFormatado}</span>\`
           : '';
       }
+    }).catch(() => {
+      alert('Não consegui salvar. Confere sua internet e tenta de novo.');
     });
   });
 
@@ -730,6 +740,7 @@ document.getElementById('overlay').addEventListener('click', e => {
 });
 
 document.getElementById('btn-adicionar').addEventListener('click', abrirModalAdicionar);
+document.getElementById('btn-atualizar').addEventListener('click', () => carregar());
 
 async function salvarCampo(id, campo, valor, aoTerminar) {
   try {
