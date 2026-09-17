@@ -138,6 +138,7 @@ const CRM_HTML = `<!DOCTYPE html>
   .lead:active { cursor: grabbing; }
   .lead.dragging { opacity: 0.4; }
   .lead.reaquecer { border-color: var(--warn-border); background: linear-gradient(180deg, var(--warn-bg), var(--card) 32px); }
+  .lead.atrasado { border-color: #e0453f !important; background: linear-gradient(180deg, #fdecec, var(--card) 32px); box-shadow: 0 0 0 2px #e0453f33; }
   .lead.recem-adicionado { animation: pulso 1.6s ease-in-out 2; }
   @keyframes pulso {
     0%, 100% { box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
@@ -164,7 +165,9 @@ const CRM_HTML = `<!DOCTYPE html>
     background: #f4f5f9;
     border-radius: 6px;
     padding: 6px 8px;
-    white-space: pre-wrap;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .tarefa-preview {
     margin-top: 6px;
@@ -370,7 +373,7 @@ function renderChipsCorretores(lead) {
 
 async function carregar() {
   try {
-    const res = await fetch('/api/leads/carteira-sdr');
+    const res = await fetch('/api/leads/carteira-sdr', { cache: 'no-store' });
     const data = await res.json();
     TODOS_LEADS = data.leads || data || [];
     render();
@@ -498,8 +501,10 @@ function cardHtml(lead, corBorda) {
   const envolvidos = corretoresEnvolvidos(lead);
   const chipsRepassados = corretoresRepassadosLista(lead);
   const dataEtapa = formatarData(lead.status_alterado_em || lead.distribuido_em);
+  const tarefaAtrasada = !!(lead.tarefa_data && new Date(lead.tarefa_data) <= new Date());
+  const classeDestaque = tarefaAtrasada ? 'atrasado' : (duplicado ? 'reaquecer' : '');
   return \`
-    <div class="lead \${duplicado ? 'reaquecer' : ''}" draggable="true" data-id="\${lead.id}" style="\${duplicado ? '' : \`border-left-color:\${corBorda}\`}">
+    <div class="lead \${classeDestaque}" draggable="true" data-id="\${lead.id}" style="\${classeDestaque ? '' : \`border-left-color:\${corBorda}\`}">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:6px;">
         <div class="lead-nome">\${lead.nome || 'Sem nome'}</div>
         \${lead.valor_imovel_sdr ? \`<span style="font-size:10px;font-weight:700;color:#17a34a;white-space:nowrap;">💰 \${lead.valor_imovel_sdr}</span>\` : ''}
@@ -509,9 +514,10 @@ function cardHtml(lead, corBorda) {
       \${lead.origem ? \`<span class="badge origem">\${lead.origem}</span>\` : ''}
       \${duplicado ? \`<span class="badge warn">⚠️ \${envolvidos.length}: \${envolvidos.join(', ')}</span>\` : ''}
       \${chipsRepassados.length > 0 ? \`<div>\${chipsRepassados.map(nome => \`<span class="chip-corretor" style="border-color:\${corDoCorretor(nome)};color:\${corDoCorretor(nome)};background:\${corDoCorretor(nome)}1a">\${nome}</span>\`).join('')}</div>\` : ''}
-      \${lead.tarefa_sdr ? \`<div class="tarefa-preview">📌 \${lead.tarefa_sdr}</div>\` : ''}
+      \${lead.tarefa_sdr ? \`<div class="tarefa-preview" style="\${tarefaAtrasada ? 'color:#e0453f;' : ''}">\${tarefaAtrasada ? '⏰ ATRASADO — ' : '📌 '}\${lead.tarefa_sdr}\${lead.tarefa_data ? \` (\${new Date(lead.tarefa_data).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })})\` : ''}</div>\` : ''}
       \${lead.ultima_atualizacao_sdr ? \`<div class="tarefa-preview" style="color:var(--muted);font-weight:600;">🗓️ Atualizado até \${formatarData(lead.ultima_atualizacao_sdr)}</div>\` : ''}
-      \${lead.notas_sdr ? \`<div class="lead-notas">\${lead.notas_sdr}</div>\` : ''}
+      \${lead.notas_sdr ? \`<div class="lead-notas">\${lead.notas_sdr.split('\\n')[0]}</div>\` : ''}
+      \${lead.buscando_sdr ? \`<div class="lead-notas" style="color:#5b6bf5;font-weight:600;">🔎 \${lead.buscando_sdr.split('\\n')[0]}</div>\` : ''}
     </div>
   \`;
 }
@@ -547,6 +553,9 @@ function abrirModalLead(id) {
     <label>Tarefa</label>
     <input type="text" id="modal-tarefa" placeholder="Próximo passo, ex: ligar amanhã 14h" value="\${lead.tarefa_sdr || ''}">
 
+    <label>Prazo da tarefa</label>
+    <input type="datetime-local" id="modal-tarefa-data" value="\${lead.tarefa_data ? new Date(lead.tarefa_data).toISOString().slice(0, 16) : ''}">
+
     <div style="display:flex;gap:8px;">
       <div style="flex:1;">
         <label>Atualizado até (data)</label>
@@ -560,6 +569,9 @@ function abrirModalLead(id) {
 
     <label>Notas</label>
     <textarea id="modal-notas" placeholder="O que já foi conversado, quando retomar...">\${lead.notas_sdr || ''}</textarea>
+
+    <label>O que está buscando</label>
+    <textarea id="modal-buscando" placeholder="Ex: apartamento 2 quartos, até R$ 300 mil, região X...">\${lead.buscando_sdr || ''}</textarea>
 
     <div class="modal-actions">
       <button class="close-btn" id="modal-fechar">Fechar</button>
@@ -583,7 +595,9 @@ function abrirModalLead(id) {
   });
   document.getElementById('modal-salvar').addEventListener('click', () => {
     const notas = document.getElementById('modal-notas').value;
+    const buscando = document.getElementById('modal-buscando').value;
     const tarefa = document.getElementById('modal-tarefa').value;
+    const tarefaData = document.getElementById('modal-tarefa-data').value;
     const dataAtualizacao = document.getElementById('modal-ultima-atualizacao').value;
     const valorDigitado = document.getElementById('modal-valor-imovel').value;
     const numero = parseValorImovel(valorDigitado);
@@ -591,13 +605,17 @@ function abrirModalLead(id) {
     document.getElementById('modal-valor-imovel').value = valorFormatado;
 
     lead.notas_sdr = notas;
+    lead.buscando_sdr = buscando;
     lead.tarefa_sdr = tarefa;
+    lead.tarefa_data = tarefaData ? new Date(tarefaData).toISOString() : null;
     lead.ultima_atualizacao_sdr = dataAtualizacao;
     lead.valor_imovel_sdr = valorFormatado;
 
     Promise.all([
       fetch(\`/api/leads/\${id}\`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ campo: 'notas_sdr', valor: notas }) }),
+      fetch(\`/api/leads/\${id}\`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ campo: 'buscando_sdr', valor: buscando }) }),
       fetch(\`/api/leads/\${id}\`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ campo: 'tarefa_sdr', valor: tarefa }) }),
+      fetch(\`/api/leads/\${id}\`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ campo: 'tarefa_data', valor: lead.tarefa_data }) }),
       fetch(\`/api/leads/\${id}\`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ campo: 'ultima_atualizacao_sdr', valor: dataAtualizacao }) }),
       fetch(\`/api/leads/\${id}\`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ campo: 'valor_imovel_sdr', valor: valorFormatado }) }),
     ]).then(() => {
