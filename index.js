@@ -1436,7 +1436,7 @@ app.get('/api/leads/carteira-juliane', basicAuthAdminOuSdr, async (req, res) => 
               outros_corretores, notas_sdr, reaquecido_em, tarefa_sdr, corretores_repassados,
               status_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr
        FROM leads
-       WHERE carteira_juliane = true
+       WHERE carteira_juliane = true OR carteira_sdr = true
        ORDER BY distribuido_em DESC`
     );
     res.json({ ok: true, leads: result.rows });
