@@ -313,11 +313,15 @@ let BUSCA = '';
 let LEAD_ARRASTADO = null;
 let ULTIMO_ADICIONADO_ID = null;
 
-const COLUNAS = ['Visita agendada', 'Compra futura', 'Já comprou', 'Venda efetuada', 'Sem retorno'];
+const COLUNAS = ['Novo', 'Reaquecendo', 'Aguardando retorno', 'Repassado ao corretor', 'Visita agendada', 'Compra futura', 'Já comprou', 'Venda efetuada', 'Sem retorno'];
 
 // Paleta viva, uma cor por coluna — usada no cabeçalho e na barrinha
 // lateral de cada cartão daquela coluna.
 const CORES_COLUNA = {
+  'Novo':                   { header: '#3b6cf0', accent: '#3b6cf0', texto: '#ffffff' },
+  'Reaquecendo':            { header: '#f2941c', accent: '#f2941c', texto: '#ffffff' },
+  'Aguardando retorno':     { header: '#9b4de0', accent: '#9b4de0', texto: '#ffffff' },
+  'Repassado ao corretor':  { header: '#e8479e', accent: '#e8479e', texto: '#ffffff' },
   'Visita agendada':        { header: '#0aa5c2', accent: '#0aa5c2', texto: '#ffffff' },
   'Compra futura':          { header: '#5b6bf5', accent: '#5b6bf5', texto: '#ffffff' },
   'Já comprou':             { header: '#c9a20a', accent: '#c9a20a', texto: '#ffffff' },
