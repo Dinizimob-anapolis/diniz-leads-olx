@@ -60,7 +60,7 @@ const pool = new Pool({
 const THROTTLE_AVISO_MS = 6 * 60 * 60 * 1000; // 6 horas
 
 // Campos do funil que podem ser editados manualmente pelo dashboard
-const CAMPOS_EDITAVEIS = ['nome', 'origem', 'corretor', 'interesse', 'status', 'aprovado', 'visita', 'proposta', 'venda', 'imovel_desc', 'sem_retorno', 'em_andamento', 'notas_sdr', 'carteira_sdr', 'tarefa_sdr', 'corretores_repassados', 'ultima_atualizacao_sdr', 'valor_imovel_sdr', 'carteira_juliane'];
+const CAMPOS_EDITAVEIS = ['nome', 'origem', 'corretor', 'interesse', 'status', 'aprovado', 'visita', 'proposta', 'venda', 'imovel_desc', 'sem_retorno', 'em_andamento', 'notas_sdr', 'carteira_sdr', 'tarefa_sdr', 'tarefa_data', 'corretores_repassados', 'ultima_atualizacao_sdr', 'valor_imovel_sdr', 'carteira_juliane', 'buscando_sdr'];
 
 async function initDb() {
   if (!process.env.DATABASE_URL) {
@@ -107,7 +107,9 @@ async function initDb() {
       ADD COLUMN IF NOT EXISTS status_alterado_em TIMESTAMPTZ,
       ADD COLUMN IF NOT EXISTS ultima_atualizacao_sdr DATE,
       ADD COLUMN IF NOT EXISTS valor_imovel_sdr TEXT,
-      ADD COLUMN IF NOT EXISTS carteira_juliane BOOLEAN DEFAULT false;
+      ADD COLUMN IF NOT EXISTS carteira_juliane BOOLEAN DEFAULT false,
+      ADD COLUMN IF NOT EXISTS tarefa_data TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS buscando_sdr TEXT;
   `);
 
   // ─── Tabela de backups automáticos (dump diário de todos os leads) ─
@@ -1117,11 +1119,12 @@ function basicAuthAdminOuSdr(req, res, next) {
 
 // Campos que a SDR pode editar pelo CRM — o resto (aprovado, visita, proposta,
 // venda, corretor, origem etc.) continua só pra quem loga como admin.
-const CAMPOS_EDITAVEIS_SDR = ['status', 'notas_sdr', 'carteira_sdr', 'tarefa_sdr', 'corretores_repassados', 'ultima_atualizacao_sdr', 'valor_imovel_sdr'];
-const CAMPOS_EDITAVEIS_JULIANE = ['status', 'notas_sdr', 'carteira_juliane', 'tarefa_sdr', 'corretores_repassados', 'ultima_atualizacao_sdr', 'valor_imovel_sdr'];
+const CAMPOS_EDITAVEIS_SDR = ['status', 'notas_sdr', 'carteira_sdr', 'tarefa_sdr', 'tarefa_data', 'corretores_repassados', 'ultima_atualizacao_sdr', 'valor_imovel_sdr', 'buscando_sdr'];
+const CAMPOS_EDITAVEIS_JULIANE = ['status', 'notas_sdr', 'carteira_juliane', 'tarefa_sdr', 'tarefa_data', 'corretores_repassados', 'ultima_atualizacao_sdr', 'valor_imovel_sdr', 'buscando_sdr'];
 
 // ─── ROTA: API DE LEADS (alimenta o dashboard) ───────────────
 app.get('/api/leads', basicAuthAdminOuSdr, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
   if (!process.env.DATABASE_URL) {
     return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
   }
@@ -1367,21 +1370,21 @@ app.post('/api/leads/conferir', basicAuthAdminOuSdr, async (req, res) => {
   if (!nome || !nome.trim()) {
     return res.status(400).json({ ok: false, erro: 'Nome é obrigatório' });
   }
-  // Quem está logado decide em qual carteira o contato entra.
-  const colunaCarteira = req.authTipo === 'juliane' ? 'carteira_juliane' : 'carteira_sdr';
+  // Sempre marca as duas carteiras — assim, seja quem adicionar (SDR ou
+  // Juliane), o contato aparece nos dois Kanbans.
   const origemNovo = req.authTipo === 'juliane' ? 'Juliane' : 'SDR';
   try {
     const existente = await pool.query('SELECT * FROM leads WHERE whatsapp = $1', [whatsappValido]);
     if (existente.rows.length > 0) {
       const atualizado = await pool.query(
-        `UPDATE leads SET ${colunaCarteira} = true, status_alterado_em = now() WHERE id = $1 RETURNING *`,
+        `UPDATE leads SET carteira_sdr = true, carteira_juliane = true, status_alterado_em = now() WHERE id = $1 RETURNING *`,
         [existente.rows[0].id]
       );
       return res.json({ ok: true, encontrado: true, criado: false, lead: atualizado.rows[0] });
     }
     const result = await pool.query(
-      `INSERT INTO leads (whatsapp, nome, origem, status, ${colunaCarteira}, status_alterado_em)
-       VALUES ($1, $2, $3, 'Novo', true, now())
+      `INSERT INTO leads (whatsapp, nome, origem, status, carteira_sdr, carteira_juliane, status_alterado_em)
+       VALUES ($1, $2, $3, 'Novo', true, true, now())
        RETURNING *`,
       [whatsappValido, nome.trim(), origemNovo]
     );
@@ -1390,7 +1393,7 @@ app.post('/api/leads/conferir', basicAuthAdminOuSdr, async (req, res) => {
     if (err.code === '23505') {
       const existente = await pool.query('SELECT * FROM leads WHERE whatsapp = $1', [whatsappValido]);
       const atualizado = await pool.query(
-        `UPDATE leads SET ${colunaCarteira} = true, status_alterado_em = now() WHERE id = $1 RETURNING *`,
+        `UPDATE leads SET carteira_sdr = true, carteira_juliane = true, status_alterado_em = now() WHERE id = $1 RETURNING *`,
         [existente.rows[0].id]
       );
       return res.json({ ok: true, encontrado: true, criado: false, lead: atualizado.rows[0] });
@@ -1404,6 +1407,7 @@ app.post('/api/leads/conferir', basicAuthAdminOuSdr, async (req, res) => {
 // pelo Kanban do /crm, que começa vazio e vai crescendo conforme ela sobe
 // os contatos, sem mostrar os leads do sistema todo.
 app.get('/api/leads/carteira-sdr', basicAuthAdminOuSdr, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
   if (!process.env.DATABASE_URL) {
     return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
   }
@@ -1411,7 +1415,7 @@ app.get('/api/leads/carteira-sdr', basicAuthAdminOuSdr, async (req, res) => {
     const result = await pool.query(
       `SELECT id, whatsapp, nome, corretor, origem, status, distribuido_em,
               outros_corretores, notas_sdr, reaquecido_em, tarefa_sdr, corretores_repassados,
-              status_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr
+              status_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr, tarefa_data
        FROM leads
        WHERE carteira_sdr = true
        ORDER BY distribuido_em DESC`
@@ -1427,6 +1431,7 @@ app.get('/api/leads/carteira-sdr', basicAuthAdminOuSdr, async (req, res) => {
 // acontece sozinho quando a SDR marca o status como "Visita agendada", sem
 // precisar recadastrar nada.
 app.get('/api/leads/carteira-juliane', basicAuthAdminOuSdr, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
   if (!process.env.DATABASE_URL) {
     return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
   }
@@ -1434,7 +1439,7 @@ app.get('/api/leads/carteira-juliane', basicAuthAdminOuSdr, async (req, res) => 
     const result = await pool.query(
       `SELECT id, whatsapp, nome, corretor, origem, status, distribuido_em,
               outros_corretores, notas_sdr, reaquecido_em, tarefa_sdr, corretores_repassados,
-              status_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr
+              status_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr, tarefa_data
        FROM leads
        WHERE carteira_juliane = true OR carteira_sdr = true
        ORDER BY distribuido_em DESC`
