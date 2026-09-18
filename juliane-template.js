@@ -375,15 +375,32 @@ const COLUNA_TRIAGEM = 'Repassado ao corretor';
 
 // Quadro por corretor — usado na aba principal da Juliane. As colunas são
 // montadas na hora, com base em quem realmente tem lead no sistema.
+// Ordem e conjunto fixos de corretores no quadro da Juliane — não muda
+// sozinho conforme os dados; só muda quando alguém pedir pra ajustar aqui.
+const ORDEM_CORRETORES_JULIANE = ['Junior', 'Laís', 'Patricia', 'Michelle', 'Nalcio', 'Renata', 'Bruno', 'Juliane', 'Amanda', 'Cyda'];
+
+// Uma cor fixa e diferente pra cada um (não é por hash, pra ficar sempre
+// igual e fácil de reconhecer de relance).
+const CORES_CORRETORES_JULIANE = {
+  'Junior':    '#3b6cf0',
+  'Laís':      '#e8479e',
+  'Patricia':  '#12b76a',
+  'Michelle':  '#9b4de0',
+  'Nalcio':    '#0aa5c2',
+  'Renata':    '#c9a20a',
+  'Bruno':     '#e0453f',
+  'Juliane':   '#5b6bf5',
+  'Amanda':    '#f2789c',
+  'Cyda':      '#2dd4bf',
+};
+
 function colunasCorretorAtual() {
-  const nomes = new Set();
-  LEADS_JULIANE.forEach(l => { if (l.corretor && l.corretor.trim()) nomes.add(l.corretor.trim()); });
-  return [COLUNA_TRIAGEM, ...Array.from(nomes).sort()];
+  return [COLUNA_TRIAGEM, ...ORDEM_CORRETORES_JULIANE];
 }
 
 function corColunaCorretor(coluna) {
   if (coluna === COLUNA_TRIAGEM) return { header: '#f2941c', accent: '#f2941c', texto: '#ffffff' };
-  const cor = corDoCorretor(coluna);
+  const cor = CORES_CORRETORES_JULIANE[coluna] || corDoCorretor(coluna);
   return { header: cor, accent: cor, texto: '#ffffff' };
 }
 
@@ -413,7 +430,7 @@ function corretoresEnvolvidos(lead) {
 }
 
 const PALETA_CORES = ['#3b6cf0', '#e0453f', '#f2941c', '#12b76a', '#9b4de0', '#e8479e', '#0aa5c2', '#c9a20a'];
-const NOMES_OFICIAIS_CORRETORES = ['Laís', 'Nalcio', 'Renata', 'Junior', 'Thayná', 'Amanda', 'Juliane', 'Bruno'];
+const NOMES_OFICIAIS_CORRETORES = ['Junior', 'Laís', 'Patricia', 'Michelle', 'Nalcio', 'Renata', 'Bruno', 'Juliane', 'Amanda', 'Cyda'];
 function normalizarNomeCorretor(nomeDigitado) {
   const chave = (nomeDigitado || '').trim();
   if (!chave) return chave;
