@@ -355,7 +355,7 @@ function corretoresEnvolvidos(lead) {
 }
 
 const PALETA_CORES = ['#3b6cf0', '#e0453f', '#f2941c', '#12b76a', '#9b4de0', '#e8479e', '#0aa5c2', '#c9a20a'];
-const NOMES_OFICIAIS_CORRETORES = ['Laís', 'Nalcio', 'Renata', 'Junior', 'Thayná', 'Amanda', 'Juliane', 'Bruno'];
+const NOMES_OFICIAIS_CORRETORES = ['Junior', 'Laís', 'Patricia', 'Michelle', 'Nalcio', 'Renata', 'Bruno', 'Juliane', 'Amanda', 'Cyda'];
 function normalizarNomeCorretor(nomeDigitado) {
   const chave = (nomeDigitado || '').trim();
   if (!chave) return chave;
@@ -557,6 +557,12 @@ function abrirModalLead(id) {
     </select>
     \${lead.status_alterado_em ? \`<div class="lead-meta" style="margin-top:4px;">Nessa etapa desde \${formatarData(lead.status_alterado_em)}</div>\` : ''}
 
+    <label>Corretor</label>
+    <select id="modal-corretor">
+      <option value="" \${!lead.corretor ? 'selected' : ''}>— Repassado ao corretor (sem corretor ainda) —</option>
+      \${NOMES_OFICIAIS_CORRETORES.map(c => \`<option value="\${c}" \${lead.corretor === c ? 'selected' : ''}>\${c}</option>\`).join('')}
+    </select>
+
     \${statusDoLead(lead) === 'Repassado ao corretor' ? \`
       <label>Corretor(es)</label>
       <div id="modal-chips-corretores">\${renderChipsCorretores(lead)}</div>
@@ -604,6 +610,9 @@ function abrirModalLead(id) {
   });
   document.getElementById('modal-status').addEventListener('change', e => {
     salvarCampo(id, 'status', e.target.value, () => { render(); abrirModalLead(id); });
+  });
+  document.getElementById('modal-corretor').addEventListener('change', e => {
+    salvarCampo(id, 'corretor', e.target.value, () => { render(); abrirModalLead(id); });
   });
   document.getElementById('modal-salvar').addEventListener('click', () => {
     const notas = document.getElementById('modal-notas').value;
