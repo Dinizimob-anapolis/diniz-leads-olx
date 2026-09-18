@@ -1215,7 +1215,7 @@ function basicAuthAdminOuSdr(req, res, next) {
 
 // Campos que a SDR pode editar pelo CRM — o resto (aprovado, visita, proposta,
 // venda, corretor, origem etc.) continua só pra quem loga como admin.
-const CAMPOS_EDITAVEIS_SDR = ['status', 'notas_sdr', 'carteira_sdr', 'tarefa_sdr', 'tarefa_data', 'corretores_repassados', 'ultima_atualizacao_sdr', 'valor_imovel_sdr', 'buscando_sdr', 'aprovado', 'visita', 'proposta', 'documentacao', 'venda'];
+const CAMPOS_EDITAVEIS_SDR = ['status', 'notas_sdr', 'carteira_sdr', 'tarefa_sdr', 'tarefa_data', 'corretores_repassados', 'ultima_atualizacao_sdr', 'valor_imovel_sdr', 'buscando_sdr', 'aprovado', 'visita', 'proposta', 'documentacao', 'venda', 'corretor'];
 const CAMPOS_EDITAVEIS_JULIANE = ['status', 'notas_sdr', 'carteira_juliane', 'tarefa_sdr', 'tarefa_data', 'corretores_repassados', 'ultima_atualizacao_sdr', 'valor_imovel_sdr', 'buscando_sdr', 'corretor', 'aprovado', 'visita', 'proposta', 'documentacao', 'venda'];
 
 // ─── ROTA: API DE LEADS (alimenta o dashboard) ───────────────
