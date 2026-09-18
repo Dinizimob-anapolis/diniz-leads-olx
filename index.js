@@ -1516,7 +1516,7 @@ app.get('/api/leads/carteira-sdr', basicAuthAdminOuSdr, async (req, res) => {
               status_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr, tarefa_data, aprovado, visita, proposta, documentacao, venda
        FROM leads
        WHERE carteira_sdr = true
-       ORDER BY distribuido_em DESC`
+       ORDER BY COALESCE(status_alterado_em, distribuido_em) DESC`
     );
     res.json({ ok: true, leads: result.rows });
   } catch (err) {
@@ -1540,7 +1540,7 @@ app.get('/api/leads/carteira-juliane', basicAuthAdminOuSdr, async (req, res) => 
               status_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr, tarefa_data, aprovado, visita, proposta, documentacao, venda
        FROM leads
        WHERE carteira_juliane = true
-       ORDER BY distribuido_em DESC`
+       ORDER BY COALESCE(status_alterado_em, distribuido_em) DESC`
     );
     res.json({ ok: true, leads: result.rows });
   } catch (err) {
@@ -1565,7 +1565,7 @@ app.get('/api/leads/todos-resumo', basicAuthAdminOuSdr, async (req, res) => {
        FROM leads
        WHERE (corretor IS NOT NULL AND corretor <> '')
           OR (carteira_sdr IS NOT TRUE AND COALESCE(status, '') NOT IN ('Já comprou', 'Sem retorno', 'Venda efetuada', 'Compra futura'))
-       ORDER BY distribuido_em DESC
+       ORDER BY COALESCE(status_alterado_em, distribuido_em) DESC
        LIMIT 2000`
     );
     res.json({ ok: true, leads: result.rows });
@@ -1856,6 +1856,34 @@ app.post('/api/admin/limpar-duplicados-sem-numero', basicAuth, async (req, res) 
 // ─── ROTA: CORRIGIR NÚMERO DE WHATSAPP INVÁLIDO ──────────────
 // Única forma de editar o WhatsApp de um lead — só serve pra leads marcados
 // como numero_invalido (que nunca tiveram um número real salvo).
+// ─── ROTA: EXCLUIR LEAD PERMANENTEMENTE ──────────────────────
+// Usada pelo botão "Excluir" no quadro principal da Juliane. Apaga o lead
+// de vez do banco — some do CRM da Juliane, do CRM da SDR e do /dashboard,
+// porque é o mesmo registro em todo lugar. Sem volta (a não ser recuperando
+// de um backup). Só admin e Juliane podem — a SDR continua só "removendo da
+// carteira" (isso não muda, é uma ação diferente e reversível).
+app.delete('/api/leads/:id', basicAuthAdminOuSdr, async (req, res) => {
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  }
+  if (req.authTipo === 'sdr') {
+    return res.status(403).json({ ok: false, erro: 'Login da SDR não pode excluir lead — use "Remover da carteira".' });
+  }
+  const { id } = req.params;
+  try {
+    const result = await pool.query('DELETE FROM leads WHERE id = $1 RETURNING id', [id]);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ ok: false, erro: 'Lead não encontrado' });
+    }
+    console.log(`Lead ${id} excluído permanentemente por ${req.authTipo}`);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Erro ao excluir lead:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
+
 app.patch('/api/leads/:id/corrigir-whatsapp', basicAuth, async (req, res) => {
   if (!process.env.DATABASE_URL) {
     return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
