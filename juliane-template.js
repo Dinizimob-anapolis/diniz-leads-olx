@@ -157,6 +157,19 @@ const JULIANE_HTML = `<!DOCTYPE html>
   }
   .badge.warn { background: var(--warn-bg); color: var(--warn-text); border: 1px solid var(--warn-border); }
   .badge.origem { background: #eef0f6; color: var(--muted); border: 1px solid var(--card-border); }
+  .badge-select {
+    display: inline-block;
+    font-size: 11.5px;
+    font-weight: 700;
+    padding: 3px 6px;
+    border-radius: 10px;
+    margin-top: 6px;
+    margin-right: 4px;
+    background: #eef0f6;
+    color: var(--muted);
+    border: 1px solid var(--card-border);
+    cursor: pointer;
+  }
 
   .lead-notas {
     margin-top: 8px;
@@ -372,6 +385,9 @@ const CORES_COLUNA_FUNIL = {
 
 // Nome fixo da coluna de triagem — leads sem corretor definido caem aqui.
 const COLUNA_TRIAGEM = 'Repassado ao corretor';
+
+// Opções de canal/origem — mesmas do /dashboard, pra bater com o que já existe.
+const ORIGENS = ['OLX/Canal Pro', 'Patrocinado', 'TikTok', 'Instagram', 'Comentário', 'SDR', 'Juliane', 'Outro'];
 
 // Quadro por corretor — usado na aba principal da Juliane. As colunas são
 // montadas na hora, com base em quem realmente tem lead no sistema.
@@ -663,7 +679,9 @@ function abrirModalLead(id) {
       <span id="badge-valor-imovel">\${lead.valor_imovel_sdr ? \`<span class="badge" style="background:#eafcea;color:#17a34a;border:1px solid #a8ecca;white-space:nowrap;">💰 \${lead.valor_imovel_sdr}</span>\` : ''}</span>
     </div>
     <div class="lead-meta">\${lead.whatsapp || 'sem WhatsApp'} · chegou em \${data}</div>
-    \${lead.origem ? \`<span class="badge origem">\${lead.origem}</span>\` : ''}
+    \${ABA_CRM === 'sdr'
+      ? (lead.origem ? \`<span class="badge origem">\${lead.origem}</span>\` : '')
+      : \`<select id="modal-origem" class="badge-select"><option value="" \${!lead.origem ? 'selected' : ''}>— sem canal —</option>\${ORIGENS.map(o => \`<option value="\${o}" \${lead.origem === o ? 'selected' : ''}>\${o}</option>\`).join('')}</select>\`}
     \${duplicado ? \`<span class="badge warn">⚠️ Já foi para \${envolvidos.length}: \${envolvidos.join(', ')} — não reenvie, reaqueça direto</span>\` : (lead.corretor ? \`<span class="badge origem">Corretor: \${lead.corretor}</span>\` : '')}
 
     \${ABA_CRM === 'sdr' ? \`
@@ -745,6 +763,13 @@ function abrirModalLead(id) {
   if (selectCorretor) {
     selectCorretor.addEventListener('change', e => {
       salvarCampo(id, 'corretor', e.target.value, () => { render(); abrirModalLead(id); });
+    });
+  }
+  const selectOrigem = document.getElementById('modal-origem');
+  if (selectOrigem) {
+    selectOrigem.addEventListener('change', e => {
+      lead.origem = e.target.value;
+      salvarCampo(id, 'origem', e.target.value, () => { render(); flashModal(); });
     });
   }
   document.getElementById('modal-salvar').addEventListener('click', () => {
