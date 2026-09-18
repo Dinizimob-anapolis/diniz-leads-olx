@@ -49,6 +49,22 @@ const CORRETORES = [
 // — pra isso precisaria do telefone de cada um, cadastrado em CORRETORES acima.
 const CORRETORES_EXTRA_DASHBOARD = ['Amanda', 'Juliane', 'Bruno'];
 
+// Unifica variações do mesmo nome (com/sem acento, maiúscula/minúscula) —
+// ex: "Lais" e "Laís" contam como a mesma pessoa. Sempre devolve a grafia
+// oficial (a que está em CORRETORES/CORRETORES_EXTRA_DASHBOARD); nomes que
+// não batem com ninguém conhecido voltam do jeito que vieram (apenas
+// arrumados de espaço), pra não travar cadastro de gente nova.
+const NOMES_OFICIAIS_CORRETORES = [...CORRETORES.map(c => c.nome), ...CORRETORES_EXTRA_DASHBOARD];
+function normalizarNomeCorretor(nomeDigitado) {
+  if (!nomeDigitado) return nomeDigitado;
+  const chave = String(nomeDigitado).trim();
+  if (!chave) return chave;
+  const semAcento = s => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const alvo = semAcento(chave);
+  const oficial = NOMES_OFICIAIS_CORRETORES.find(nome => semAcento(nome) === alvo);
+  return oficial || chave;
+}
+
 // ─── BANCO DE DADOS (leads distribuídos por texto) ───────────
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -142,6 +158,29 @@ async function initDb() {
   `);
   await pool.query(`ALTER TABLE leads_nao_identificados ADD COLUMN IF NOT EXISTS corretor TEXT;`);
   console.log('✅ Tabelas do lead router prontas (leads, leads_nao_identificados)');
+
+  // ─── Correção automática de nomes de corretor com/sem acento ──────────
+  // Unifica variações já salvas no banco (ex: "Lais" e "Laís" viram a mesma
+  // pessoa) — roda a cada boot, mas só muda linha que realmente precisa.
+  try {
+    for (const nomeOficial of NOMES_OFICIAIS_CORRETORES) {
+      const corrigidosCorretor = await pool.query(
+        `UPDATE leads
+         SET corretor = $1
+         WHERE corretor IS NOT NULL
+           AND corretor <> $1
+           AND lower(translate(corretor, 'áàâãäéèêëíìîïóòôõöúùûüçÁÀÂÃÄÉÈÊËÍÌÎÏÓÒÔÕÖÚÙÛÜÇ', 'aaaaaeeeeiiiiooooouuuucAAAAAEEEEIIIIOOOOOUUUUC'))
+             = lower(translate($1, 'áàâãäéèêëíìîïóòôõöúùûüçÁÀÂÃÄÉÈÊËÍÌÎÏÓÒÔÕÖÚÙÛÜÇ', 'aaaaaeeeeiiiiooooouuuucAAAAAEEEEIIIIOOOOOUUUUC'))
+         RETURNING id`,
+        [nomeOficial]
+      );
+      if (corrigidosCorretor.rowCount > 0) {
+        console.log(`✅ Correção de nome de corretor: ${corrigidosCorretor.rowCount} lead(s) unificados para "${nomeOficial}"`);
+      }
+    }
+  } catch (err) {
+    console.error('Erro na correção de nomes de corretor:', err);
+  }
 
   // ─── Correção automática de origens antigas mal classificadas ─────────
   // Leads que ficaram marcados como 'OLX/Canal Pro' antes da inferência existir,
@@ -576,10 +615,34 @@ async function fazerBackupDiario() {
   if (!process.env.DATABASE_URL) return { ok: false, erro: 'DATABASE_URL não configurada' };
   try {
     const leadsResult = await pool.query('SELECT * FROM leads ORDER BY id');
-    await pool.query(
-      `INSERT INTO backups_leads (total_leads, dados) VALUES ($1, $2)`,
-      [leadsResult.rows.length, JSON.stringify(leadsResult.rows)]
+
+    // Um backup por dia só: se já existe um de hoje (deploys/restarts repetidos
+    // no mesmo dia não devem multiplicar), atualiza esse em vez de criar outro.
+    const existenteHoje = await pool.query(
+      `SELECT id FROM backups_leads WHERE criado_em::date = now()::date ORDER BY criado_em DESC LIMIT 1`
     );
+    if (existenteHoje.rows.length > 0) {
+      await pool.query(
+        `UPDATE backups_leads SET criado_em = now(), total_leads = $1, dados = $2 WHERE id = $3`,
+        [leadsResult.rows.length, JSON.stringify(leadsResult.rows), existenteHoje.rows[0].id]
+      );
+    } else {
+      await pool.query(
+        `INSERT INTO backups_leads (total_leads, dados) VALUES ($1, $2)`,
+        [leadsResult.rows.length, JSON.stringify(leadsResult.rows)]
+      );
+    }
+
+    // Limpeza: mantém só 1 backup por dia (some qualquer duplicado antigo que
+    // já tenha se acumulado) e no total só os últimos 30 dias.
+    await pool.query(`
+      DELETE FROM backups_leads
+      WHERE id NOT IN (
+        SELECT DISTINCT ON (criado_em::date) id
+        FROM backups_leads
+        ORDER BY criado_em::date, criado_em DESC
+      )
+    `);
     await pool.query(`
       DELETE FROM backups_leads
       WHERE id NOT IN (SELECT id FROM backups_leads ORDER BY criado_em DESC LIMIT 30)
@@ -650,27 +713,48 @@ async function limparBackupsAntigosNoDrive() {
       pageSize: 1000,
     });
     const arquivos = listaResult.data.files || [];
-    const semanaAtual = semanaISO(new Date());
-
-    const grupos = new Map();
-    for (const arq of arquivos) {
-      const semana = semanaISO(new Date(arq.createdTime));
-      if (!grupos.has(semana)) grupos.set(semana, []);
-      grupos.get(semana).push(arq);
-    }
+    const hojeStr = new Date().toISOString().slice(0, 10);
 
     let removidos = 0;
-    for (const [semana, arqs] of grupos) {
-      if (semana === semanaAtual) continue; // semana atual: mantém todos os diários
+
+    // Passo 1: nunca mais que 1 arquivo por DIA (isso limpa os duplicados que
+    // já se acumularam de deploys repetidos no mesmo dia — pelo nome do
+    // arquivo, que é sempre backup-leads-AAAA-MM-DD.json).
+    const gruposPorDia = new Map();
+    for (const arq of arquivos) {
+      const diaChave = arq.name || new Date(arq.createdTime).toISOString().slice(0, 10);
+      if (!gruposPorDia.has(diaChave)) gruposPorDia.set(diaChave, []);
+      gruposPorDia.get(diaChave).push(arq);
+    }
+    const sobreviventes = [];
+    for (const [, arqs] of gruposPorDia) {
       arqs.sort((a, b) => new Date(b.createdTime) - new Date(a.createdTime));
-      const excedentes = arqs.slice(1); // mantém só o mais recente da semana
-      for (const arq of excedentes) {
+      sobreviventes.push(arqs[0]);
+      for (const arq of arqs.slice(1)) {
         await drive.files.delete({ fileId: arq.id });
         removidos++;
       }
     }
+
+    // Passo 2: de semanas passadas (não a atual), mantém só 1 arquivo no total.
+    const semanaAtual = semanaISO(new Date());
+    const gruposPorSemana = new Map();
+    for (const arq of sobreviventes) {
+      const semana = semanaISO(new Date(arq.createdTime));
+      if (!gruposPorSemana.has(semana)) gruposPorSemana.set(semana, []);
+      gruposPorSemana.get(semana).push(arq);
+    }
+    for (const [semana, arqs] of gruposPorSemana) {
+      if (semana === semanaAtual) continue; // semana atual: mantém todos os diários
+      arqs.sort((a, b) => new Date(b.createdTime) - new Date(a.createdTime));
+      for (const arq of arqs.slice(1)) {
+        await drive.files.delete({ fileId: arq.id });
+        removidos++;
+      }
+    }
+
     if (removidos > 0) {
-      console.log(`✅ Limpeza de backups antigos no Drive: ${removidos} arquivo(s) removido(s), mantendo 1 por semana passada`);
+      console.log(`✅ Limpeza de backups no Drive: ${removidos} arquivo(s) removido(s) (1 por dia, e 1 por semana passada)`);
     }
   } catch (err) {
     console.error('Erro ao limpar backups antigos no Drive:', err.message);
@@ -688,18 +772,29 @@ async function salvarBackupNoDrive(dados, nomeArquivo) {
     return { ok: false, erro: msg };
   }
   try {
-    const requestBody = { name: nomeArquivo };
-    if (process.env.GOOGLE_DRIVE_BACKUP_FOLDER_ID) {
-      requestBody.parents = [process.env.GOOGLE_DRIVE_BACKUP_FOLDER_ID];
+    const media = {
+      mimeType: 'application/json',
+      body: Readable.from(JSON.stringify(dados, null, 2)),
+    };
+
+    // Um arquivo por dia só: se já existe um com esse nome (ex: deploys
+    // repetidos no mesmo dia), atualiza o conteúdo dele em vez de criar outro.
+    const folderId = process.env.GOOGLE_DRIVE_BACKUP_FOLDER_ID;
+    const buscaQuery = folderId
+      ? `name = '${nomeArquivo}' and '${folderId}' in parents and trashed = false`
+      : `name = '${nomeArquivo}' and trashed = false`;
+    const existente = await drive.files.list({ q: buscaQuery, fields: 'files(id)', pageSize: 1 });
+
+    if (existente.data.files && existente.data.files.length > 0) {
+      await drive.files.update({ fileId: existente.data.files[0].id, media });
+      console.log(`✅ Backup do dia atualizado no Google Drive: ${nomeArquivo}`);
+    } else {
+      const requestBody = { name: nomeArquivo };
+      if (folderId) requestBody.parents = [folderId];
+      await drive.files.create({ requestBody, media });
+      console.log(`✅ Backup também salvo no Google Drive: ${nomeArquivo}`);
     }
-    await drive.files.create({
-      requestBody,
-      media: {
-        mimeType: 'application/json',
-        body: Readable.from(JSON.stringify(dados, null, 2)),
-      },
-    });
-    console.log(`✅ Backup também salvo no Google Drive: ${nomeArquivo}`);
+
     await limparBackupsAntigosNoDrive();
     return { ok: true };
   } catch (err) {
@@ -1811,6 +1906,16 @@ app.patch('/api/leads/:id', basicAuthAdminOuSdr, async (req, res) => {
     return res.status(403).json({ ok: false, erro: `Login da Juliane não pode editar o campo '${campo}'` });
   }
 
+  // Unifica variações de acento/maiúscula no nome do corretor (ex: "Lais" e
+  // "Laís" contam como a mesma pessoa) — tanto no campo principal quanto nas
+  // etiquetas de "repassado pra quem".
+  let valorFinal = valor;
+  if (campo === 'corretor') {
+    valorFinal = normalizarNomeCorretor(valor);
+  } else if (campo === 'corretores_repassados' && typeof valor === 'string') {
+    valorFinal = valor.split(',').map(n => normalizarNomeCorretor(n.trim())).filter(Boolean).join(', ');
+  }
+
   try {
     // Quando a SDR marca o lead como "Reaquecendo", registra o momento —
     // ajuda a saber há quanto tempo está nessa fila de reaquecimento.
@@ -1838,7 +1943,7 @@ app.patch('/api/leads/:id', basicAuthAdminOuSdr, async (req, res) => {
     } else {
       await pool.query(
         `UPDATE leads SET ${campo} = $1 WHERE id = $2`,
-        [valor, id]
+        [valorFinal, id]
       );
     }
     res.json({ ok: true });
