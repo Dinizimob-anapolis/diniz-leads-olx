@@ -1216,7 +1216,7 @@ function basicAuthAdminOuSdr(req, res, next) {
 // Campos que a SDR pode editar pelo CRM — o resto (aprovado, visita, proposta,
 // venda, corretor, origem etc.) continua só pra quem loga como admin.
 const CAMPOS_EDITAVEIS_SDR = ['status', 'notas_sdr', 'carteira_sdr', 'tarefa_sdr', 'tarefa_data', 'corretores_repassados', 'ultima_atualizacao_sdr', 'valor_imovel_sdr', 'buscando_sdr', 'aprovado', 'visita', 'proposta', 'documentacao', 'venda', 'corretor'];
-const CAMPOS_EDITAVEIS_JULIANE = ['status', 'notas_sdr', 'carteira_juliane', 'tarefa_sdr', 'tarefa_data', 'corretores_repassados', 'ultima_atualizacao_sdr', 'valor_imovel_sdr', 'buscando_sdr', 'corretor', 'aprovado', 'visita', 'proposta', 'documentacao', 'venda'];
+const CAMPOS_EDITAVEIS_JULIANE = ['status', 'notas_sdr', 'carteira_juliane', 'tarefa_sdr', 'tarefa_data', 'corretores_repassados', 'ultima_atualizacao_sdr', 'valor_imovel_sdr', 'buscando_sdr', 'corretor', 'aprovado', 'visita', 'proposta', 'documentacao', 'venda', 'origem'];
 
 // ─── ROTA: API DE LEADS (alimenta o dashboard) ───────────────
 app.get('/api/leads', basicAuthAdminOuSdr, async (req, res) => {
@@ -1466,21 +1466,23 @@ app.post('/api/leads/conferir', basicAuthAdminOuSdr, async (req, res) => {
   if (!nome || !nome.trim()) {
     return res.status(400).json({ ok: false, erro: 'Nome é obrigatório' });
   }
-  // Sempre marca as duas carteiras — assim, seja quem adicionar (SDR ou
-  // Juliane), o contato aparece nos dois Kanbans.
+  // Quem adiciona marca só a própria carteira — SDR marca carteira_sdr,
+  // Juliane marca carteira_juliane. Assim, o que a Juliane adiciona não
+  // desaparece do quadro dela (que agora esconde tudo que tem carteira_sdr).
   const origemNovo = req.authTipo === 'juliane' ? 'Juliane' : 'SDR';
+  const colunaCarteira = req.authTipo === 'juliane' ? 'carteira_juliane' : 'carteira_sdr';
   try {
     const existente = await pool.query('SELECT * FROM leads WHERE whatsapp = $1', [whatsappValido]);
     if (existente.rows.length > 0) {
       const atualizado = await pool.query(
-        `UPDATE leads SET carteira_sdr = true, carteira_juliane = true, status_alterado_em = now() WHERE id = $1 RETURNING *`,
+        `UPDATE leads SET ${colunaCarteira} = true, status_alterado_em = now() WHERE id = $1 RETURNING *`,
         [existente.rows[0].id]
       );
       return res.json({ ok: true, encontrado: true, criado: false, lead: atualizado.rows[0] });
     }
     const result = await pool.query(
-      `INSERT INTO leads (whatsapp, nome, origem, status, carteira_sdr, carteira_juliane, status_alterado_em)
-       VALUES ($1, $2, $3, 'Novo', true, true, now())
+      `INSERT INTO leads (whatsapp, nome, origem, status, ${colunaCarteira}, status_alterado_em)
+       VALUES ($1, $2, $3, 'Novo', true, now())
        RETURNING *`,
       [whatsappValido, nome.trim(), origemNovo]
     );
@@ -1489,7 +1491,7 @@ app.post('/api/leads/conferir', basicAuthAdminOuSdr, async (req, res) => {
     if (err.code === '23505') {
       const existente = await pool.query('SELECT * FROM leads WHERE whatsapp = $1', [whatsappValido]);
       const atualizado = await pool.query(
-        `UPDATE leads SET carteira_sdr = true, carteira_juliane = true, status_alterado_em = now() WHERE id = $1 RETURNING *`,
+        `UPDATE leads SET ${colunaCarteira} = true, status_alterado_em = now() WHERE id = $1 RETURNING *`,
         [existente.rows[0].id]
       );
       return res.json({ ok: true, encontrado: true, criado: false, lead: atualizado.rows[0] });
@@ -1561,6 +1563,8 @@ app.get('/api/leads/todos-resumo', basicAuthAdminOuSdr, async (req, res) => {
               outros_corretores, notas_sdr, reaquecido_em, tarefa_sdr, corretores_repassados,
               status_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr, tarefa_data, aprovado, visita, proposta, documentacao, venda
        FROM leads
+       WHERE (corretor IS NOT NULL AND corretor <> '')
+          OR (carteira_sdr IS NOT TRUE AND COALESCE(status, '') NOT IN ('Já comprou', 'Sem retorno', 'Venda efetuada', 'Compra futura'))
        ORDER BY distribuido_em DESC
        LIMIT 2000`
     );
@@ -1915,6 +1919,13 @@ app.patch('/api/leads/:id', basicAuthAdminOuSdr, async (req, res) => {
     valorFinal = normalizarNomeCorretor(valor);
   } else if (campo === 'corretores_repassados' && typeof valor === 'string') {
     valorFinal = valor.split(',').map(n => normalizarNomeCorretor(n.trim())).filter(Boolean).join(', ');
+  }
+
+  // Campos de data/hora não aceitam texto vazio no Postgres — se a pessoa
+  // limpou o campo (ex: apagou a data), grava como "sem data" (null).
+  const CAMPOS_DE_DATA = ['ultima_atualizacao_sdr', 'tarefa_data', 'ultimo_contato'];
+  if (CAMPOS_DE_DATA.includes(campo) && valorFinal === '') {
+    valorFinal = null;
   }
 
   try {
