@@ -937,21 +937,12 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
           \${STATUS_OPCOES.map(s => \`<option value="\${s}">\${s}</option>\`).join('')}
         </select><span class="saving-dot"></span>\`;
 
-        const aprovadoCheckNI = \`<div class="edit-check"><input type="checkbox" onchange="salvarCampo(\${item.id}, 'aprovado', this.checked, this, 'nao_identificado')"></div>\`;
-        const visitaCheckNI = \`<div class="edit-check"><input type="checkbox" onchange="salvarCampo(\${item.id}, 'visita', this.checked, this, 'nao_identificado')"></div>\`;
-        const propostaCheckNI = \`<div class="edit-check"><input type="checkbox" onchange="salvarCampo(\${item.id}, 'proposta', this.checked, this, 'nao_identificado')"></div>\`;
-        const vendaCheckNI = \`<div class="edit-check"><input type="checkbox" onchange="salvarCampo(\${item.id}, 'venda', this.checked, this, 'nao_identificado')"></div>\`;
-
         return \`<tr>
           <td><input type="text" class="edit-text edit-text-nome" value="" placeholder="— escrever nome —" onchange="salvarCampo(\${item.id}, 'nome', this.value, this, 'nao_identificado')"><div class="lead-meta mono">+\${item.whatsapp}</div></td>
           <td>\${imovelInputNI}</td>
           <td>\${origemSelectNI}</td>
           <td>\${corretorSelectNI}</td>
           <td>\${statusSelectNI}</td>
-          <td>\${aprovadoCheckNI}</td>
-          <td>\${visitaCheckNI}</td>
-          <td>\${propostaCheckNI}</td>
-          <td>\${vendaCheckNI}</td>
           <td class="time-ago">\${tempoRelativo(item.criado_em)}</td>
         </tr>\`;
       }
@@ -974,21 +965,12 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
         \${STATUS_OPCOES.map(s => \`<option value="\${s}" \${(item.status || 'Novo') === s ? 'selected' : ''}>\${s}</option>\`).join('')}
       </select><span class="saving-dot"></span>\`;
 
-      const aprovadoCheck = \`<div class="edit-check"><input type="checkbox" \${item.aprovado ? 'checked' : ''} onchange="salvarCampo(\${item.id}, 'aprovado', this.checked, this)"></div>\`;
-      const visitaCheck = \`<div class="edit-check"><input type="checkbox" \${item.visita ? 'checked' : ''} onchange="salvarCampo(\${item.id}, 'visita', this.checked, this)"></div>\`;
-      const propostaCheck = \`<div class="edit-check"><input type="checkbox" \${item.proposta ? 'checked' : ''} onchange="salvarCampo(\${item.id}, 'proposta', this.checked, this)"></div>\`;
-      const vendaCheck = \`<div class="edit-check"><input type="checkbox" \${item.venda ? 'checked' : ''} onchange="salvarCampo(\${item.id}, 'venda', this.checked, this)"></div>\`;
-
       return \`<tr>
         <td><input type="text" class="edit-text edit-text-nome" value="\${(item.nome || '').replace(/"/g, '&quot;')}" placeholder="Sem nome" onchange="salvarCampo(\${item.id}, 'nome', this.value, this)"><div class="lead-meta mono">+\${item.whatsapp}</div></td>
         <td>\${imovelInput}</td>
         <td>\${origemSelect}</td>
         <td>\${corretorSelect}</td>
         <td>\${statusSelect}</td>
-        <td>\${aprovadoCheck}</td>
-        <td>\${visitaCheck}</td>
-        <td>\${propostaCheck}</td>
-        <td>\${vendaCheck}</td>
         <td class="time-ago">\${tempoRelativo(item.distribuido_em)}</td>
       </tr>\`;
     }).join('');
@@ -1000,7 +982,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
     </div>\` : '';
 
     container.innerHTML = \`<table>
-      <thead><tr><th>Lead</th><th>Imóvel</th><th>Origem</th><th>Corretor</th><th>Status</th><th>Aprovado</th><th>Visita</th><th>Proposta</th><th>Venda</th><th>Chegou</th></tr></thead>
+      <thead><tr><th>Lead</th><th>Imóvel</th><th>Origem</th><th>Corretor</th><th>Status</th><th>Chegou</th></tr></thead>
       <tbody>\${linhasHtml}</tbody>
     </table>\${paginacaoTabelaHtml}\`;
   }
