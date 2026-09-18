@@ -636,13 +636,14 @@ function cardHtml(lead, corBorda, mostrarOrigemTriagem) {
   const tarefaAtrasada = !!(lead.tarefa_data && new Date(lead.tarefa_data) <= new Date());
   const classeDestaque = tarefaAtrasada ? 'atrasado' : (duplicado ? 'reaquecer' : '');
 
-  // Só na coluna de triagem "Repassado ao corretor" (quadro por corretor):
-  // mostra se foi a SDR que reaqueceu esse contato (fica bem chamativo) ou
-  // se ele chegou puro por um canal/sistema automático, sem corretor ainda.
-  const seloOrigemTriagem = mostrarOrigemTriagem
-    ? (lead.reaquecido_em
-        ? \`<div style="background:#e0453f;color:#fff;font-weight:800;font-size:11px;padding:4px 8px;border-radius:6px;margin-top:6px;text-align:center;">🔥 REAQUECIDO</div>\`
-        : \`<span class="badge" style="background:#eef0f6;color:var(--muted);border:1px solid var(--card-border);margin-top:6px;">📡 Canal</span>\`)
+  // O selo de reaquecido aparece em QUALQUER coluna (não só na triagem) —
+  // se a SDR reaqueceu esse contato, isso fica visível sempre. Já o selo
+  // "Canal" (chegou puro, sem corretor) só faz sentido mostrar na triagem.
+  const seloReaquecido = lead.reaquecido_em
+    ? \`<div style="background:#e0453f;color:#fff;font-weight:800;font-size:11px;padding:4px 8px;border-radius:6px;margin-top:6px;text-align:center;">🔥 REAQUECIDO</div>\`
+    : '';
+  const seloCanal = (mostrarOrigemTriagem && !lead.reaquecido_em)
+    ? \`<span class="badge" style="background:#eef0f6;color:var(--muted);border:1px solid var(--card-border);margin-top:6px;">📡 Canal</span>\`
     : '';
 
   return \`
@@ -652,7 +653,7 @@ function cardHtml(lead, corBorda, mostrarOrigemTriagem) {
         \${lead.valor_imovel_sdr ? \`<span style="font-size:10px;font-weight:700;color:#17a34a;white-space:nowrap;">💰 \${lead.valor_imovel_sdr}</span>\` : ''}
       </div>
       <div class="lead-meta">\${lead.whatsapp || 'sem WhatsApp'}</div>
-      \${seloOrigemTriagem}
+      \${seloReaquecido}\${seloCanal}
       \${dataEtapa ? \`<div class="lead-meta">Nessa etapa desde \${dataEtapa}</div>\` : ''}
       \${lead.origem ? \`<span class="badge origem">\${lead.origem}</span>\` : ''}
       \${duplicado ? \`<span class="badge warn">⚠️ \${envolvidos.length}: \${envolvidos.join(', ')}</span>\` : ''}
@@ -741,7 +742,9 @@ function abrirModalLead(id) {
       </div>
     </div>
     <button class="primary-btn" id="modal-salvar" style="width:100%;margin-top:10px;">💾 Salvar</button>
-    \${ABA_CRM === 'sdr' ? '<button class="close-btn" id="modal-remover" style="width:100%;margin-top:8px;color:#b5720a;border-color:var(--warn-border);">Remover da carteira</button>' : ''}
+    \${ABA_CRM === 'sdr'
+      ? '<button class="close-btn" id="modal-remover" style="width:100%;margin-top:8px;color:#b5720a;border-color:var(--warn-border);">Remover da carteira</button>'
+      : '<button class="close-btn" id="modal-excluir" style="width:100%;margin-top:8px;color:#e0453f;border-color:#e0453f;">🗑️ Excluir permanentemente</button>'}
   \`;
 
   document.getElementById('overlay').classList.add('show');
@@ -751,6 +754,20 @@ function abrirModalLead(id) {
     btnRemover.addEventListener('click', () => {
       if (!confirm(\`Remover "\${lead.nome || 'esse contato'}" da carteira da SDR? Ele some desse Kanban, mas continua no sistema.\`)) return;
       salvarCampo(id, 'carteira_sdr', false, () => { fecharModal(); carregar(); });
+    });
+  }
+  const btnExcluir = document.getElementById('modal-excluir');
+  if (btnExcluir) {
+    btnExcluir.addEventListener('click', () => {
+      if (!confirm(\`Excluir "\${lead.nome || 'esse contato'}" PERMANENTEMENTE? Isso apaga de vez do sistema — some do seu CRM, do CRM da SDR e do /dashboard. Não tem como desfazer (só recuperando de um backup). Confirma?\`)) return;
+      fetch(\`/api/leads/\${id}\`, { method: 'DELETE' })
+        .then(res => res.json())
+        .then(data => {
+          if (!data.ok) { alert('Não consegui excluir: ' + (data.erro || 'erro desconhecido')); return; }
+          fecharModal();
+          carregar();
+        })
+        .catch(() => alert('Não consegui excluir. Confere sua internet e tenta de novo.'));
     });
   }
   const selectStatus = document.getElementById('modal-status');
