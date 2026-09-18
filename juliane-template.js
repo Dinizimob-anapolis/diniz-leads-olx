@@ -294,8 +294,8 @@ const JULIANE_HTML = `<!DOCTYPE html>
 </head>
 <body>
 
-<h1>Carteira — Juliane</h1>
-<div class="sub">Leads a partir da visita agendada — chegam aqui sozinhos quando a SDR agenda. Arraste entre as colunas pra atualizar.</div>
+<h1 id="titulo-pagina">Carteira por corretor</h1>
+<div class="sub" id="subtitulo-pagina">Quem já tem corretor cai direto na coluna dele. Sem corretor, cai em "Repassado ao corretor" pra você organizar.</div>
 
 <div class="stats" id="stats"></div>
 
@@ -312,16 +312,22 @@ const JULIANE_HTML = `<!DOCTYPE html>
 </div>
 
 <script>
-let TODOS_LEADS = [];
+let LEADS_JULIANE = [];
+let LEADS_SDR = [];
+let ABA_CRM = 'juliane'; // 'juliane' ou 'sdr'
 let BUSCA = '';
 let LEAD_ARRASTADO = null;
 let ULTIMO_ADICIONADO_ID = null;
 
-const COLUNAS = ['Novo', 'Reaquecendo', 'Aguardando retorno', 'Repassado ao corretor', 'Visita agendada', 'Compra futura', 'Já comprou', 'Venda efetuada', 'Sem retorno'];
+function leadsAtivos() {
+  return ABA_CRM === 'sdr' ? LEADS_SDR : LEADS_JULIANE;
+}
+
+const COLUNAS_FUNIL = ['Novo', 'Reaquecendo', 'Aguardando retorno', 'Repassado ao corretor', 'Visita agendada', 'Compra futura', 'Já comprou', 'Venda efetuada', 'Sem retorno'];
 
 // Paleta viva, uma cor por coluna — usada no cabeçalho e na barrinha
-// lateral de cada cartão daquela coluna.
-const CORES_COLUNA = {
+// lateral de cada cartão daquela coluna. (Quadro em formato de funil — usado na aba "CRM da SDR")
+const CORES_COLUNA_FUNIL = {
   'Novo':                   { header: '#3b6cf0', accent: '#3b6cf0', texto: '#ffffff' },
   'Reaquecendo':            { header: '#f2941c', accent: '#f2941c', texto: '#ffffff' },
   'Aguardando retorno':     { header: '#9b4de0', accent: '#9b4de0', texto: '#ffffff' },
@@ -333,8 +339,31 @@ const CORES_COLUNA = {
   'Sem retorno':            { header: '#6b7280', accent: '#6b7280', texto: '#ffffff' },
 };
 
+// Nome fixo da coluna de triagem — leads sem corretor definido caem aqui.
+const COLUNA_TRIAGEM = 'Repassado ao corretor';
+
+// Quadro por corretor — usado na aba principal da Juliane. As colunas são
+// montadas na hora, com base em quem realmente tem lead no sistema.
+function colunasCorretorAtual() {
+  const nomes = new Set();
+  LEADS_JULIANE.forEach(l => { if (l.corretor && l.corretor.trim()) nomes.add(l.corretor.trim()); });
+  return [COLUNA_TRIAGEM, ...Array.from(nomes).sort()];
+}
+
+function corColunaCorretor(coluna) {
+  if (coluna === COLUNA_TRIAGEM) return { header: '#f2941c', accent: '#f2941c', texto: '#ffffff' };
+  const cor = corDoCorretor(coluna);
+  return { header: cor, accent: cor, texto: '#ffffff' };
+}
+
+// Em qual coluna esse lead cai, no quadro por corretor: quem já tem corretor
+// definido vai direto pra coluna dele; sem corretor, cai na triagem.
+function colunaCorretorDoLead(lead) {
+  return (lead.corretor && lead.corretor.trim()) ? lead.corretor.trim() : COLUNA_TRIAGEM;
+}
+
 function statusDoLead(lead) {
-  return COLUNAS.includes(lead.status) ? lead.status : 'Novo';
+  return COLUNAS_FUNIL.includes(lead.status) ? lead.status : 'Novo';
 }
 
 function temHistoricoDuplicado(lead) {
@@ -373,37 +402,58 @@ function renderChipsCorretores(lead) {
 
 async function carregar() {
   try {
-    const res = await fetch('/api/leads/carteira-juliane', { cache: 'no-store' });
-    const data = await res.json();
-    TODOS_LEADS = data.leads || data || [];
+    const [resTodos, resSdr] = await Promise.all([
+      fetch('/api/leads/todos-resumo', { cache: 'no-store' }),
+      fetch('/api/leads/carteira-sdr', { cache: 'no-store' }),
+    ]);
+    const dataTodos = await resTodos.json();
+    const dataSdr = await resSdr.json();
+    LEADS_JULIANE = dataTodos.leads || dataTodos || [];
+    LEADS_SDR = dataSdr.leads || dataSdr || [];
     render();
   } catch (err) {
     document.getElementById('board').innerHTML = '<div style="color:var(--muted);padding:20px;">Erro ao carregar leads. Recarregue a página.</div>';
   }
 }
 
+function trocarAba(aba) {
+  ABA_CRM = aba;
+  document.getElementById('titulo-pagina').textContent = aba === 'sdr' ? 'Carteira — SDR' : 'Carteira por corretor';
+  document.getElementById('subtitulo-pagina').textContent = aba === 'sdr'
+    ? 'Você está vendo e editando a carteira da SDR.'
+    : 'Quem já tem corretor cai direto na coluna dele. Sem corretor, cai em "Repassado ao corretor" pra você organizar.';
+  render();
+}
+
 function leadsFiltrados() {
-  if (!BUSCA) return TODOS_LEADS;
+  const todos = leadsAtivos();
+  if (!BUSCA) return todos;
   const b = BUSCA.toLowerCase();
-  return TODOS_LEADS.filter(l => (l.nome || '').toLowerCase().includes(b) || (l.whatsapp || '').includes(b));
+  return todos.filter(l => (l.nome || '').toLowerCase().includes(b) || (l.whatsapp || '').includes(b));
 }
 
 function render() {
+  const leadsBase = leadsAtivos();
   const leads = leadsFiltrados();
-  const reaquecerCount = TODOS_LEADS.filter(temHistoricoDuplicado).length;
+  const reaquecerCount = leadsBase.filter(temHistoricoDuplicado).length;
 
-  const vgvTotal = TODOS_LEADS.reduce((soma, lead) => soma + parseValorImovel(lead.valor_imovel_sdr), 0);
+  const vgvTotal = leadsBase.reduce((soma, lead) => soma + parseValorImovel(lead.valor_imovel_sdr), 0);
 
   document.getElementById('stats').innerHTML = \`
-    <div class="stat"><span class="num">\${TODOS_LEADS.length}</span>na carteira</div>
+    <div class="stat"><span class="num">\${leadsBase.length}</span>\${ABA_CRM === 'sdr' ? 'na carteira' : 'no sistema'}</div>
     <div class="stat" style="color:#b5720a"><span class="num">\${reaquecerCount}</span>pra reaquecer</div>
     \${vgvTotal > 0 ? \`<div class="stat" style="color:#17a34a"><span class="num">\${formatarReais(vgvTotal)}</span>VGV total</div>\` : ''}
+    <button class="stat" id="btn-trocar-aba" style="cursor:pointer;border:1px solid var(--accent);color:var(--accent);font-weight:700;font-family:inherit;background:#fff;" onclick="trocarAba('\${ABA_CRM === 'sdr' ? 'juliane' : 'sdr'}')">\${ABA_CRM === 'sdr' ? '← Voltar pro quadro por corretor' : 'Ver CRM da SDR →'}</button>
   \`;
 
+  const colunasAtuais = ABA_CRM === 'sdr' ? COLUNAS_FUNIL : colunasCorretorAtual();
+  const funcaoColuna = ABA_CRM === 'sdr' ? statusDoLead : colunaCorretorDoLead;
+  const funcaoCor = ABA_CRM === 'sdr' ? (c => CORES_COLUNA_FUNIL[c]) : corColunaCorretor;
+
   const board = document.getElementById('board');
-  board.innerHTML = COLUNAS.map(coluna => {
-    const leadsColuna = leads.filter(l => statusDoLead(l) === coluna);
-    const cor = CORES_COLUNA[coluna];
+  board.innerHTML = colunasAtuais.map(coluna => {
+    const leadsColuna = leads.filter(l => funcaoColuna(l) === coluna);
+    const cor = funcaoCor(coluna);
     const vgvColuna = leadsColuna.reduce((soma, lead) => soma + parseValorImovel(lead.valor_imovel_sdr), 0);
     return \`
       <div class="column" data-coluna="\${coluna}">
@@ -415,7 +465,7 @@ function render() {
           \${vgvColuna > 0 ? \`<div style="font-size:11px;font-weight:700;opacity:0.95;margin-top:2px;">\${formatarReais(vgvColuna)}</div>\` : ''}
         </div>
         <div class="column-cards" data-coluna="\${coluna}">
-          \${leadsColuna.map(lead => cardHtml(lead, cor.accent)).join('') || ''}
+          \${leadsColuna.map(lead => cardHtml(lead, cor.accent, coluna === COLUNA_TRIAGEM && ABA_CRM !== 'sdr')).join('') || ''}
         </div>
       </div>
     \`;
@@ -441,8 +491,16 @@ function render() {
       e.preventDefault();
       col.closest('.column').classList.remove('dragover');
       if (LEAD_ARRASTADO) {
-        const novoStatus = col.dataset.coluna;
-        salvarCampo(LEAD_ARRASTADO, 'status', novoStatus, () => { render(); });
+        const colunaDestino = col.dataset.coluna;
+        if (ABA_CRM === 'sdr') {
+          salvarCampo(LEAD_ARRASTADO, 'status', colunaDestino, () => { render(); });
+        } else {
+          // Quadro por corretor: arrastar pra uma coluna de corretor ATRIBUI
+          // aquele corretor de verdade (afeta o /dashboard). Arrastar de volta
+          // pra "Repassado ao corretor" deixa o corretor vazio novamente.
+          const novoCorretor = colunaDestino === COLUNA_TRIAGEM ? '' : colunaDestino;
+          salvarCampo(LEAD_ARRASTADO, 'corretor', novoCorretor, () => { render(); });
+        }
         LEAD_ARRASTADO = null;
       }
     });
@@ -496,13 +554,23 @@ function formatarReais(valor) {
   return valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function cardHtml(lead, corBorda) {
+function cardHtml(lead, corBorda, mostrarOrigemTriagem) {
   const duplicado = temHistoricoDuplicado(lead);
   const envolvidos = corretoresEnvolvidos(lead);
   const chipsRepassados = corretoresRepassadosLista(lead);
   const dataEtapa = formatarData(lead.status_alterado_em || lead.distribuido_em);
   const tarefaAtrasada = !!(lead.tarefa_data && new Date(lead.tarefa_data) <= new Date());
   const classeDestaque = tarefaAtrasada ? 'atrasado' : (duplicado ? 'reaquecer' : '');
+
+  // Só na coluna de triagem "Repassado ao corretor" (quadro por corretor):
+  // mostra se foi a SDR que reaqueceu esse contato (fica bem chamativo) ou
+  // se ele chegou puro por um canal/sistema automático, sem corretor ainda.
+  const seloOrigemTriagem = mostrarOrigemTriagem
+    ? (lead.reaquecido_em
+        ? \`<div style="background:#e0453f;color:#fff;font-weight:800;font-size:11px;padding:4px 8px;border-radius:6px;margin-top:6px;text-align:center;">🔥 REAQUECIDO</div>\`
+        : \`<span class="badge" style="background:#eef0f6;color:var(--muted);border:1px solid var(--card-border);margin-top:6px;">📡 Canal</span>\`)
+    : '';
+
   return \`
     <div class="lead \${classeDestaque}" draggable="true" data-id="\${lead.id}" style="\${classeDestaque ? '' : \`border-left-color:\${corBorda}\`}">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:6px;">
@@ -510,6 +578,7 @@ function cardHtml(lead, corBorda) {
         \${lead.valor_imovel_sdr ? \`<span style="font-size:10px;font-weight:700;color:#17a34a;white-space:nowrap;">💰 \${lead.valor_imovel_sdr}</span>\` : ''}
       </div>
       <div class="lead-meta">\${lead.whatsapp || 'sem WhatsApp'}</div>
+      \${seloOrigemTriagem}
       \${dataEtapa ? \`<div class="lead-meta">Nessa etapa desde \${dataEtapa}</div>\` : ''}
       \${lead.origem ? \`<span class="badge origem">\${lead.origem}</span>\` : ''}
       \${duplicado ? \`<span class="badge warn">⚠️ \${envolvidos.length}: \${envolvidos.join(', ')}</span>\` : ''}
@@ -523,7 +592,7 @@ function cardHtml(lead, corBorda) {
 }
 
 function abrirModalLead(id) {
-  const lead = TODOS_LEADS.find(l => String(l.id) === String(id));
+  const lead = leadsAtivos().find(l => String(l.id) === String(id));
   if (!lead) return;
   const duplicado = temHistoricoDuplicado(lead);
   const envolvidos = corretoresEnvolvidos(lead);
@@ -539,11 +608,19 @@ function abrirModalLead(id) {
     \${lead.origem ? \`<span class="badge origem">\${lead.origem}</span>\` : ''}
     \${duplicado ? \`<span class="badge warn">⚠️ Já foi para \${envolvidos.length}: \${envolvidos.join(', ')} — não reenvie, reaqueça direto</span>\` : (lead.corretor ? \`<span class="badge origem">Corretor: \${lead.corretor}</span>\` : '')}
 
-    <label>Status</label>
-    <select id="modal-status">
-      \${COLUNAS.map(c => \`<option value="\${c}" \${statusDoLead(lead) === c ? 'selected' : ''}>\${c}</option>\`).join('')}
-    </select>
-    \${lead.status_alterado_em ? \`<div class="lead-meta" style="margin-top:4px;">Nessa etapa desde \${formatarData(lead.status_alterado_em)}</div>\` : ''}
+    \${ABA_CRM === 'sdr' ? \`
+      <label>Status</label>
+      <select id="modal-status">
+        \${COLUNAS_FUNIL.map(c => \`<option value="\${c}" \${statusDoLead(lead) === c ? 'selected' : ''}>\${c}</option>\`).join('')}
+      </select>
+      \${lead.status_alterado_em ? \`<div class="lead-meta" style="margin-top:4px;">Nessa etapa desde \${formatarData(lead.status_alterado_em)}</div>\` : ''}
+    \` : \`
+      <label>Corretor</label>
+      <select id="modal-corretor">
+        <option value="" \${!lead.corretor ? 'selected' : ''}>— Repassado ao corretor (sem corretor ainda) —</option>
+        \${colunasCorretorAtual().filter(c => c !== COLUNA_TRIAGEM).map(c => \`<option value="\${c}" \${lead.corretor === c ? 'selected' : ''}>\${c}</option>\`).join('')}
+      </select>
+    \`}
 
     <label>Corretor(es)</label>
     <div id="modal-chips-corretores">\${renderChipsCorretores(lead)}</div>
@@ -579,18 +656,30 @@ function abrirModalLead(id) {
       </div>
     </div>
     <button class="primary-btn" id="modal-salvar" style="width:100%;margin-top:10px;">💾 Salvar</button>
-    <button class="close-btn" id="modal-remover" style="width:100%;margin-top:8px;color:#b5720a;border-color:var(--warn-border);">Remover da carteira</button>
+    \${ABA_CRM === 'sdr' ? '<button class="close-btn" id="modal-remover" style="width:100%;margin-top:8px;color:#b5720a;border-color:var(--warn-border);">Remover da carteira</button>' : ''}
   \`;
 
   document.getElementById('overlay').classList.add('show');
   document.getElementById('modal-fechar').addEventListener('click', fecharModal);
-  document.getElementById('modal-remover').addEventListener('click', () => {
-    if (!confirm(\`Remover "\${lead.nome || 'esse contato'}" da sua carteira? Ele some do seu Kanban, mas continua no sistema.\`)) return;
-    salvarCampo(id, 'carteira_juliane', false, () => { fecharModal(); carregar(); });
-  });
-  document.getElementById('modal-status').addEventListener('change', e => {
-    salvarCampo(id, 'status', e.target.value, () => { render(); abrirModalLead(id); });
-  });
+  const btnRemover = document.getElementById('modal-remover');
+  if (btnRemover) {
+    btnRemover.addEventListener('click', () => {
+      if (!confirm(\`Remover "\${lead.nome || 'esse contato'}" da carteira da SDR? Ele some desse Kanban, mas continua no sistema.\`)) return;
+      salvarCampo(id, 'carteira_sdr', false, () => { fecharModal(); carregar(); });
+    });
+  }
+  const selectStatus = document.getElementById('modal-status');
+  if (selectStatus) {
+    selectStatus.addEventListener('change', e => {
+      salvarCampo(id, 'status', e.target.value, () => { render(); abrirModalLead(id); });
+    });
+  }
+  const selectCorretor = document.getElementById('modal-corretor');
+  if (selectCorretor) {
+    selectCorretor.addEventListener('change', e => {
+      salvarCampo(id, 'corretor', e.target.value, () => { render(); abrirModalLead(id); });
+    });
+  }
   document.getElementById('modal-salvar').addEventListener('click', () => {
     const notas = document.getElementById('modal-notas').value;
     const buscando = document.getElementById('modal-buscando').value;
@@ -767,7 +856,7 @@ async function salvarCampo(id, campo, valor, aoTerminar) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ campo, valor }),
     });
-    const lead = TODOS_LEADS.find(l => String(l.id) === String(id));
+    const lead = leadsAtivos().find(l => String(l.id) === String(id));
     if (lead) lead[campo] = valor;
     if (aoTerminar) aoTerminar();
   } catch (err) {
