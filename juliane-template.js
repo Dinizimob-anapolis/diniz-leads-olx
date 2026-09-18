@@ -382,6 +382,16 @@ function corretoresEnvolvidos(lead) {
 }
 
 const PALETA_CORES = ['#3b6cf0', '#e0453f', '#f2941c', '#12b76a', '#9b4de0', '#e8479e', '#0aa5c2', '#c9a20a'];
+const NOMES_OFICIAIS_CORRETORES = ['Laís', 'Nalcio', 'Renata', 'Junior', 'Thayná', 'Amanda', 'Juliane', 'Bruno'];
+function normalizarNomeCorretor(nomeDigitado) {
+  const chave = (nomeDigitado || '').trim();
+  if (!chave) return chave;
+  const semAcento = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  const alvo = semAcento(chave);
+  const oficial = NOMES_OFICIAIS_CORRETORES.find(n => semAcento(n) === alvo);
+  return oficial || chave;
+}
+
 function corDoCorretor(nome) {
   let hash = 0;
   for (let i = 0; i < nome.length; i++) hash = (hash * 31 + nome.charCodeAt(i)) >>> 0;
@@ -739,7 +749,8 @@ function ligarEventosChips(id, lead, chipsContainer) {
   const addBtn = chipsContainer.querySelector('#add-corretor-btn');
   if (addBtn) {
     addBtn.addEventListener('click', () => {
-      const nome = prompt('Nome do corretor:');
+      let nome = prompt('Nome do corretor:');
+      if (nome) nome = normalizarNomeCorretor(nome);
       if (!nome || !nome.trim()) return;
       const atual = corretoresRepassadosLista(lead);
       if (!atual.includes(nome.trim())) atual.push(nome.trim());
