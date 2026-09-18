@@ -193,6 +193,8 @@ const JULIANE_HTML = `<!DOCTYPE html>
     padding: 20px;
     width: 100%;
     max-width: 420px;
+    max-height: 85vh;
+    overflow-y: auto;
     box-shadow: 0 10px 40px rgba(0,0,0,0.2);
   }
   .modal h2 { font-size: 17px; margin: 0 0 4px; }
@@ -274,6 +276,35 @@ const JULIANE_HTML = `<!DOCTYPE html>
     line-height: 1;
     padding: 0 0 0 2px;
     opacity: 0.7;
+  }
+  .etapas-venda {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 4px;
+  }
+  .etapa-item {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 12px;
+    background: #f4f5f9;
+    border: 1px solid var(--card-border);
+    border-radius: 8px;
+    padding: 6px 10px;
+    cursor: pointer;
+  }
+  .etapa-item input[type="checkbox"] {
+    width: 15px;
+    height: 15px;
+    cursor: pointer;
+    accent-color: #17a34a;
+  }
+  .etapa-item.marcada {
+    background: #eafcea;
+    border-color: #17a34a;
+    color: #17a34a;
+    font-weight: 700;
   }
   .chip-add {
     display: inline-flex;
@@ -652,6 +683,15 @@ function abrirModalLead(id) {
       </div>
     </div>
 
+    <label>Etapa da venda</label>
+    <div class="etapas-venda" id="etapas-venda">
+      <label class="etapa-item \${lead.aprovado ? 'marcada' : ''}"><input type="checkbox" data-campo="aprovado" \${lead.aprovado ? 'checked' : ''}> Aprovado</label>
+      <label class="etapa-item \${lead.visita ? 'marcada' : ''}"><input type="checkbox" data-campo="visita" \${lead.visita ? 'checked' : ''}> Visita</label>
+      <label class="etapa-item \${lead.documentacao ? 'marcada' : ''}"><input type="checkbox" data-campo="documentacao" \${lead.documentacao ? 'checked' : ''}> Documentação</label>
+      <label class="etapa-item \${lead.proposta ? 'marcada' : ''}"><input type="checkbox" data-campo="proposta" \${lead.proposta ? 'checked' : ''}> Proposta</label>
+      <label class="etapa-item \${lead.venda ? 'marcada' : ''}"><input type="checkbox" data-campo="venda" \${lead.venda ? 'checked' : ''}> Venda</label>
+    </div>
+
     <label>Notas</label>
     <textarea id="modal-notas" placeholder="O que já foi conversado, quando retomar...">\${lead.notas_sdr || ''}</textarea>
 
@@ -731,6 +771,16 @@ function abrirModalLead(id) {
 
   const chipsContainer = document.getElementById('modal-chips-corretores');
   if (chipsContainer) ligarEventosChips(id, lead, chipsContainer);
+
+  document.querySelectorAll('#etapas-venda input[type="checkbox"]').forEach(input => {
+    input.addEventListener('change', e => {
+      const campo = e.target.dataset.campo;
+      const valorNovo = e.target.checked;
+      lead[campo] = valorNovo;
+      e.target.closest('.etapa-item').classList.toggle('marcada', valorNovo);
+      salvarCampo(id, campo, valorNovo, () => { render(); flashModal(); });
+    });
+  });
 }
 
 function ligarEventosChips(id, lead, chipsContainer) {
