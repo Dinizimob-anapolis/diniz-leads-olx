@@ -76,7 +76,7 @@ const pool = new Pool({
 const THROTTLE_AVISO_MS = 6 * 60 * 60 * 1000; // 6 horas
 
 // Campos do funil que podem ser editados manualmente pelo dashboard
-const CAMPOS_EDITAVEIS = ['nome', 'origem', 'corretor', 'interesse', 'status', 'aprovado', 'visita', 'proposta', 'venda', 'imovel_desc', 'sem_retorno', 'em_andamento', 'notas_sdr', 'carteira_sdr', 'tarefa_sdr', 'tarefa_data', 'corretores_repassados', 'ultima_atualizacao_sdr', 'valor_imovel_sdr', 'carteira_juliane', 'buscando_sdr'];
+const CAMPOS_EDITAVEIS = ['nome', 'origem', 'corretor', 'interesse', 'status', 'aprovado', 'visita', 'proposta', 'venda', 'imovel_desc', 'sem_retorno', 'em_andamento', 'notas_sdr', 'carteira_sdr', 'tarefa_sdr', 'tarefa_data', 'corretores_repassados', 'ultima_atualizacao_sdr', 'valor_imovel_sdr', 'carteira_juliane', 'buscando_sdr', 'documentacao'];
 
 async function initDb() {
   if (!process.env.DATABASE_URL) {
@@ -125,7 +125,8 @@ async function initDb() {
       ADD COLUMN IF NOT EXISTS valor_imovel_sdr TEXT,
       ADD COLUMN IF NOT EXISTS carteira_juliane BOOLEAN DEFAULT false,
       ADD COLUMN IF NOT EXISTS tarefa_data TIMESTAMPTZ,
-      ADD COLUMN IF NOT EXISTS buscando_sdr TEXT;
+      ADD COLUMN IF NOT EXISTS buscando_sdr TEXT,
+      ADD COLUMN IF NOT EXISTS documentacao BOOLEAN DEFAULT false;
   `);
 
   // ─── Tabela de backups automáticos (dump diário de todos os leads) ─
@@ -1214,8 +1215,8 @@ function basicAuthAdminOuSdr(req, res, next) {
 
 // Campos que a SDR pode editar pelo CRM — o resto (aprovado, visita, proposta,
 // venda, corretor, origem etc.) continua só pra quem loga como admin.
-const CAMPOS_EDITAVEIS_SDR = ['status', 'notas_sdr', 'carteira_sdr', 'tarefa_sdr', 'tarefa_data', 'corretores_repassados', 'ultima_atualizacao_sdr', 'valor_imovel_sdr', 'buscando_sdr'];
-const CAMPOS_EDITAVEIS_JULIANE = ['status', 'notas_sdr', 'carteira_juliane', 'tarefa_sdr', 'tarefa_data', 'corretores_repassados', 'ultima_atualizacao_sdr', 'valor_imovel_sdr', 'buscando_sdr', 'corretor'];
+const CAMPOS_EDITAVEIS_SDR = ['status', 'notas_sdr', 'carteira_sdr', 'tarefa_sdr', 'tarefa_data', 'corretores_repassados', 'ultima_atualizacao_sdr', 'valor_imovel_sdr', 'buscando_sdr', 'aprovado', 'visita', 'proposta', 'documentacao', 'venda'];
+const CAMPOS_EDITAVEIS_JULIANE = ['status', 'notas_sdr', 'carteira_juliane', 'tarefa_sdr', 'tarefa_data', 'corretores_repassados', 'ultima_atualizacao_sdr', 'valor_imovel_sdr', 'buscando_sdr', 'corretor', 'aprovado', 'visita', 'proposta', 'documentacao', 'venda'];
 
 // ─── ROTA: API DE LEADS (alimenta o dashboard) ───────────────
 app.get('/api/leads', basicAuthAdminOuSdr, async (req, res) => {
@@ -1510,7 +1511,7 @@ app.get('/api/leads/carteira-sdr', basicAuthAdminOuSdr, async (req, res) => {
     const result = await pool.query(
       `SELECT id, whatsapp, nome, corretor, origem, status, distribuido_em,
               outros_corretores, notas_sdr, reaquecido_em, tarefa_sdr, corretores_repassados,
-              status_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr, tarefa_data
+              status_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr, tarefa_data, aprovado, visita, proposta, documentacao, venda
        FROM leads
        WHERE carteira_sdr = true
        ORDER BY distribuido_em DESC`
@@ -1534,7 +1535,7 @@ app.get('/api/leads/carteira-juliane', basicAuthAdminOuSdr, async (req, res) => 
     const result = await pool.query(
       `SELECT id, whatsapp, nome, corretor, origem, status, distribuido_em,
               outros_corretores, notas_sdr, reaquecido_em, tarefa_sdr, corretores_repassados,
-              status_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr, tarefa_data
+              status_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr, tarefa_data, aprovado, visita, proposta, documentacao, venda
        FROM leads
        WHERE carteira_juliane = true
        ORDER BY distribuido_em DESC`
@@ -1558,7 +1559,7 @@ app.get('/api/leads/todos-resumo', basicAuthAdminOuSdr, async (req, res) => {
     const result = await pool.query(
       `SELECT id, whatsapp, nome, corretor, origem, status, distribuido_em,
               outros_corretores, notas_sdr, reaquecido_em, tarefa_sdr, corretores_repassados,
-              status_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr, tarefa_data
+              status_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr, tarefa_data, aprovado, visita, proposta, documentacao, venda
        FROM leads
        ORDER BY distribuido_em DESC
        LIMIT 2000`
