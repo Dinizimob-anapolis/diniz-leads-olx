@@ -1120,7 +1120,7 @@ function basicAuthAdminOuSdr(req, res, next) {
 // Campos que a SDR pode editar pelo CRM — o resto (aprovado, visita, proposta,
 // venda, corretor, origem etc.) continua só pra quem loga como admin.
 const CAMPOS_EDITAVEIS_SDR = ['status', 'notas_sdr', 'carteira_sdr', 'tarefa_sdr', 'tarefa_data', 'corretores_repassados', 'ultima_atualizacao_sdr', 'valor_imovel_sdr', 'buscando_sdr'];
-const CAMPOS_EDITAVEIS_JULIANE = ['status', 'notas_sdr', 'carteira_juliane', 'tarefa_sdr', 'tarefa_data', 'corretores_repassados', 'ultima_atualizacao_sdr', 'valor_imovel_sdr', 'buscando_sdr'];
+const CAMPOS_EDITAVEIS_JULIANE = ['status', 'notas_sdr', 'carteira_juliane', 'tarefa_sdr', 'tarefa_data', 'corretores_repassados', 'ultima_atualizacao_sdr', 'valor_imovel_sdr', 'buscando_sdr', 'corretor'];
 
 // ─── ROTA: API DE LEADS (alimenta o dashboard) ───────────────
 app.get('/api/leads', basicAuthAdminOuSdr, async (req, res) => {
@@ -1441,12 +1441,36 @@ app.get('/api/leads/carteira-juliane', basicAuthAdminOuSdr, async (req, res) => 
               outros_corretores, notas_sdr, reaquecido_em, tarefa_sdr, corretores_repassados,
               status_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr, tarefa_data
        FROM leads
-       WHERE carteira_juliane = true OR carteira_sdr = true
+       WHERE carteira_juliane = true
        ORDER BY distribuido_em DESC`
     );
     res.json({ ok: true, leads: result.rows });
   } catch (err) {
     console.error('Erro ao listar carteira da Juliane:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
+// Lista TODOS os leads do sistema (não só uma carteira) — alimenta o quadro
+// da Juliane organizado por corretor: quem já tem corretor definido cai na
+// coluna dele, quem não tem cai em "Repassado ao corretor" pra ela organizar.
+app.get('/api/leads/todos-resumo', basicAuthAdminOuSdr, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  }
+  try {
+    const result = await pool.query(
+      `SELECT id, whatsapp, nome, corretor, origem, status, distribuido_em,
+              outros_corretores, notas_sdr, reaquecido_em, tarefa_sdr, corretores_repassados,
+              status_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr, tarefa_data
+       FROM leads
+       ORDER BY distribuido_em DESC
+       LIMIT 2000`
+    );
+    res.json({ ok: true, leads: result.rows });
+  } catch (err) {
+    console.error('Erro ao listar todos os leads (resumo):', err);
     res.status(500).json({ ok: false, erro: err.message });
   }
 });
