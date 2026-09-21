@@ -1665,11 +1665,14 @@ app.get('/api/leads/todos-resumo', basicAuthAdminOuSdr, async (req, res) => {
               status_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr, tarefa_data, aprovado, visita, proposta, documentacao, venda, carteira_sdr
        FROM leads
        WHERE (
-           -- Chegou a partir de 17/09 (qualquer situação)...
-           distribuido_em >= '2026-09-17'
-           -- ...ou a SDR já redirecionou (status = "Repassado ao corretor"
-           -- na tela dela), não importa a data de chegada.
+           -- Já tem corretor definido: aparece sempre, vai pra coluna dele.
+           (corretor IS NOT NULL AND corretor <> '')
+           -- A SDR já decidiu repassar (mesmo sem ter escolhido o corretor
+           -- ainda): aparece, cai em "Novo Lead" até ela escolher.
            OR status = 'Repassado ao corretor'
+           -- Chegou a partir de 17/09 E a SDR nunca pegou pra trabalhar
+           -- (carteira_sdr não marcada) — genuinamente intocado.
+           OR (distribuido_em >= '2026-09-17' AND carteira_sdr IS NOT TRUE)
          )
        ORDER BY COALESCE(status_alterado_em, distribuido_em) DESC
        LIMIT 2000`
@@ -2228,7 +2231,7 @@ app.get('/api/admin/backups/:id/download', basicAuth, async (req, res) => {
 
 // Dispara um backup manualmente, sem esperar o horário automático
 // (aceita GET também, pra poder testar só colando o link no navegador)
-app.all('/api/admin/backups/agora', basicAuth, async (req, res) => {
+app.all('/api/admin/backups/agora', basicAuthAdminOuSdr, async (req, res) => {
   if (!process.env.DATABASE_URL) {
     return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
   }
@@ -2250,6 +2253,35 @@ app.all('/api/admin/backups/agora', basicAuth, async (req, res) => {
 // Só consulta, não muda nada. Mostra quais leads têm aquele corretor mas
 // não aparecem no CRM dele porque ainda estão marcados como "na carteira
 // da SDR" (carteira_sdr = true).
+// ─── ROTA: DIAGNÓSTICO — corretor escondido dentro do texto (interesse) ─
+// Só consulta, não grava nada. Pra leads sem corretor, procura um trecho
+// tipo "Corretor: Fulano" dentro do texto original (interesse/imovel_desc)
+// e mostra o que SERIA extraído, pra conferir antes de aplicar de verdade.
+app.get('/api/admin/diagnostico-corretor-no-texto', basicAuth, async (req, res) => {
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  }
+  try {
+    const result = await pool.query(
+      `SELECT id, nome, whatsapp, interesse, imovel_desc
+       FROM leads
+       WHERE (corretor IS NULL OR corretor = '')
+         AND (COALESCE(interesse, '') ~* 'corretor\\s*[:\\-]' OR COALESCE(imovel_desc, '') ~* 'corretor\\s*[:\\-]')
+       ORDER BY distribuido_em DESC`
+    );
+    const candidatos = result.rows.map(lead => {
+      const texto = lead.interesse || lead.imovel_desc || '';
+      const match = texto.match(/corretor\s*[:\-]?\s*([^\n,;]+)/i);
+      const extraido = match ? normalizarNomeCorretor(match[1].trim()) : null;
+      return { id: lead.id, nome: lead.nome, whatsapp: lead.whatsapp, corretorExtraido: extraido, trechoOriginal: texto.slice(0, 120) };
+    });
+    res.json({ ok: true, total: candidatos.length, candidatos });
+  } catch (err) {
+    console.error('Erro no diagnóstico de corretor no texto:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
 app.get('/api/admin/diagnostico-corretor/:nome', basicAuth, async (req, res) => {
   if (!process.env.DATABASE_URL) {
     return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
