@@ -256,8 +256,24 @@ const JULIANE_HTML = `<!DOCTYPE html>
     font-weight: 700;
     cursor: pointer;
   }
-  .saved-flash { color: var(--ok); font-size: 11px; font-weight: 700; margin-left: 8px; opacity: 0; transition: opacity .3s; }
-  .saved-flash.show { opacity: 1; }
+  .saved-flash {
+    position: fixed;
+    top: 26px;
+    left: 50%;
+    transform: translateX(-50%) translateY(-16px);
+    background: #17a34a;
+    color: #fff;
+    font-size: 16px;
+    font-weight: 800;
+    padding: 12px 26px;
+    border-radius: 12px;
+    box-shadow: 0 10px 28px rgba(0,0,0,0.3);
+    z-index: 300;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .25s ease, transform .25s ease;
+  }
+  .saved-flash.show { opacity: 1; transform: translateX(-50%) translateY(0); }
   .aviso-modal {
     font-size: 12px;
     border-radius: 8px;
@@ -384,7 +400,7 @@ const CORES_COLUNA_FUNIL = {
 };
 
 // Nome fixo da coluna de triagem — leads sem corretor definido caem aqui.
-const COLUNA_TRIAGEM = 'Repassado ao corretor';
+const COLUNA_TRIAGEM = 'Novo Lead';
 
 // Opções de canal/origem — mesmas do /dashboard, pra bater com o que já existe.
 const ORIGENS = ['OLX/Canal Pro', 'Patrocinado', 'TikTok', 'Instagram', 'Comentário', 'SDR', 'Juliane', 'Outro'];
@@ -415,13 +431,15 @@ function colunasCorretorAtual() {
 }
 
 function corColunaCorretor(coluna) {
-  if (coluna === COLUNA_TRIAGEM) return { header: '#f2941c', accent: '#f2941c', texto: '#ffffff' };
+  if (coluna === COLUNA_TRIAGEM) return { header: '#64748b', accent: '#64748b', texto: '#ffffff' };
   const cor = CORES_CORRETORES_JULIANE[coluna] || corDoCorretor(coluna);
   return { header: cor, accent: cor, texto: '#ffffff' };
 }
 
-// Em qual coluna esse lead cai, no quadro por corretor: quem já tem corretor
-// definido vai direto pra coluna dele; sem corretor, cai na triagem.
+// Em qual coluna esse lead cai, no quadro por corretor: já tem corretor
+// definido → vai direto pra coluna dele. Sem corretor → "Novo Lead", seja
+// ele reaquecido pela SDR ou direto do canal — a etiqueta no card (🔥
+// REAQUECIDO ou 📡 Canal) já conta essa diferença, sem precisar de duas colunas.
 function colunaCorretorDoLead(lead) {
   return (lead.corretor && lead.corretor.trim()) ? lead.corretor.trim() : COLUNA_TRIAGEM;
 }
@@ -660,7 +678,6 @@ function cardHtml(lead, corBorda, mostrarOrigemTriagem) {
       \${chipsRepassados.length > 0 ? \`<div>\${chipsRepassados.map(nome => \`<span class="chip-corretor" style="border-color:\${corDoCorretor(nome)};color:\${corDoCorretor(nome)};background:\${corDoCorretor(nome)}1a">\${nome}</span>\`).join('')}</div>\` : ''}
       \${lead.tarefa_sdr ? \`<div class="tarefa-preview" style="\${tarefaAtrasada ? 'color:#e0453f;' : ''}">\${tarefaAtrasada ? '⏰ ATRASADO — ' : '📌 '}\${lead.tarefa_sdr}\${lead.tarefa_data ? \` (\${new Date(lead.tarefa_data).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })})\` : ''}</div>\` : ''}
       \${lead.ultima_atualizacao_sdr ? \`<div class="tarefa-preview" style="color:var(--muted);font-weight:600;">🗓️ Atualizado até \${formatarData(lead.ultima_atualizacao_sdr)}</div>\` : ''}
-      \${lead.notas_sdr ? \`<div class="lead-notas">\${lead.notas_sdr.split('\\n')[0]}</div>\` : ''}
       \${lead.buscando_sdr ? \`<div class="lead-notas" style="color:#5b6bf5;font-weight:600;">🔎 \${lead.buscando_sdr.split('\\n')[0]}</div>\` : ''}
     </div>
   \`;
@@ -694,7 +711,7 @@ function abrirModalLead(id) {
     \` : \`
       <label>Corretor</label>
       <select id="modal-corretor">
-        <option value="" \${!lead.corretor ? 'selected' : ''}>— Repassado ao corretor (sem corretor ainda) —</option>
+        <option value="" \${!lead.corretor ? 'selected' : ''}>— Novo Lead (sem corretor ainda) —</option>
         \${colunasCorretorAtual().filter(c => c !== COLUNA_TRIAGEM).map(c => \`<option value="\${c}" \${lead.corretor === c ? 'selected' : ''}>\${c}</option>\`).join('')}
       </select>
     \`}
@@ -738,7 +755,7 @@ function abrirModalLead(id) {
       <button class="close-btn" id="modal-fechar">Fechar</button>
       <div>
         \${waLink ? \`<a class="wa-btn" href="\${waLink}" target="_blank">WhatsApp ↗</a>\` : ''}
-        <span class="saved-flash" id="modal-flash">salvo ✓</span>
+        <span class="saved-flash" id="modal-flash">✅ Salvo!</span>
       </div>
     </div>
     <button class="primary-btn" id="modal-salvar" style="width:100%;margin-top:10px;">💾 Salvar</button>
@@ -955,7 +972,7 @@ function flashModal() {
   const flash = document.getElementById('modal-flash');
   if (!flash) return;
   flash.classList.add('show');
-  setTimeout(() => flash.classList.remove('show'), 1200);
+  setTimeout(() => flash.classList.remove('show'), 1600);
 }
 
 function fecharModal() {
