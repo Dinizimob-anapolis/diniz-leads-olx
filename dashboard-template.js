@@ -453,6 +453,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       btn.textContent = textoOriginal;
       btn.disabled = false;
     }
+  }
 
   // Salva um campo editável direto na tabela, sem recarregar tudo.
   // tipo: 'lead' (padrão) ou 'nao_identificado' — este último promove o contato
