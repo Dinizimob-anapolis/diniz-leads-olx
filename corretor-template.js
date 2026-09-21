@@ -354,6 +354,7 @@ const CORRETOR_HTML = `<!DOCTYPE html>
 <div class="toolbar">
   <input type="text" id="busca" placeholder="Buscar por nome ou WhatsApp...">
   <button class="add-contato-btn" id="btn-atualizar" style="background:#fff;color:var(--accent);border:1px solid var(--accent);box-shadow:none;">↻ Atualizar</button>
+  <button class="add-contato-btn" id="btn-salvar-backup" style="background:#fff;color:#17a34a;border:1px solid #17a34a;box-shadow:none;">💾 Salvar backup</button>
 </div>
 
 <div class="board" id="board"></div>
@@ -713,6 +714,23 @@ document.getElementById('overlay').addEventListener('click', e => {
 });
 
 document.getElementById('btn-atualizar').addEventListener('click', () => carregar());
+document.getElementById('btn-salvar-backup').addEventListener('click', () => {
+  const btn = document.getElementById('btn-salvar-backup');
+  const textoOriginal = btn.textContent;
+  btn.textContent = 'Salvando...';
+  btn.disabled = true;
+  fetch('/api/admin/backups/agora')
+    .then(res => res.json())
+    .then(data => {
+      if (data.ok) {
+        alert(\`Backup salvo! \${data.totalLeads || ''} lead(s) no Postgres\${data.drive && data.drive.ok ? ' e no Google Drive' : ''}.\`);
+      } else {
+        alert('Não consegui salvar o backup: ' + (data.erro || 'erro desconhecido'));
+      }
+    })
+    .catch(() => alert('Não consegui salvar o backup. Confere sua internet e tenta de novo.'))
+    .finally(() => { btn.textContent = textoOriginal; btn.disabled = false; });
+});
 
 async function salvarCampo(id, campo, valor, aoTerminar) {
   try {
