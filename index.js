@@ -77,7 +77,7 @@ const pool = new Pool({
 const THROTTLE_AVISO_MS = 6 * 60 * 60 * 1000; // 6 horas
 
 // Campos do funil que podem ser editados manualmente pelo dashboard
-const CAMPOS_EDITAVEIS = ['nome', 'origem', 'corretor', 'interesse', 'status', 'aprovado', 'visita', 'proposta', 'venda', 'imovel_desc', 'sem_retorno', 'em_andamento', 'notas_sdr', 'carteira_sdr', 'tarefa_sdr', 'tarefa_data', 'corretores_repassados', 'ultima_atualizacao_sdr', 'valor_imovel_sdr', 'carteira_juliane', 'buscando_sdr', 'documentacao'];
+const CAMPOS_EDITAVEIS = ['nome', 'origem', 'corretor', 'interesse', 'status', 'aprovado', 'visita', 'proposta', 'venda', 'imovel_desc', 'sem_retorno', 'em_andamento', 'notas_sdr', 'carteira_sdr', 'tarefa_sdr', 'tarefa_data', 'corretores_repassados', 'ultima_atualizacao_sdr', 'valor_imovel_sdr', 'carteira_juliane', 'buscando_sdr', 'documentacao', 'status_corretor'];
 
 async function initDb() {
   if (!process.env.DATABASE_URL) {
@@ -127,7 +127,9 @@ async function initDb() {
       ADD COLUMN IF NOT EXISTS carteira_juliane BOOLEAN DEFAULT false,
       ADD COLUMN IF NOT EXISTS tarefa_data TIMESTAMPTZ,
       ADD COLUMN IF NOT EXISTS buscando_sdr TEXT,
-      ADD COLUMN IF NOT EXISTS documentacao BOOLEAN DEFAULT false;
+      ADD COLUMN IF NOT EXISTS documentacao BOOLEAN DEFAULT false,
+      ADD COLUMN IF NOT EXISTS status_corretor TEXT DEFAULT 'Novo',
+      ADD COLUMN IF NOT EXISTS status_corretor_alterado_em TIMESTAMPTZ;
   `);
 
   // ─── Tabela de backups automáticos (dump diário de todos os leads) ─
@@ -1233,7 +1235,7 @@ function basicAuthAdminOuSdr(req, res, next) {
 
 // Campos que o corretor pode editar no próprio Kanban — nada de reatribuir
 // corretor, nem mexer em carteiras, nem em campos administrativos.
-const CAMPOS_EDITAVEIS_CORRETOR = ['status', 'notas_sdr', 'tarefa_sdr', 'tarefa_data', 'ultima_atualizacao_sdr', 'valor_imovel_sdr', 'buscando_sdr'];
+const CAMPOS_EDITAVEIS_CORRETOR = ['status_corretor', 'notas_sdr', 'tarefa_sdr', 'tarefa_data', 'ultima_atualizacao_sdr', 'valor_imovel_sdr', 'buscando_sdr'];
 
 // Campos que a SDR pode editar pelo CRM — o resto (aprovado, visita, proposta,
 // venda, corretor, origem etc.) continua só pra quem loga como admin.
@@ -1583,12 +1585,13 @@ app.get('/api/leads/meus', basicAuthAdminOuSdr, async (req, res) => {
   }
   try {
     const result = await pool.query(
-      `SELECT id, whatsapp, nome, corretor, origem, status, distribuido_em,
-              outros_corretores, notas_sdr, reaquecido_em, tarefa_sdr,
-              status_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr, tarefa_data
+      `SELECT id, whatsapp, nome, corretor, origem, distribuido_em,
+              notas_sdr, tarefa_sdr, tarefa_data,
+              ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr,
+              status_corretor, status_corretor_alterado_em
        FROM leads
        WHERE corretor = $1
-       ORDER BY COALESCE(status_alterado_em, distribuido_em) DESC`,
+       ORDER BY COALESCE(status_corretor_alterado_em, distribuido_em) DESC`,
       [req.corretorNome]
     );
     res.json({ ok: true, leads: result.rows });
@@ -2026,8 +2029,13 @@ app.patch('/api/leads/:id', basicAuthAdminOuSdr, async (req, res) => {
       // E se for pra "Visita agendada", é o ponto de virada: o lead passa
       // sozinho a aparecer também no Kanban da Juliane, dali pra frente.
       if (valor === 'Reaquecendo') {
+        // Também empurra o card do corretor (se ele já tiver um) pra coluna
+        // "Reaquecidos" — mesmo que ele já tivesse movido o card pra outro
+        // lugar antes. É o único ponto onde os dois boards se tocam.
         await pool.query(
-          `UPDATE leads SET status = $1, status_alterado_em = now(), reaquecido_em = now() WHERE id = $2`,
+          `UPDATE leads SET status = $1, status_alterado_em = now(), reaquecido_em = now(),
+                  status_corretor = 'Reaquecidos', status_corretor_alterado_em = now()
+           WHERE id = $2`,
           [valor, id]
         );
       } else if (valor === 'Visita agendada') {
@@ -2041,6 +2049,11 @@ app.patch('/api/leads/:id', basicAuthAdminOuSdr, async (req, res) => {
           [valor, id]
         );
       }
+    } else if (campo === 'status_corretor') {
+      await pool.query(
+        `UPDATE leads SET status_corretor = $1, status_corretor_alterado_em = now() WHERE id = $2`,
+        [valorFinal, id]
+      );
     } else {
       await pool.query(
         `UPDATE leads SET ${campo} = $1 WHERE id = $2`,
