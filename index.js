@@ -262,6 +262,36 @@ async function initDb() {
   } catch (err) {
     console.error('Erro na correção da origem literal "null":', err);
   }
+
+  // ─── Correção automática: preenche origem em branco usando o texto do
+  // imóvel/interesse — mesma lógica de inferirOrigemDeTexto(), só que
+  // aplicada nos leads que já estão no banco (ex: vieram da planilha sem
+  // a coluna Origem preenchida). Só mexe em quem está com origem vazia,
+  // então é seguro rodar de novo — quem já foi preenchido não é tocado.
+  try {
+    const inferidosCanalPro = await pool.query(`
+      UPDATE leads
+      SET origem = 'OLX/Canal Pro'
+      WHERE origem IS NULL
+        AND (COALESCE(interesse, '') ~* '\\yCRM\\y' OR COALESCE(imovel_codigo, '') ~* '\\yCRM\\y' OR COALESCE(imovel_desc, '') ~* '\\yCRM\\y')
+      RETURNING id
+    `);
+    if (inferidosCanalPro.rowCount > 0) {
+      console.log(`✅ Origem inferida pelo texto: ${inferidosCanalPro.rowCount} lead(s) sem origem, com "CRM" no texto, marcados como 'OLX/Canal Pro'.`);
+    }
+    const inferidosPatrocinado = await pool.query(`
+      UPDATE leads
+      SET origem = 'Patrocinado'
+      WHERE origem IS NULL
+        AND (imovel_codigo ~* '[A-Z]{2}[0-9]{2,}' OR imovel_desc ~* '[A-Z]{2}[0-9]{2,}')
+      RETURNING id
+    `);
+    if (inferidosPatrocinado.rowCount > 0) {
+      console.log(`✅ Origem inferida pelo texto: ${inferidosPatrocinado.rowCount} lead(s) sem origem, com código de imóvel no texto, marcados como 'Patrocinado'.`);
+    }
+  } catch (err) {
+    console.error('Erro ao inferir origem de leads em branco:', err);
+  }
 }
 
 // ─── IMPORTAÇÃO EM LOTE (reutilizada pelo upload manual e pela sincronização com Google Sheets) ─
