@@ -402,19 +402,19 @@ function limparFiltroData(coluna) {
   render();
 }
 
-const COLUNAS = ['Novo', 'Reaquecidos', 'Aguardando retorno', 'Visita agendada', 'Compra futura', 'Já comprou', 'Venda efetuada', 'Sem retorno'];
+const COLUNAS = ['Novo', 'Reaquecido', 'Aguardando retorno', 'Aguardando documentação', 'Aprovado', 'Visita', 'Em negociação', 'Venda'];
 
 // Paleta viva, uma cor por coluna — usada no cabeçalho e na barrinha
 // lateral de cada cartão daquela coluna.
 const CORES_COLUNA = {
-  'Novo':                   { header: '#3b6cf0', accent: '#3b6cf0', texto: '#ffffff' },
-  'Reaquecidos':            { header: '#f2941c', accent: '#f2941c', texto: '#ffffff' },
-  'Aguardando retorno':     { header: '#9b4de0', accent: '#9b4de0', texto: '#ffffff' },
-  'Visita agendada':        { header: '#0aa5c2', accent: '#0aa5c2', texto: '#ffffff' },
-  'Compra futura':          { header: '#5b6bf5', accent: '#5b6bf5', texto: '#ffffff' },
-  'Já comprou':             { header: '#c9a20a', accent: '#c9a20a', texto: '#ffffff' },
-  'Sem retorno':            { header: '#6b7280', accent: '#6b7280', texto: '#ffffff' },
-  'Venda efetuada':         { header: '#17a34a', accent: '#17a34a', texto: '#ffffff' },
+  'Novo':                     { header: '#3b6cf0', accent: '#3b6cf0', texto: '#ffffff' },
+  'Reaquecido':               { header: '#f2941c', accent: '#f2941c', texto: '#ffffff' },
+  'Aguardando retorno':       { header: '#9b4de0', accent: '#9b4de0', texto: '#ffffff' },
+  'Aguardando documentação':  { header: '#0aa5c2', accent: '#0aa5c2', texto: '#ffffff' },
+  'Aprovado':                 { header: '#5b6bf5', accent: '#5b6bf5', texto: '#ffffff' },
+  'Visita':                   { header: '#c9a20a', accent: '#c9a20a', texto: '#ffffff' },
+  'Em negociação':            { header: '#e8479e', accent: '#e8479e', texto: '#ffffff' },
+  'Venda':                    { header: '#17a34a', accent: '#17a34a', texto: '#ffffff' },
 };
 
 function statusDoLead(lead) {
@@ -457,7 +457,7 @@ function leadsFiltrados() {
 
 function render() {
   const leads = leadsFiltrados();
-  const reaquecerCount = TODOS_LEADS.filter(l => statusDoLead(l) === 'Reaquecidos').length;
+  const reaquecerCount = TODOS_LEADS.filter(l => statusDoLead(l) === 'Reaquecido').length;
 
   const vgvTotal = TODOS_LEADS.reduce((soma, lead) => soma + parseValorImovel(lead.valor_imovel_sdr), 0);
 
