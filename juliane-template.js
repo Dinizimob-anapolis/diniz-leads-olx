@@ -3,7 +3,7 @@ const JULIANE_HTML = `<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CRM — Juliane</title>
+<title>CRM - JULIANE</title>
 <style>
   :root {
     --bg: #f7f8fb;
@@ -404,7 +404,7 @@ const JULIANE_HTML = `<!DOCTYPE html>
 </head>
 <body>
 
-<h1 id="titulo-pagina">Carteira por corretor</h1>
+<h1 id="titulo-pagina">CRM - JULIANE</h1>
 <div class="sub" id="subtitulo-pagina">Quem já tem corretor cai direto na coluna dele. Sem corretor, cai em "Repassado ao corretor" pra você organizar.</div>
 
 <div class="stats" id="stats"></div>
@@ -595,7 +595,7 @@ async function carregar() {
 
 function trocarAba(aba) {
   ABA_CRM = aba;
-  document.getElementById('titulo-pagina').textContent = aba === 'sdr' ? 'Carteira — SDR' : 'Carteira por corretor';
+  document.getElementById('titulo-pagina').textContent = aba === 'sdr' ? 'CRM - SDR' : 'CRM - JULIANE';
   document.getElementById('subtitulo-pagina').textContent = aba === 'sdr'
     ? 'Você está vendo e editando a carteira da SDR.'
     : 'Quem já tem corretor cai direto na coluna dele. Sem corretor, cai em "Repassado ao corretor" pra você organizar.';
