@@ -2253,6 +2253,33 @@ app.all('/api/admin/backups/agora', basicAuthAdminOuSdr, async (req, res) => {
 // Só consulta, não muda nada. Mostra quais leads têm aquele corretor mas
 // não aparecem no CRM dele porque ainda estão marcados como "na carteira
 // da SDR" (carteira_sdr = true).
+// ─── ROTA: DIAGNÓSTICO — busca leads por texto no imóvel (só consulta) ─
+// Mostra o que está gravado de verdade no banco pra um pedaço de texto,
+// ex: /api/admin/diagnostico-imovel?texto=JIBRAN — ajuda a confirmar se a
+// sincronização da planilha está de fato trazendo esse texto pro banco.
+app.get('/api/admin/diagnostico-imovel', basicAuth, async (req, res) => {
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  }
+  const texto = req.query.texto || '';
+  if (!texto) {
+    return res.status(400).json({ ok: false, erro: 'Passa ?texto=alguma-coisa na URL' });
+  }
+  try {
+    const result = await pool.query(
+      `SELECT id, nome, whatsapp, imovel_codigo, imovel_desc, origem, corretor, distribuido_em
+       FROM leads
+       WHERE imovel_desc ILIKE $1 OR imovel_codigo ILIKE $1
+       ORDER BY distribuido_em DESC
+       LIMIT 30`,
+      [`%${texto}%`]
+    );
+    res.json({ ok: true, total: result.rows.length, leads: result.rows });
+  } catch (err) {
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
 // ─── ROTA: DIAGNÓSTICO — corretor escondido dentro do texto (interesse) ─
 // Só consulta, não grava nada. Pra leads sem corretor, procura um trecho
 // tipo "Corretor: Fulano" dentro do texto original (interesse/imovel_desc)
