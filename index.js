@@ -2212,6 +2212,28 @@ app.all('/api/admin/backups/agora', basicAuth, async (req, res) => {
 // olha um backup de ANTES do incidente e devolve carteira_sdr = true só
 // pros leads que: (a) o backup mostra como true, (b) hoje estão como
 // false, e (c) ainda têm corretor definido — não mexe em mais nada.
+// ─── ROTA: DIAGNÓSTICO — leads de um corretor escondidos por carteira_sdr ─
+// Só consulta, não muda nada. Mostra quais leads têm aquele corretor mas
+// não aparecem no CRM dele porque ainda estão marcados como "na carteira
+// da SDR" (carteira_sdr = true).
+app.get('/api/admin/diagnostico-corretor/:nome', basicAuth, async (req, res) => {
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  }
+  try {
+    const result = await pool.query(
+      `SELECT id, nome, whatsapp, corretor, carteira_sdr, status, reaquecido_em, status_corretor
+       FROM leads
+       WHERE corretor = $1 AND carteira_sdr = true
+       ORDER BY distribuido_em DESC`,
+      [req.params.nome]
+    );
+    res.json({ ok: true, escondidos: result.rows.length, leads: result.rows });
+  } catch (err) {
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
 app.all('/api/admin/backups/:id/restaurar-carteira-sdr', basicAuth, async (req, res) => {
   if (!process.env.DATABASE_URL) {
     return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
