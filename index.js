@@ -163,25 +163,24 @@ async function initDb() {
   await pool.query(`ALTER TABLE leads_nao_identificados ADD COLUMN IF NOT EXISTS corretor TEXT;`);
   console.log('✅ Tabelas do lead router prontas (leads, leads_nao_identificados)');
 
-  // ─── Correção automática: leads já reaquecidos que estavam sem essa etapa
-  // marcada no board do corretor (antes dessa coluna existir, ou com o nome
-  // antigo "Reaquecidos" no plural) — corrige pra "Reaquecido" de uma vez.
+  // ─── Correção pontual: reseta "Reaquecido" que foi marcado incorretamente
+  // pela correção automática antiga (que "adivinhava" o corretor pelo
+  // histórico, em vez de esperar a SDR confirmar de verdade). Roda UMA VEZ
+  // só de verdade (marca um flag em config_sistema), pra não apagar
+  // confirmações reais que a SDR fizer depois, em reinícios futuros.
   try {
-    const corrigidosReaquecido = await pool.query(`
-      UPDATE leads
-      SET status_corretor = 'Reaquecido',
-          status_corretor_alterado_em = COALESCE(status_corretor_alterado_em, reaquecido_em)
-      WHERE reaquecido_em IS NOT NULL
-        AND corretor IS NOT NULL AND corretor <> ''
-        AND carteira_sdr IS NOT TRUE
-        AND (status_corretor IS NULL OR status_corretor IN ('Novo', 'Reaquecidos'))
-      RETURNING id
-    `);
-    if (corrigidosReaquecido.rowCount > 0) {
-      console.log(`✅ Correção de leads reaquecidos: ${corrigidosReaquecido.rowCount} lead(s) movidos pra "Reaquecido" no board do corretor certo`);
+    const jaAplicado = await lerConfig('reset_reaquecido_indevido_aplicado');
+    if (!jaAplicado) {
+      const resetados = await pool.query(`
+        UPDATE leads SET status_corretor = 'Novo' WHERE status_corretor = 'Reaquecido' RETURNING id
+      `);
+      if (resetados.rowCount > 0) {
+        console.log(`✅ Reset de "Reaquecido" indevido: ${resetados.rowCount} lead(s) voltaram pra "Novo" — só vira Reaquecido quando a SDR confirmar o corretor de verdade`);
+      }
+      await salvarConfig('reset_reaquecido_indevido_aplicado', 'true');
     }
   } catch (err) {
-    console.error('Erro na correção de leads reaquecidos:', err);
+    console.error('Erro ao resetar status_corretor indevido:', err);
   }
 
   // ─── Correção automática de nomes de corretor com/sem acento ──────────
@@ -1635,8 +1634,11 @@ app.get('/api/leads/todos-resumo', basicAuthAdminOuSdr, async (req, res) => {
               outros_corretores, notas_sdr, reaquecido_em, tarefa_sdr, corretores_repassados,
               status_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr, tarefa_data, aprovado, visita, proposta, documentacao, venda, carteira_sdr
        FROM leads
-       WHERE (corretor IS NOT NULL AND corretor <> '')
-          OR (carteira_sdr IS NOT TRUE AND COALESCE(status, '') NOT IN ('Já comprou', 'Sem retorno', 'Venda efetuada', 'Compra futura'))
+       WHERE distribuido_em >= '2026-09-17'
+         AND (
+           (corretor IS NOT NULL AND corretor <> '')
+           OR (carteira_sdr IS NOT TRUE AND COALESCE(status, '') NOT IN ('Já comprou', 'Sem retorno', 'Venda efetuada', 'Compra futura'))
+         )
        ORDER BY COALESCE(status_alterado_em, distribuido_em) DESC
        LIMIT 2000`
     );
