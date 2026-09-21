@@ -1611,7 +1611,7 @@ app.get('/api/leads/meus', basicAuthAdminOuSdr, async (req, res) => {
               ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr,
               status_corretor, status_corretor_alterado_em
        FROM leads
-       WHERE corretor = $1 AND carteira_sdr IS NOT TRUE
+       WHERE corretor = $1 AND status IS DISTINCT FROM 'Reaquecendo'
        ORDER BY COALESCE(status_corretor_alterado_em, distribuido_em) DESC`,
       [req.corretorNome]
     );
