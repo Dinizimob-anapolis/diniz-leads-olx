@@ -163,6 +163,25 @@ async function initDb() {
   await pool.query(`ALTER TABLE leads_nao_identificados ADD COLUMN IF NOT EXISTS corretor TEXT;`);
   console.log('✅ Tabelas do lead router prontas (leads, leads_nao_identificados)');
 
+  // ─── Correção automática: leads que já têm corretor definido devem estar
+  // liberados da carteira da SDR (regra nova — antes dela existir, leads
+  // atribuídos ficavam com carteira_sdr ainda marcada, escondendo eles do
+  // corretor no filtro atual). Aplica o mesmo padrão pra dados antigos.
+  try {
+    const liberados = await pool.query(`
+      UPDATE leads
+      SET carteira_sdr = false
+      WHERE corretor IS NOT NULL AND corretor <> ''
+        AND carteira_sdr = true
+      RETURNING id
+    `);
+    if (liberados.rowCount > 0) {
+      console.log(`✅ Correção de carteira: ${liberados.rowCount} lead(s) com corretor já definido, liberados da carteira da SDR (voltam a aparecer pro corretor)`);
+    }
+  } catch (err) {
+    console.error('Erro na correção de carteira dos leads com corretor:', err);
+  }
+
   // ─── Correção automática: leads já reaquecidos que estavam sem essa etapa
   // marcada no board do corretor (antes dessa coluna existir, ou com o nome
   // antigo "Reaquecidos" no plural) — corrige pra "Reaquecido" de uma vez.
