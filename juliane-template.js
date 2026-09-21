@@ -115,6 +115,56 @@ const JULIANE_HTML = `<!DOCTYPE html>
     border-radius: 10px;
     font-weight: 700;
   }
+  .lupa-filtro-btn {
+    background: rgba(255,255,255,0.25);
+    border: none;
+    border-radius: 6px;
+    width: 24px;
+    height: 24px;
+    font-size: 12px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .lupa-filtro-btn.ativa {
+    background: #fff;
+    box-shadow: 0 0 0 2px rgba(255,255,255,0.5);
+  }
+  .filtro-data-painel {
+    background: #fff8e8;
+    border-bottom: 1px solid var(--card-border);
+    padding: 8px 9px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+  }
+  .filtro-data-painel label {
+    font-size: 10px;
+    color: var(--muted);
+    font-weight: 700;
+    margin: 0;
+  }
+  .filtro-data-painel input[type="date"] {
+    font-size: 11px;
+    padding: 3px 5px;
+    border: 1px solid var(--card-border);
+    border-radius: 6px;
+    flex: 1;
+    min-width: 90px;
+  }
+  .limpar-filtro-btn {
+    font-size: 10px;
+    font-weight: 700;
+    color: #e0453f;
+    background: none;
+    border: 1px solid #e0453f;
+    border-radius: 6px;
+    padding: 3px 8px;
+    cursor: pointer;
+    width: 100%;
+  }
   .column-cards {
     overflow-y: auto;
     padding: 9px;
@@ -378,6 +428,40 @@ let ABA_CRM = 'juliane'; // 'juliane' ou 'sdr'
 let BUSCA = '';
 let LEAD_ARRASTADO = null;
 let ULTIMO_ADICIONADO_ID = null;
+let FILTROS_DATA_COLUNA = {}; // { [coluna]: { de, ate } } — filtro de período por coluna
+let COLUNA_FILTRO_ABERTA = null; // qual coluna está com o painel de data aberto agora
+
+function dataDoLeadParaFiltro(lead) {
+  return lead.status_alterado_em || lead.distribuido_em;
+}
+
+function leadPassaNoFiltroDeData(lead, coluna) {
+  const filtro = FILTROS_DATA_COLUNA[coluna];
+  if (!filtro || (!filtro.de && !filtro.ate)) return true;
+  const dataLead = dataDoLeadParaFiltro(lead);
+  if (!dataLead) return false;
+  const dia = String(dataLead).slice(0, 10);
+  if (filtro.de && dia < filtro.de) return false;
+  if (filtro.ate && dia > filtro.ate) return false;
+  return true;
+}
+
+function alternarFiltroData(coluna) {
+  COLUNA_FILTRO_ABERTA = COLUNA_FILTRO_ABERTA === coluna ? null : coluna;
+  render();
+}
+
+function definirFiltroData(coluna, campo, valor) {
+  if (!FILTROS_DATA_COLUNA[coluna]) FILTROS_DATA_COLUNA[coluna] = { de: '', ate: '' };
+  FILTROS_DATA_COLUNA[coluna][campo] = valor;
+  render();
+}
+
+function limparFiltroData(coluna) {
+  delete FILTROS_DATA_COLUNA[coluna];
+  COLUNA_FILTRO_ABERTA = null;
+  render();
+}
 
 function leadsAtivos() {
   return ABA_CRM === 'sdr' ? LEADS_SDR : LEADS_JULIANE;
@@ -544,20 +628,35 @@ function render() {
 
   const board = document.getElementById('board');
   board.innerHTML = colunasAtuais.map(coluna => {
-    const leadsColuna = leads.filter(l => funcaoColuna(l) === coluna);
+    const leadsColunaSemFiltro = leads.filter(l => funcaoColuna(l) === coluna);
+    const leadsColuna = leadsColunaSemFiltro.filter(l => leadPassaNoFiltroDeData(l, coluna));
     const cor = funcaoCor(coluna);
     const vgvColuna = leadsColuna.reduce((soma, lead) => soma + parseValorImovel(lead.valor_imovel_sdr), 0);
+    const filtroAtivo = FILTROS_DATA_COLUNA[coluna] && (FILTROS_DATA_COLUNA[coluna].de || FILTROS_DATA_COLUNA[coluna].ate);
+    const painelAberto = COLUNA_FILTRO_ABERTA === coluna;
     return \`
       <div class="column" data-coluna="\${coluna}">
         <div class="column-header" style="background:\${cor.header};color:\${cor.texto}">
-          <div style="display:flex;justify-content:space-between;align-items:center;">
-            \${coluna}
-            <span class="column-count">\${leadsColuna.length}</span>
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">
+            <span>\${coluna}</span>
+            <div style="display:flex;align-items:center;gap:4px;">
+              <button class="lupa-filtro-btn \${filtroAtivo ? 'ativa' : ''}" title="Filtrar por período" onclick="alternarFiltroData('\${coluna}')">🔍</button>
+              <span class="column-count">\${leadsColuna.length}\${filtroAtivo ? \`/\${leadsColunaSemFiltro.length}\` : ''}</span>
+            </div>
           </div>
           \${vgvColuna > 0 ? \`<div style="font-size:11px;font-weight:700;opacity:0.95;margin-top:2px;">\${formatarReais(vgvColuna)}</div>\` : ''}
         </div>
+        \${painelAberto ? \`
+          <div class="filtro-data-painel">
+            <label>De</label>
+            <input type="date" value="\${(FILTROS_DATA_COLUNA[coluna] && FILTROS_DATA_COLUNA[coluna].de) || ''}" onchange="definirFiltroData('\${coluna}', 'de', this.value)">
+            <label>Até</label>
+            <input type="date" value="\${(FILTROS_DATA_COLUNA[coluna] && FILTROS_DATA_COLUNA[coluna].ate) || ''}" onchange="definirFiltroData('\${coluna}', 'ate', this.value)">
+            \${filtroAtivo ? \`<button class="limpar-filtro-btn" onclick="limparFiltroData('\${coluna}')">Limpar</button>\` : ''}
+          </div>
+        \` : ''}
         <div class="column-cards" data-coluna="\${coluna}">
-          \${leadsColuna.map(lead => cardHtml(lead, cor.accent, coluna === COLUNA_TRIAGEM && ABA_CRM !== 'sdr')).join('') || ''}
+          \${leadsColuna.map(lead => cardHtml(lead, cor.accent, coluna === COLUNA_TRIAGEM && ABA_CRM !== 'sdr', coluna !== COLUNA_TRIAGEM && ABA_CRM !== 'sdr')).join('') || (leadsColunaSemFiltro.length > 0 ? '<div style="text-align:center;color:var(--muted);font-size:12px;padding:12px;">Nenhum nesse período</div>' : '')}
         </div>
       </div>
     \`;
@@ -646,7 +745,7 @@ function formatarReais(valor) {
   return valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function cardHtml(lead, corBorda, mostrarOrigemTriagem) {
+function cardHtml(lead, corBorda, mostrarOrigemTriagem, mostrarStatusSdr) {
   const duplicado = temHistoricoDuplicado(lead);
   const envolvidos = corretoresEnvolvidos(lead);
   const chipsRepassados = corretoresRepassadosLista(lead);
@@ -663,6 +762,11 @@ function cardHtml(lead, corBorda, mostrarOrigemTriagem) {
   const seloCanal = (mostrarOrigemTriagem && !lead.reaquecido_em)
     ? \`<span class="badge" style="background:#eef0f6;color:var(--muted);border:1px solid var(--card-border);margin-top:6px;">📡 Canal</span>\`
     : '';
+  // Só nas colunas de corretor: mostra em qual coluna/status esse lead está
+  // hoje no CRM da SDR, pra Juliane saber o andamento sem abrir o outro CRM.
+  const seloStatusSdr = (mostrarStatusSdr && lead.status)
+    ? \`<span class="badge" style="background:#eef2ff;color:#3b6cf0;border:1px solid #c7d5fb;margin-top:6px;">📋 SDR: \${lead.status}</span>\`
+    : '';
 
   return \`
     <div class="lead \${classeDestaque}" draggable="true" data-id="\${lead.id}" style="\${classeDestaque ? '' : \`border-left-color:\${corBorda}\`}">
@@ -671,7 +775,7 @@ function cardHtml(lead, corBorda, mostrarOrigemTriagem) {
         \${lead.valor_imovel_sdr ? \`<span style="font-size:10px;font-weight:700;color:#17a34a;white-space:nowrap;">💰 \${lead.valor_imovel_sdr}</span>\` : ''}
       </div>
       <div class="lead-meta">\${lead.whatsapp || 'sem WhatsApp'}</div>
-      \${seloReaquecido}\${seloCanal}
+      \${seloReaquecido}\${seloCanal}\${seloStatusSdr}
       \${dataEtapa ? \`<div class="lead-meta">Nessa etapa desde \${dataEtapa}</div>\` : ''}
       \${lead.origem ? \`<span class="badge origem">\${lead.origem}</span>\` : ''}
       \${duplicado ? \`<span class="badge warn">⚠️ \${envolvidos.length}: \${envolvidos.join(', ')}</span>\` : ''}
