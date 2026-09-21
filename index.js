@@ -1634,10 +1634,15 @@ app.get('/api/leads/todos-resumo', basicAuthAdminOuSdr, async (req, res) => {
               outros_corretores, notas_sdr, reaquecido_em, tarefa_sdr, corretores_repassados,
               status_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr, tarefa_data, aprovado, visita, proposta, documentacao, venda, carteira_sdr
        FROM leads
-       WHERE distribuido_em >= '2026-09-17'
-         AND (
+       WHERE (
+           -- Tem corretor definido: aparece sempre, não importa a data
+           -- nem se passou pelo "Reaquecendo" — foi destinado, é dele.
            (corretor IS NOT NULL AND corretor <> '')
-           OR (carteira_sdr IS NOT TRUE AND COALESCE(status, '') NOT IN ('Já comprou', 'Sem retorno', 'Venda efetuada', 'Compra futura'))
+           -- Intocado, sem corretor: só a partir de 17/09 (esconde o
+           -- acúmulo antigo de leads que ninguém organizou ainda).
+           OR (distribuido_em >= '2026-09-17' AND (
+             carteira_sdr IS NOT TRUE AND COALESCE(status, '') NOT IN ('Já comprou', 'Sem retorno', 'Venda efetuada', 'Compra futura')
+           ))
          )
        ORDER BY COALESCE(status_alterado_em, distribuido_em) DESC
        LIMIT 2000`
