@@ -371,7 +371,7 @@ let FILTROS_DATA_COLUNA = {}; // { [coluna]: { de, ate } } — filtro de períod
 let COLUNA_FILTRO_ABERTA = null; // qual coluna está com o painel de data aberto agora
 
 function dataDoLeadParaFiltro(lead) {
-  return lead.status_alterado_em || lead.distribuido_em;
+  return lead.status_corretor_alterado_em || lead.distribuido_em;
 }
 
 function leadPassaNoFiltroDeData(lead, coluna) {
@@ -402,16 +402,15 @@ function limparFiltroData(coluna) {
   render();
 }
 
-const COLUNAS = ['Novo', 'Reaquecendo', 'Aguardando retorno', 'Repassado ao corretor', 'Visita agendada', 'Compra futura', 'Já comprou', 'Venda efetuada', 'Sem retorno'];
+const COLUNAS = ['Novo', 'Reaquecidos', 'Aguardando retorno', 'Visita agendada', 'Compra futura', 'Já comprou', 'Venda efetuada', 'Sem retorno'];
 
 // Paleta viva, uma cor por coluna — usada no cabeçalho e na barrinha
 // lateral de cada cartão daquela coluna.
 const CORES_COLUNA = {
   'Novo':                   { header: '#3b6cf0', accent: '#3b6cf0', texto: '#ffffff' },
-  'Reaquecendo':            { header: '#f2941c', accent: '#f2941c', texto: '#ffffff' },
+  'Reaquecidos':            { header: '#f2941c', accent: '#f2941c', texto: '#ffffff' },
   'Aguardando retorno':     { header: '#9b4de0', accent: '#9b4de0', texto: '#ffffff' },
   'Visita agendada':        { header: '#0aa5c2', accent: '#0aa5c2', texto: '#ffffff' },
-  'Repassado ao corretor':  { header: '#e8479e', accent: '#e8479e', texto: '#ffffff' },
   'Compra futura':          { header: '#5b6bf5', accent: '#5b6bf5', texto: '#ffffff' },
   'Já comprou':             { header: '#c9a20a', accent: '#c9a20a', texto: '#ffffff' },
   'Sem retorno':            { header: '#6b7280', accent: '#6b7280', texto: '#ffffff' },
@@ -419,22 +418,7 @@ const CORES_COLUNA = {
 };
 
 function statusDoLead(lead) {
-  return COLUNAS.includes(lead.status) ? lead.status : 'Novo';
-}
-
-function temHistoricoDuplicado(lead) {
-  return !!(lead.outros_corretores && lead.outros_corretores.trim());
-}
-
-function corretoresEnvolvidos(lead) {
-  const lista = [];
-  if (lead.corretor) lista.push(lead.corretor);
-  if (lead.outros_corretores) {
-    lead.outros_corretores.split(',').map(s => s.trim()).filter(Boolean).forEach(c => {
-      if (!lista.includes(c)) lista.push(c);
-    });
-  }
-  return lista;
+  return COLUNAS.includes(lead.status_corretor) ? lead.status_corretor : 'Novo';
 }
 
 const PALETA_CORES = ['#3b6cf0', '#e0453f', '#f2941c', '#12b76a', '#9b4de0', '#e8479e', '#0aa5c2', '#c9a20a'];
@@ -473,7 +457,7 @@ function leadsFiltrados() {
 
 function render() {
   const leads = leadsFiltrados();
-  const reaquecerCount = TODOS_LEADS.filter(temHistoricoDuplicado).length;
+  const reaquecerCount = TODOS_LEADS.filter(l => statusDoLead(l) === 'Reaquecidos').length;
 
   const vgvTotal = TODOS_LEADS.reduce((soma, lead) => soma + parseValorImovel(lead.valor_imovel_sdr), 0);
 
@@ -540,7 +524,7 @@ function render() {
       col.closest('.column').classList.remove('dragover');
       if (LEAD_ARRASTADO) {
         const novoStatus = col.dataset.coluna;
-        salvarCampo(LEAD_ARRASTADO, 'status', novoStatus, () => { render(); });
+        salvarCampo(LEAD_ARRASTADO, 'status_corretor', novoStatus, () => { render(); });
         LEAD_ARRASTADO = null;
       }
     });
@@ -595,11 +579,9 @@ function formatarReais(valor) {
 }
 
 function cardHtml(lead, corBorda) {
-  const duplicado = temHistoricoDuplicado(lead);
-  const envolvidos = corretoresEnvolvidos(lead);
-  const dataEtapa = formatarData(lead.status_alterado_em || lead.distribuido_em);
+  const dataEtapa = formatarData(lead.status_corretor_alterado_em || lead.distribuido_em);
   const tarefaAtrasada = !!(lead.tarefa_data && new Date(lead.tarefa_data) <= new Date());
-  const classeDestaque = tarefaAtrasada ? 'atrasado' : (duplicado ? 'reaquecer' : '');
+  const classeDestaque = tarefaAtrasada ? 'atrasado' : '';
   return \`
     <div class="lead \${classeDestaque}" draggable="true" data-id="\${lead.id}" style="\${classeDestaque ? '' : \`border-left-color:\${corBorda}\`}">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:6px;">
@@ -609,7 +591,6 @@ function cardHtml(lead, corBorda) {
       <div class="lead-meta">\${lead.whatsapp || 'sem WhatsApp'}</div>
       \${dataEtapa ? \`<div class="lead-meta">Nessa etapa desde \${dataEtapa}</div>\` : ''}
       \${lead.origem ? \`<span class="badge origem">\${lead.origem}</span>\` : ''}
-      \${duplicado ? \`<span class="badge warn">⚠️ \${envolvidos.length}: \${envolvidos.join(', ')}</span>\` : ''}
       \${lead.tarefa_sdr ? \`<div class="tarefa-preview" style="\${tarefaAtrasada ? 'color:#e0453f;' : ''}">\${tarefaAtrasada ? '⏰ ATRASADO — ' : '📌 '}\${lead.tarefa_sdr}\${lead.tarefa_data ? \` (\${new Date(lead.tarefa_data).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })})\` : ''}</div>\` : ''}
       \${lead.ultima_atualizacao_sdr ? \`<div class="tarefa-preview" style="color:var(--muted);font-weight:600;">🗓️ Atualizado até \${formatarData(lead.ultima_atualizacao_sdr)}</div>\` : ''}
       \${lead.notas_sdr ? \`<div class="lead-notas">\${lead.notas_sdr.split('\\n')[0]}</div>\` : ''}
@@ -621,8 +602,6 @@ function cardHtml(lead, corBorda) {
 function abrirModalLead(id) {
   const lead = TODOS_LEADS.find(l => String(l.id) === String(id));
   if (!lead) return;
-  const duplicado = temHistoricoDuplicado(lead);
-  const envolvidos = corretoresEnvolvidos(lead);
   const data = lead.distribuido_em ? new Date(lead.distribuido_em).toLocaleDateString('pt-BR') : '—';
   const waLink = lead.whatsapp ? \`https://wa.me/\${lead.whatsapp}\` : null;
 
@@ -633,13 +612,12 @@ function abrirModalLead(id) {
     </div>
     <div class="lead-meta">\${lead.whatsapp || 'sem WhatsApp'} · chegou em \${data}</div>
     \${lead.origem ? \`<span class="badge origem">\${lead.origem}</span>\` : ''}
-    \${duplicado ? \`<span class="badge warn">⚠️ Já foi para \${envolvidos.length}: \${envolvidos.join(', ')} — não reenvie, reaqueça direto</span>\` : ''}
 
     <label>Status</label>
     <select id="modal-status">
       \${COLUNAS.map(c => \`<option value="\${c}" \${statusDoLead(lead) === c ? 'selected' : ''}>\${c}</option>\`).join('')}
     </select>
-    \${lead.status_alterado_em ? \`<div class="lead-meta" style="margin-top:4px;">Nessa etapa desde \${formatarData(lead.status_alterado_em)}</div>\` : ''}
+    \${lead.status_corretor_alterado_em ? \`<div class="lead-meta" style="margin-top:4px;">Nessa etapa desde \${formatarData(lead.status_corretor_alterado_em)}</div>\` : ''}
 
     <label>Tarefa</label>
     <input type="text" id="modal-tarefa" placeholder="Próximo passo, ex: ligar amanhã 14h" value="\${lead.tarefa_sdr || ''}">
@@ -677,7 +655,7 @@ function abrirModalLead(id) {
   document.getElementById('overlay').classList.add('show');
   document.getElementById('modal-fechar').addEventListener('click', fecharModal);
   document.getElementById('modal-status').addEventListener('change', e => {
-    salvarCampo(id, 'status', e.target.value, () => { render(); abrirModalLead(id); });
+    salvarCampo(id, 'status_corretor', e.target.value, () => { render(); abrirModalLead(id); });
   });
   document.getElementById('modal-salvar').addEventListener('click', () => {
     const notas = document.getElementById('modal-notas').value;
