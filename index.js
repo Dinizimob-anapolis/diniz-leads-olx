@@ -2903,6 +2903,68 @@ app.all('/api/admin/importar-leads-michelle', basicAuth, async (req, res) => {
   }
 });
 
+// ─── ROTA: TRANSFERE pra Michelle mesmo quem já tinha outro corretor ────
+// Uso único, pra rodar depois da rota acima — ela já confirmou que ela
+// está trabalhando esses leads de verdade. Passa o corretor antigo pro
+// histórico (outros_corretores), igual acontece quando alguém reatribui
+// manualmente pelo CRM.
+app.all('/api/admin/importar-leads-michelle-forcar', basicAuth, async (req, res) => {
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  }
+  let transferidos = 0;
+  let jaEramDela = 0;
+  const erros = [];
+
+  try {
+    for (const item of LEADS_MICHELLE) {
+      if (!item.whatsapp) continue;
+      try {
+        const existente = await pool.query('SELECT id, corretor FROM leads WHERE whatsapp = $1', [item.whatsapp]);
+        if (existente.rows.length === 0) continue; // já foi criado na rota anterior
+
+        const leadAtual = existente.rows[0];
+        if (leadAtual.corretor === 'Michelle') {
+          jaEramDela++;
+          continue;
+        }
+
+        await pool.query(
+          `UPDATE leads SET
+             corretor = 'Michelle',
+             outros_corretores = CASE
+               WHEN corretor IS NOT NULL AND corretor <> '' AND corretor <> 'Michelle'
+                    AND (outros_corretores IS NULL OR position(corretor IN outros_corretores) = 0)
+               THEN COALESCE(outros_corretores || ', ', '') || corretor
+               ELSE outros_corretores
+             END,
+             origem = COALESCE(origem, $1),
+             imovel_desc = COALESCE(imovel_desc, $2),
+             status_corretor = $3,
+             status_corretor_alterado_em = now(),
+             notas_sdr = $4,
+             valor_imovel_sdr = COALESCE($5, valor_imovel_sdr),
+             ultima_atualizacao_sdr = $6,
+             numero_invalido = $7,
+             carteira_sdr = false
+           WHERE id = $8`,
+          [item.origem, item.imovelDesc, item.statusCorretor, item.notasSdr, item.valorImovel,
+           item.ultimaAtualizacao, item.numeroInvalido, leadAtual.id]
+        );
+        transferidos++;
+      } catch (errItem) {
+        erros.push(`${item.nome} (${item.whatsapp}): ${errItem.message}`);
+      }
+    }
+
+    console.log(`Transferência forçada pra Michelle: ${transferidos} transferidos, ${jaEramDela} já eram dela`);
+    res.json({ ok: true, transferidos, jaEramDela, totalErros: erros.length, erros });
+  } catch (err) {
+    console.error('Erro na transferência forçada pra Michelle:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
 // ─── ROTA: DIAGNÓSTICO — busca leads por texto no imóvel (só consulta) ─
 // Mostra o que está gravado de verdade no banco pra um pedaço de texto,
 // ex: /api/admin/diagnostico-imovel?texto=JIBRAN — ajuda a confirmar se a
