@@ -267,6 +267,7 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       <input type="file" id="arquivo-planilha" accept=".xlsx,.xls,.csv" style="display:none" onchange="importarPlanilha(this.files[0])">
       <button id="add-lead-btn" onclick="abrirModalLead()">+ Adicionar lead</button>
       <button id="refresh-btn" onclick="carregarDados()">↻ Atualizar</button>
+      <button id="backup-btn" onclick="salvarBackupManual()" style="color:#4A7A5E;border-color:#4A7A5E;">💾 Salvar backup</button>
       <div id="last-sync" style="margin-top:6px;">Ainda não atualizado</div>
     </div>
   </header>
@@ -432,6 +433,26 @@ const DASHBOARD_HTML = `<!DOCTYPE html>
       btn.textContent = '↻ Atualizar';
     }
   }
+
+  async function salvarBackupManual() {
+    const btn = document.getElementById('backup-btn');
+    const textoOriginal = btn.textContent;
+    btn.textContent = 'Salvando…';
+    btn.disabled = true;
+    try {
+      const res = await fetch('/api/admin/backups/agora');
+      const data = await res.json();
+      if (data.ok) {
+        alert(\`Backup salvo! \${data.totalLeads || ''} lead(s) no Postgres\${data.drive && data.drive.ok ? ' e no Google Drive' : ''}.\`);
+      } else {
+        alert('Não consegui salvar o backup: ' + (data.erro || 'erro desconhecido'));
+      }
+    } catch (err) {
+      alert('Não consegui salvar o backup: ' + err.message);
+    } finally {
+      btn.textContent = textoOriginal;
+      btn.disabled = false;
+    }
 
   // Salva um campo editável direto na tabela, sem recarregar tudo.
   // tipo: 'lead' (padrão) ou 'nao_identificado' — este último promove o contato
