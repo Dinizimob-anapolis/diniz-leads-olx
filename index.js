@@ -2034,7 +2034,7 @@ app.patch('/api/leads/:id', basicAuthAdminOuSdr, async (req, res) => {
         // lugar antes. É o único ponto onde os dois boards se tocam.
         await pool.query(
           `UPDATE leads SET status = $1, status_alterado_em = now(), reaquecido_em = now(),
-                  status_corretor = 'Reaquecidos', status_corretor_alterado_em = now()
+                  status_corretor = 'Reaquecido', status_corretor_alterado_em = now()
            WHERE id = $2`,
           [valor, id]
         );
