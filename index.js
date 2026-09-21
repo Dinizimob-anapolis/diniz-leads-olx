@@ -6,6 +6,7 @@ const { google } = require('googleapis');
 const { DASHBOARD_HTML } = require('./dashboard-template');
 const { CRM_HTML } = require('./crm-template');
 const { JULIANE_HTML } = require('./juliane-template');
+const { CORRETOR_HTML } = require('./corretor-template');
 const app = express();
 app.use(express.json());
 
@@ -1183,8 +1184,17 @@ function basicAuthAdminOuSdr(req, res, next) {
   const julianeUser = process.env.JULIANE_CRM_USER || 'juliane';
   const julianePass = process.env.JULIANE_CRM_PASS;
 
-  if (!adminPass && !sdrPass && !julianePass) {
-    console.warn('⚠️  Nenhuma senha configurada (DASHBOARD_PASS/CRM_PASS/JULIANE_CRM_PASS) — CRM está SEM proteção por senha.');
+  // Login individual de cada corretor — preparado pra crescer, começando só
+  // com o Junior. Pra adicionar outro depois, é só criar as duas variáveis
+  // de ambiente (ex: CORRETOR_LAIS_USER/CORRETOR_LAIS_PASS) e uma linha aqui.
+  const LOGINS_CORRETORES = {
+    junior: { user: process.env.CORRETOR_JUNIOR_USER || 'junior', pass: process.env.CORRETOR_JUNIOR_PASS, nome: 'Junior' },
+  };
+
+  const algumaSenhaConfigurada = adminPass || sdrPass || julianePass ||
+    Object.values(LOGINS_CORRETORES).some(c => c.pass);
+  if (!algumaSenhaConfigurada) {
+    console.warn('⚠️  Nenhuma senha configurada — CRM está SEM proteção por senha.');
     req.authTipo = 'admin';
     return next();
   }
@@ -1208,10 +1218,22 @@ function basicAuthAdminOuSdr(req, res, next) {
     req.authTipo = 'juliane';
     return next();
   }
+  for (const chave of Object.keys(LOGINS_CORRETORES)) {
+    const login = LOGINS_CORRETORES[chave];
+    if (login.pass && u === login.user && p === login.pass) {
+      req.authTipo = 'corretor';
+      req.corretorNome = login.nome;
+      return next();
+    }
+  }
 
   res.set('WWW-Authenticate', 'Basic realm="Painel de Leads"');
   return res.status(401).send('Credenciais inválidas');
 }
+
+// Campos que o corretor pode editar no próprio Kanban — nada de reatribuir
+// corretor, nem mexer em carteiras, nem em campos administrativos.
+const CAMPOS_EDITAVEIS_CORRETOR = ['status', 'notas_sdr', 'tarefa_sdr', 'tarefa_data', 'ultima_atualizacao_sdr', 'valor_imovel_sdr', 'buscando_sdr'];
 
 // Campos que a SDR pode editar pelo CRM — o resto (aprovado, visita, proposta,
 // venda, corretor, origem etc.) continua só pra quem loga como admin.
@@ -1550,6 +1572,32 @@ app.get('/api/leads/carteira-juliane', basicAuthAdminOuSdr, async (req, res) => 
 });
 
 // Lista TODOS os leads do sistema (não só uma carteira) — alimenta o quadro
+// Lista só os leads do corretor que está logado agora — nunca de outro.
+app.get('/api/leads/meus', basicAuthAdminOuSdr, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  }
+  if (req.authTipo !== 'corretor') {
+    return res.status(403).json({ ok: false, erro: 'Esse login não é de corretor' });
+  }
+  try {
+    const result = await pool.query(
+      `SELECT id, whatsapp, nome, corretor, origem, status, distribuido_em,
+              outros_corretores, notas_sdr, reaquecido_em, tarefa_sdr,
+              status_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr, tarefa_data
+       FROM leads
+       WHERE corretor = $1
+       ORDER BY COALESCE(status_alterado_em, distribuido_em) DESC`,
+      [req.corretorNome]
+    );
+    res.json({ ok: true, leads: result.rows });
+  } catch (err) {
+    console.error('Erro ao listar leads do corretor:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
 // da Juliane organizado por corretor: quem já tem corretor definido cai na
 // coluna dele, quem não tem cai em "Repassado ao corretor" pra ela organizar.
 app.get('/api/leads/todos-resumo', basicAuthAdminOuSdr, async (req, res) => {
@@ -1561,7 +1609,7 @@ app.get('/api/leads/todos-resumo', basicAuthAdminOuSdr, async (req, res) => {
     const result = await pool.query(
       `SELECT id, whatsapp, nome, corretor, origem, status, distribuido_em,
               outros_corretores, notas_sdr, reaquecido_em, tarefa_sdr, corretores_repassados,
-              status_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr, tarefa_data, aprovado, visita, proposta, documentacao, venda
+              status_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr, tarefa_data, aprovado, visita, proposta, documentacao, venda, carteira_sdr
        FROM leads
        WHERE (corretor IS NOT NULL AND corretor <> '')
           OR (carteira_sdr IS NOT TRUE AND COALESCE(status, '') NOT IN ('Já comprou', 'Sem retorno', 'Venda efetuada', 'Compra futura'))
@@ -1938,6 +1986,19 @@ app.patch('/api/leads/:id', basicAuthAdminOuSdr, async (req, res) => {
   if (req.authTipo === 'juliane' && !CAMPOS_EDITAVEIS_JULIANE.includes(campo)) {
     return res.status(403).json({ ok: false, erro: `Login da Juliane não pode editar o campo '${campo}'` });
   }
+  if (req.authTipo === 'corretor') {
+    if (!CAMPOS_EDITAVEIS_CORRETOR.includes(campo)) {
+      return res.status(403).json({ ok: false, erro: `Você não pode editar o campo '${campo}'` });
+    }
+    // Segurança: o corretor só pode editar lead que é realmente dele.
+    const donoResult = await pool.query('SELECT corretor FROM leads WHERE id = $1', [id]);
+    if (donoResult.rows.length === 0) {
+      return res.status(404).json({ ok: false, erro: 'Lead não encontrado' });
+    }
+    if (normalizarNomeCorretor(donoResult.rows[0].corretor) !== req.corretorNome) {
+      return res.status(403).json({ ok: false, erro: 'Esse lead não é seu' });
+    }
+  }
 
   // Unifica variações de acento/maiúscula no nome do corretor (ex: "Lais" e
   // "Laís" contam como a mesma pessoa) — tanto no campo principal quanto nas
@@ -2107,6 +2168,14 @@ app.get('/crm', basicAuthAdminOuSdr, (req, res) => {
 // ─── ROTA: CRM DA JULIANE ─────────────────────────────────────
 app.get('/crm-juliane', basicAuthAdminOuSdr, (req, res) => {
   res.send(JULIANE_HTML);
+});
+
+// ─── ROTA: CRM DO CORRETOR ────────────────────────────────────
+app.get('/meu-crm', basicAuthAdminOuSdr, (req, res) => {
+  if (req.authTipo !== 'corretor') {
+    return res.status(403).send('Essa página é só pra login de corretor.');
+  }
+  res.send(CORRETOR_HTML);
 });
 
 // ─── ROTA DE TESTE ───────────────────────────────────────────
