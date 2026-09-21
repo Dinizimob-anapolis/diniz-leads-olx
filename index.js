@@ -2254,6 +2254,655 @@ app.all('/api/admin/backups/agora', basicAuthAdminOuSdr, async (req, res) => {
 // Só consulta, não muda nada. Mostra quais leads têm aquele corretor mas
 // não aparecem no CRM dele porque ainda estão marcados como "na carteira
 // da SDR" (carteira_sdr = true).
+// ─── ROTA: IMPORTAÇÃO PONTUAL — leads da Michelle (planilha manual) ─
+// Uso único: insere/atualiza os leads que a Michelle já vinha controlando
+// numa planilha própria, com corretor, status (no board dela), notas,
+// valor do imóvel e datas — sem perder nenhuma informação que ela já tinha
+// registrado. Não mexe em lead que já existir com outro corretor.
+const LEADS_MICHELLE = [
+  {
+    "nome": "Lorena Boaventura",
+    "whatsapp": "5562991531824",
+    "origem": "Patrocinado",
+    "imovelDesc": "GRAN VENEZA",
+    "statusCorretor": "Sem retorno",
+    "notasSdr": "SEM RETORNO: ENTREI EM CONATO COM O CLIENTE E NAO OBTIVE NENHUMA RESPOSTA",
+    "valorImovel": "R$ 255.000,00",
+    "distribuidoEm": "2026-09-16",
+    "ultimaAtualizacao": "2026-09-16",
+    "numeroInvalido": false
+  },
+  {
+    "nome": "Marcia Francisca",
+    "whatsapp": "5562993268694",
+    "origem": "Patrocinado",
+    "imovelDesc": "GRAN VENEZA",
+    "statusCorretor": "Sem retorno",
+    "notasSdr": "SEM RETORNO: ENTREI EM CONATO COM O CLIENTE E NAO OBTIVE NENHUMA RESPOSTA",
+    "valorImovel": "R$ 255.000,00",
+    "distribuidoEm": "2026-09-16",
+    "ultimaAtualizacao": "2026-09-16",
+    "numeroInvalido": false
+  },
+  {
+    "nome": "Daniiel Fernandes",
+    "whatsapp": "5562993700292",
+    "origem": "Patrocinado",
+    "imovelDesc": "GRAN VENEZA",
+    "statusCorretor": "Sem retorno",
+    "notasSdr": "SEM RETORNO: ENTREI EM CONATO COM O CLIENTE E NAO OBTIVE NENHUMA RESPOSTA",
+    "valorImovel": "R$ 255.000,00",
+    "distribuidoEm": "2026-09-16",
+    "ultimaAtualizacao": "2026-09-16",
+    "numeroInvalido": false
+  },
+  {
+    "nome": "Rosineia",
+    "whatsapp": "5562985933274",
+    "origem": "Patrocinado",
+    "imovelDesc": "GRAN VENEZA",
+    "statusCorretor": "Sem retorno",
+    "notasSdr": "SEM RETORNO: ENTREI EM CONATO COM O CLIENTE E NAO OBTIVE NENHUMA RESPOSTA",
+    "valorImovel": "R$ 255.000,00",
+    "distribuidoEm": "2026-09-16",
+    "ultimaAtualizacao": "2026-09-16",
+    "numeroInvalido": false
+  },
+  {
+    "nome": "Valdirene",
+    "whatsapp": "5562999048492",
+    "origem": "Patrocinado",
+    "imovelDesc": "GRAN VENEZA",
+    "statusCorretor": "Sem retorno",
+    "notasSdr": "SEM RETORNO: ENTREI EM CONATO COM O CLIENTE E NAO OBTIVE NENHUMA RESPOSTA",
+    "valorImovel": "R$ 255.000,00",
+    "distribuidoEm": "2026-09-16",
+    "ultimaAtualizacao": "2026-09-16",
+    "numeroInvalido": false
+  },
+  {
+    "nome": "Robson",
+    "whatsapp": "5562991457810",
+    "origem": "Patrocinado",
+    "imovelDesc": "GRAN VENEZA",
+    "statusCorretor": "Sem retorno",
+    "notasSdr": "SEM RETORNO: ENTREI EM CONATO COM O CLIENTE E NAO OBTIVE NENHUMA RESPOSTA",
+    "valorImovel": "R$ 255.000,00",
+    "distribuidoEm": "2026-09-16",
+    "ultimaAtualizacao": "2026-09-16",
+    "numeroInvalido": false
+  },
+  {
+    "nome": "Fabio",
+    "whatsapp": "5562996989643",
+    "origem": "Patrocinado",
+    "imovelDesc": "GRAN VENEZA",
+    "statusCorretor": "Sem retorno",
+    "notasSdr": "SEM RETORNO: ENTREI EM CONATO COM O CLIENTE E NAO OBTIVE NENHUMA RESPOSTA",
+    "valorImovel": "R$ 255.000,00",
+    "distribuidoEm": "2026-09-16",
+    "ultimaAtualizacao": "2026-09-16",
+    "numeroInvalido": false
+  },
+  {
+    "nome": "Julyana",
+    "whatsapp": "5562981832136",
+    "origem": "Patrocinado",
+    "imovelDesc": "GRAN VENEZA",
+    "statusCorretor": "Sem retorno",
+    "notasSdr": "SEM RETORNO: ENTREI EM CONATO COM O CLIENTE E NAO OBTIVE NENHUMA RESPOSTA",
+    "valorImovel": "R$ 255.000,00",
+    "distribuidoEm": "2026-09-16",
+    "ultimaAtualizacao": "2026-09-16",
+    "numeroInvalido": false
+  },
+  {
+    "nome": "Giovana",
+    "whatsapp": "5562991666487",
+    "origem": "Patrocinado",
+    "imovelDesc": "GRAN VENEZA",
+    "statusCorretor": "Sem retorno",
+    "notasSdr": "SEM RETORNO: ENTREI EM CONATO COM O CLIENTE E NAO OBTIVE NENHUMA RESPOSTA",
+    "valorImovel": "R$ 255.000,00",
+    "distribuidoEm": "2026-09-16",
+    "ultimaAtualizacao": "2026-09-16",
+    "numeroInvalido": false
+  },
+  {
+    "nome": "Alan Veronezi",
+    "whatsapp": "5562996379409",
+    "origem": "Patrocinado",
+    "imovelDesc": "GRAN VENEZA",
+    "statusCorretor": "Aguardando retorno",
+    "notasSdr": "OBTIVE RESPOSTA: CLIENTE NO MOMENTO ESTA COM O NOME NEGATIVADO,PERGUNTEI SE IRA FAZER NEGOCIAÇAO NAO ME RESPONDEU MAIS.",
+    "valorImovel": "R$ 255.000,00",
+    "distribuidoEm": "2026-09-16",
+    "ultimaAtualizacao": "2026-09-17",
+    "numeroInvalido": false
+  },
+  {
+    "nome": "Yasmin",
+    "whatsapp": "5562992592881",
+    "origem": "Patrocinado",
+    "imovelDesc": "GRAN VENEZA",
+    "statusCorretor": "Sem retorno",
+    "notasSdr": "SEM RETORNO: ENTREI EM CONATO COM O CLIENTE E NAO OBTIVE NENHUMA RESPOSTA",
+    "valorImovel": "R$ 255.000,00",
+    "distribuidoEm": "2026-09-16",
+    "ultimaAtualizacao": "2026-09-16",
+    "numeroInvalido": false
+  },
+  {
+    "nome": "Lucian",
+    "whatsapp": "5562992442556",
+    "origem": "Patrocinado",
+    "imovelDesc": "GRAN VENEZA",
+    "statusCorretor": "Sem retorno",
+    "notasSdr": "SEM RETORNO: ENTREI EM CONATO COM O CLIENTE E NAO OBTIVE NENHUMA RESPOSTA",
+    "valorImovel": "R$ 255.000,00",
+    "distribuidoEm": "2026-09-17",
+    "ultimaAtualizacao": "2026-09-17",
+    "numeroInvalido": false
+  },
+  {
+    "nome": "Maria Luiza",
+    "whatsapp": "5534998964239",
+    "origem": "Patrocinado",
+    "imovelDesc": "GRAN VENEZA",
+    "statusCorretor": "Sem retorno",
+    "notasSdr": "SEM RETORNO: ENTREI EM CONATO COM O CLIENTE E NAO OBTIVE NENHUMA RESPOSTA",
+    "valorImovel": "R$ 255.000,00",
+    "distribuidoEm": "2026-09-17",
+    "ultimaAtualizacao": "2026-09-17",
+    "numeroInvalido": false
+  },
+  {
+    "nome": "Domingos",
+    "whatsapp": "5562996175302",
+    "origem": "Patrocinado",
+    "imovelDesc": "GRAN VENEZA",
+    "statusCorretor": "Sem retorno",
+    "notasSdr": "SEM RETORNO: ENTREI EM CONATO COM O CLIENTE E NAO OBTIVE NENHUMA RESPOSTA",
+    "valorImovel": "R$ 255.000,00",
+    "distribuidoEm": "2026-09-17",
+    "ultimaAtualizacao": "2026-09-17",
+    "numeroInvalido": false
+  },
+  {
+    "nome": "Rafael",
+    "whatsapp": "5521966146400",
+    "origem": "Patrocinado",
+    "imovelDesc": "GRAN VENEZA",
+    "statusCorretor": "Sem retorno",
+    "notasSdr": "INDISPENSÁVEL: NAO OBTIVE CONTATO NUMERO ERRADO",
+    "valorImovel": "R$ 255.000,00",
+    "distribuidoEm": "2026-09-17",
+    "ultimaAtualizacao": "2026-09-17",
+    "numeroInvalido": true
+  },
+  {
+    "nome": "Diego",
+    "whatsapp": "5562984669753",
+    "origem": "Patrocinado",
+    "imovelDesc": "GRAN VENEZA",
+    "statusCorretor": "Sem retorno",
+    "notasSdr": "SEM RETORNO: ENTREI EM CONATO COM O CLIENTE E NAO OBTIVE NENHUMA RESPOSTA",
+    "valorImovel": "R$ 255.000,00",
+    "distribuidoEm": "2026-09-17",
+    "ultimaAtualizacao": "2026-09-17",
+    "numeroInvalido": false
+  },
+  {
+    "nome": "Anna Laura",
+    "whatsapp": "5562991377889",
+    "origem": "Patrocinado",
+    "imovelDesc": "GRAN VENEZA",
+    "statusCorretor": "Sem retorno",
+    "notasSdr": "SEM RETORNO: ENTREI EM CONATO COM O CLIENTE E NAO OBTIVE NENHUMA RESPOSTA",
+    "valorImovel": "R$ 255.000,00",
+    "distribuidoEm": "2026-09-17",
+    "ultimaAtualizacao": "2026-09-17",
+    "numeroInvalido": false
+  },
+  {
+    "nome": "Kaua",
+    "whatsapp": "5562998312084",
+    "origem": "Patrocinado",
+    "imovelDesc": "GRAN VENEZA",
+    "statusCorretor": "Sem retorno",
+    "notasSdr": "INDISPENSÁVEL: FALTA UM NUMERO NO CONTATO",
+    "valorImovel": "R$ 255.000,00",
+    "distribuidoEm": "2026-09-17",
+    "ultimaAtualizacao": "2026-09-17",
+    "numeroInvalido": true
+  },
+  {
+    "nome": "Marcos",
+    "whatsapp": "5562991102120",
+    "origem": "Patrocinado",
+    "imovelDesc": "GRAN VENEZA",
+    "statusCorretor": "Sem retorno",
+    "notasSdr": "SEM RETORNO: ENTREI EM CONATO COM O CLIENTE E NAO OBTIVE NENHUMA RESPOSTA",
+    "valorImovel": "R$ 255.000,00",
+    "distribuidoEm": "2026-09-17",
+    "ultimaAtualizacao": "2026-09-17",
+    "numeroInvalido": false
+  },
+  {
+    "nome": "Juliana",
+    "whatsapp": "5562994737460",
+    "origem": "Patrocinado",
+    "imovelDesc": "GRAN VENEZA",
+    "statusCorretor": "Aguardando retorno",
+    "notasSdr": "OBTIVE RESPOSTA: CLIENTE DISSE QUE NAO TEM INTERESSE NO MOMENTO, PERGUNTEI SE FUTURAMENTE PODERIA ENTAR EM CONTATO NOVAMENTE COM NAO ME RESPONDEU MAIS.",
+    "valorImovel": "R$ 255.000,00",
+    "distribuidoEm": "2026-09-17",
+    "ultimaAtualizacao": "2026-09-17",
+    "numeroInvalido": false
+  },
+  {
+    "nome": "Bruno",
+    "whatsapp": "5562991928179",
+    "origem": "Patrocinado",
+    "imovelDesc": "GRAN VENEZA",
+    "statusCorretor": "Sem retorno",
+    "notasSdr": "INDISPENSÁVEL: ESSE NUMERO NAO CONTA NO WHATSAPP, LIGUEI NAO ATENDEU TELEFONE NAO DA NADA.",
+    "valorImovel": "R$ 255.000,00",
+    "distribuidoEm": "2026-09-17",
+    "ultimaAtualizacao": "2026-09-17",
+    "numeroInvalido": true
+  },
+  {
+    "nome": "Cassio",
+    "whatsapp": "5562993900134",
+    "origem": "Patrocinado",
+    "imovelDesc": "GRAN VENEZA",
+    "statusCorretor": "Sem retorno",
+    "notasSdr": "SEM RETORNO: ENTREI EM CONATO COM O CLIENTE E NAO OBTIVE NENHUMA RESPOSTA",
+    "valorImovel": "R$ 255.000,00",
+    "distribuidoEm": "2026-09-17",
+    "ultimaAtualizacao": "2026-09-17",
+    "numeroInvalido": false
+  },
+  {
+    "nome": "Antonio",
+    "whatsapp": "5562991302940",
+    "origem": "Patrocinado",
+    "imovelDesc": "GRAN VENEZA",
+    "statusCorretor": "Sem retorno",
+    "notasSdr": "SEM RETORNO: ENTREI EM CONATO COM O CLIENTE E NAO OBTIVE NENHUMA RESPOSTA",
+    "valorImovel": "R$ 255.000,00",
+    "distribuidoEm": "2026-09-17",
+    "ultimaAtualizacao": "2026-09-17",
+    "numeroInvalido": false
+  },
+  {
+    "nome": "Reinaldo",
+    "whatsapp": "5562992824131",
+    "origem": "Patrocinado",
+    "imovelDesc": "GRAN VENEZA",
+    "statusCorretor": "Sem retorno",
+    "notasSdr": "SEM RETORNO: ENTREI EM CONATO COM O CLIENTE E NAO OBTIVE NENHUMA RESPOSTA",
+    "valorImovel": "R$ 255.000,00",
+    "distribuidoEm": "2026-09-17",
+    "ultimaAtualizacao": "2026-09-17",
+    "numeroInvalido": false
+  },
+  {
+    "nome": "Natim",
+    "whatsapp": "5562994263601",
+    "origem": "Patrocinado",
+    "imovelDesc": "GRAN VENEZA",
+    "statusCorretor": "Sem retorno",
+    "notasSdr": "INDISPENSÁVEL: NUMERO SEM WHATSAPP, LIGUEI NUMERO NAO DA NADA.",
+    "valorImovel": "R$ 255.000,00",
+    "distribuidoEm": "2026-09-17",
+    "ultimaAtualizacao": "2026-09-17",
+    "numeroInvalido": true
+  },
+  {
+    "nome": "Meuridiana",
+    "whatsapp": "5562992563233",
+    "origem": "Patrocinado",
+    "imovelDesc": "GRAN VENEZA",
+    "statusCorretor": "Sem retorno",
+    "notasSdr": "SEM RETORNO: ENTREI EM CONATO COM O CLIENTE E NAO OBTIVE NENHUMA RESPOSTA",
+    "valorImovel": "R$ 255.000,00",
+    "distribuidoEm": "2026-09-17",
+    "ultimaAtualizacao": "2026-09-17",
+    "numeroInvalido": false
+  },
+  {
+    "nome": "Marquim",
+    "whatsapp": "5562981960813",
+    "origem": "Patrocinado",
+    "imovelDesc": "GRAN VENEZA",
+    "statusCorretor": "Sem retorno",
+    "notasSdr": "SEM RETORNO: ENTREI EM CONATO COM O CLIENTE E NAO OBTIVE NENHUMA RESPOSTA",
+    "valorImovel": "R$ 255.000,00",
+    "distribuidoEm": "2026-09-17",
+    "ultimaAtualizacao": "2026-09-17",
+    "numeroInvalido": false
+  },
+  {
+    "nome": "Francisvaldo",
+    "whatsapp": "5562994417099",
+    "origem": "Patrocinado",
+    "imovelDesc": "GRAN VENEZA",
+    "statusCorretor": "Sem retorno",
+    "notasSdr": "SEM RETORNO: ENTREI EM CONATO COM O CLIENTE E NAO OBTIVE NENHUMA RESPOSTA",
+    "valorImovel": "R$ 255.000,00",
+    "distribuidoEm": "2026-09-17",
+    "ultimaAtualizacao": "2026-09-17",
+    "numeroInvalido": false
+  },
+  {
+    "nome": "Joao",
+    "whatsapp": "5514981861697",
+    "origem": "Patrocinado",
+    "imovelDesc": "GRAN VENEZA",
+    "statusCorretor": "Sem retorno",
+    "notasSdr": "SEM RETORNO: ENTREI EM CONATO COM O CLIENTE E NAO OBTIVE NENHUMA RESPOSTA",
+    "valorImovel": "R$ 255.000,00",
+    "distribuidoEm": "2026-09-17",
+    "ultimaAtualizacao": "2026-09-17",
+    "numeroInvalido": false
+  },
+  {
+    "nome": "Gloria",
+    "whatsapp": "5562991028985",
+    "origem": "Patrocinado",
+    "imovelDesc": "GRAN VENEZA",
+    "statusCorretor": "Sem retorno",
+    "notasSdr": "SEM RETORNO: ENTREI EM CONATO COM O CLIENTE E NAO OBTIVE NENHUMA RESPOSTA",
+    "valorImovel": "R$ 255.000,00",
+    "distribuidoEm": "2026-09-17",
+    "ultimaAtualizacao": "2026-09-17",
+    "numeroInvalido": false
+  },
+  {
+    "nome": "Sueli",
+    "whatsapp": "5562982912187",
+    "origem": "Patrocinado",
+    "imovelDesc": "GRAN VENEZA",
+    "statusCorretor": "Sem retorno",
+    "notasSdr": "SEM RETORNO: ENTREI EM CONATO COM O CLIENTE E NAO OBTIVE NENHUMA RESPOSTA",
+    "valorImovel": "R$ 255.000,00",
+    "distribuidoEm": "2026-09-17",
+    "ultimaAtualizacao": "2026-09-17",
+    "numeroInvalido": false
+  },
+  {
+    "nome": "Marcia",
+    "whatsapp": "5562982279154",
+    "origem": "Patrocinado",
+    "imovelDesc": "GRAN VENEZA",
+    "statusCorretor": "Sem retorno",
+    "notasSdr": "SEM RETORNO: ENTREI EM CONATO COM O CLIENTE E NAO OBTIVE NENHUMA RESPOSTA",
+    "valorImovel": "R$ 255.000,00",
+    "distribuidoEm": "2026-09-17",
+    "ultimaAtualizacao": "2026-09-17",
+    "numeroInvalido": false
+  },
+  {
+    "nome": "Milton",
+    "whatsapp": "5562992811079",
+    "origem": "Patrocinado",
+    "imovelDesc": "GRAN VENEZA",
+    "statusCorretor": "Sem retorno",
+    "notasSdr": "SEM RETORNO: ENTREI EM CONATO COM O CLIENTE E NAO OBTIVE NENHUMA RESPOSTA",
+    "valorImovel": "R$ 255.000,00",
+    "distribuidoEm": "2026-09-17",
+    "ultimaAtualizacao": "2026-09-17",
+    "numeroInvalido": false
+  },
+  {
+    "nome": "Jhony",
+    "whatsapp": "5562991314334",
+    "origem": "Patrocinado",
+    "imovelDesc": "GRAN VENEZA",
+    "statusCorretor": "Sem retorno",
+    "notasSdr": "SEM RETORNO: ENTREI EM CONATO COM O CLIENTE E NAO OBTIVE NENHUMA RESPOSTA",
+    "valorImovel": "R$ 255.000,00",
+    "distribuidoEm": "2026-09-17",
+    "ultimaAtualizacao": "2026-09-17",
+    "numeroInvalido": false
+  },
+  {
+    "nome": "Alexandre",
+    "whatsapp": "5562994457771",
+    "origem": "Patrocinado",
+    "imovelDesc": "GRAN VENEZA",
+    "statusCorretor": "Sem retorno",
+    "notasSdr": "SEM RETORNO: ENTREI EM CONATO COM O CLIENTE E NAO OBTIVE NENHUMA RESPOSTA",
+    "valorImovel": "R$ 255.000,00",
+    "distribuidoEm": "2026-09-17",
+    "ultimaAtualizacao": "2026-09-17",
+    "numeroInvalido": false
+  },
+  {
+    "nome": "Jean",
+    "whatsapp": "5562995085588",
+    "origem": "Patrocinado",
+    "imovelDesc": "GRAN VENEZA",
+    "statusCorretor": "Sem retorno",
+    "notasSdr": "SEM RETORNO: ENTREI EM CONATO COM O CLIENTE E NAO OBTIVE NENHUMA RESPOSTA",
+    "valorImovel": "R$ 255.000,00",
+    "distribuidoEm": "2026-09-17",
+    "ultimaAtualizacao": "2026-09-17",
+    "numeroInvalido": false
+  },
+  {
+    "nome": "Maria Jose",
+    "whatsapp": "5561991081759",
+    "origem": "Patrocinado",
+    "imovelDesc": "GRAN VENEZA",
+    "statusCorretor": "Sem retorno",
+    "notasSdr": "SEM RETORNO: ENTREI EM CONATO COM O CLIENTE E NAO OBTIVE NENHUMA RESPOSTA",
+    "valorImovel": "R$ 255.000,00",
+    "distribuidoEm": "2026-09-17",
+    "ultimaAtualizacao": "2026-09-17",
+    "numeroInvalido": false
+  },
+  {
+    "nome": "Pericles",
+    "whatsapp": "5534624561792",
+    "origem": "Patrocinado",
+    "imovelDesc": "GRAN VENEZA",
+    "statusCorretor": "Sem retorno",
+    "notasSdr": "SEM RETORNO: ENTREI EM CONATO COM O CLIENTE E NAO OBTIVE NENHUMA RESPOSTA",
+    "valorImovel": "R$ 255.000,00",
+    "distribuidoEm": "2026-09-17",
+    "ultimaAtualizacao": "2026-09-17",
+    "numeroInvalido": false
+  },
+  {
+    "nome": "Hanucy",
+    "whatsapp": "5562994491037",
+    "origem": "Patrocinado",
+    "imovelDesc": "GRAN VENEZA",
+    "statusCorretor": "Sem retorno",
+    "notasSdr": "SEM RETORNO: ENTREI EM CONATO COM O CLIENTE E NAO OBTIVE NENHUMA RESPOSTA",
+    "valorImovel": "R$ 255.000,00",
+    "distribuidoEm": "2026-09-17",
+    "ultimaAtualizacao": "2026-09-17",
+    "numeroInvalido": false
+  },
+  {
+    "nome": "Manuela",
+    "whatsapp": "5562992384685",
+    "origem": "Patrocinado",
+    "imovelDesc": "GRAN VENEZA",
+    "statusCorretor": "Sem retorno",
+    "notasSdr": "SEM RETORNO: ENTREI EM CONATO COM O CLIENTE E NAO OBTIVE NENHUMA RESPOSTA",
+    "valorImovel": "R$ 255.000,00",
+    "distribuidoEm": "2026-09-17",
+    "ultimaAtualizacao": "2026-09-17",
+    "numeroInvalido": false
+  },
+  {
+    "nome": "Sem nome",
+    "whatsapp": "5561991497006",
+    "origem": "Patrocinado",
+    "imovelDesc": "GRAN VENEZA",
+    "statusCorretor": "Sem retorno",
+    "notasSdr": "SEM RETORNO: ENTREI EM CONATO COM O CLIENTE E NAO OBTIVE NENHUMA RESPOSTA",
+    "valorImovel": "R$ 255.000,00",
+    "distribuidoEm": "2026-09-17",
+    "ultimaAtualizacao": "2026-09-17",
+    "numeroInvalido": false
+  },
+  {
+    "nome": "Leila",
+    "whatsapp": "5562992398194",
+    "origem": "Patrocinado",
+    "imovelDesc": "GRAN VENEZA",
+    "statusCorretor": "Sem retorno",
+    "notasSdr": "SEM RETORNO: ENTREI EM CONATO COM O CLIENTE E NAO OBTIVE NENHUMA RESPOSTA",
+    "valorImovel": "R$ 255.000,00",
+    "distribuidoEm": "2026-09-17",
+    "ultimaAtualizacao": "2026-09-17",
+    "numeroInvalido": false
+  },
+  {
+    "nome": "Valeria",
+    "whatsapp": "5562993736571",
+    "origem": "Patrocinado",
+    "imovelDesc": "GRAN VENEZA",
+    "statusCorretor": "Sem retorno",
+    "notasSdr": "SEM RETORNO: ENTREI EM CONATO COM O CLIENTE E NAO OBTIVE NENHUMA RESPOSTA",
+    "valorImovel": "R$ 255.000,00",
+    "distribuidoEm": "2026-09-17",
+    "ultimaAtualizacao": "2026-09-17",
+    "numeroInvalido": false
+  },
+  {
+    "nome": "Diego",
+    "whatsapp": "5562992316655",
+    "origem": "Patrocinado",
+    "imovelDesc": "GRAN VENEZA",
+    "statusCorretor": "Sem retorno",
+    "notasSdr": "SEM RETORNO: ENTREI EM CONATO COM O CLIENTE E NAO OBTIVE NENHUMA RESPOSTA",
+    "valorImovel": "R$ 255.000,00",
+    "distribuidoEm": "2026-09-17",
+    "ultimaAtualizacao": "2026-09-17",
+    "numeroInvalido": false
+  },
+  {
+    "nome": "Adriana",
+    "whatsapp": "5562992166166",
+    "origem": "Patrocinado",
+    "imovelDesc": "GRAN VENEZA",
+    "statusCorretor": "Aguardando retorno",
+    "notasSdr": "AGUARDANDO INFORMACAO: ENTREI EM CONTATO, CLIENTE SO FALOU OI AGURADANDO MAS INFORMACAO",
+    "valorImovel": null,
+    "distribuidoEm": "2026-09-17",
+    "ultimaAtualizacao": "2026-09-17",
+    "numeroInvalido": false
+  },
+  {
+    "nome": "Andre",
+    "whatsapp": "5562996409442",
+    "origem": "Patrocinado",
+    "imovelDesc": "GRAN VENEZA",
+    "statusCorretor": "Aguardando retorno",
+    "notasSdr": "AGUARDANDO INFORMACAO: ENTREI EM CONATO COM O CLIENTE DISSE TEM INTERESSE, AGURADANDO ELE PASSAR ALGUMAS INFORMACOES",
+    "valorImovel": "R$ 255.000,00",
+    "distribuidoEm": "2026-09-19",
+    "ultimaAtualizacao": "2026-09-21",
+    "numeroInvalido": false
+  },
+  {
+    "nome": "Raquel",
+    "whatsapp": "5562994282140",
+    "origem": "Patrocinado",
+    "imovelDesc": "GRAN VENEZA",
+    "statusCorretor": "Sem retorno",
+    "notasSdr": "SEM RETORNO: ENTREI EM CONTATO, POREM NAO OBTVE RESPOSTA.",
+    "valorImovel": "R$ 255.000,00",
+    "distribuidoEm": "2026-09-21",
+    "ultimaAtualizacao": "2026-09-21",
+    "numeroInvalido": false
+  },
+  {
+    "nome": "Denisson",
+    "whatsapp": "5562995237873",
+    "origem": "Patrocinado",
+    "imovelDesc": "GRAN VENEZA",
+    "statusCorretor": "Sem retorno",
+    "notasSdr": "SEM RETORNO: ENTREI EM CONTATO,POREM NAO OBTVE RESPOSTA",
+    "valorImovel": null,
+    "distribuidoEm": "2026-09-21",
+    "ultimaAtualizacao": "2026-09-21",
+    "numeroInvalido": false
+  }
+];
+
+app.all('/api/admin/importar-leads-michelle', basicAuth, async (req, res) => {
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  }
+  let inseridos = 0;
+  let atualizados = 0;
+  let jaTinhamOutroCorretor = 0;
+  const erros = [];
+
+  try {
+    for (const item of LEADS_MICHELLE) {
+      if (!item.whatsapp) {
+        erros.push(`${item.nome}: sem WhatsApp válido`);
+        continue;
+      }
+      try {
+        const existente = await pool.query('SELECT id, corretor FROM leads WHERE whatsapp = $1', [item.whatsapp]);
+
+        if (existente.rows.length > 0) {
+          const leadAtual = existente.rows[0];
+          if (leadAtual.corretor && leadAtual.corretor !== 'Michelle') {
+            jaTinhamOutroCorretor++;
+            continue;
+          }
+          await pool.query(
+            `UPDATE leads SET
+               corretor = 'Michelle',
+               origem = COALESCE(origem, $1),
+               imovel_desc = COALESCE(imovel_desc, $2),
+               status_corretor = $3,
+               status_corretor_alterado_em = now(),
+               notas_sdr = COALESCE(notas_sdr, $4),
+               valor_imovel_sdr = COALESCE(valor_imovel_sdr, $5),
+               ultima_atualizacao_sdr = $6,
+               numero_invalido = $7
+             WHERE id = $8`,
+            [item.origem, item.imovelDesc, item.statusCorretor, item.notasSdr, item.valorImovel,
+             item.ultimaAtualizacao, item.numeroInvalido, leadAtual.id]
+          );
+          atualizados++;
+        } else {
+          await pool.query(
+            `INSERT INTO leads (whatsapp, nome, corretor, origem, imovel_desc, status_corretor,
+                                 status_corretor_alterado_em, notas_sdr, valor_imovel_sdr,
+                                 ultima_atualizacao_sdr, distribuido_em, numero_invalido)
+             VALUES ($1, $2, 'Michelle', $3, $4, $5, now(), $6, $7, $8, $9, $10)`,
+            [item.whatsapp, item.nome, item.origem, item.imovelDesc, item.statusCorretor,
+             item.notasSdr, item.valorImovel, item.ultimaAtualizacao,
+             item.distribuidoEm || new Date().toISOString(), item.numeroInvalido]
+          );
+          inseridos++;
+        }
+      } catch (errItem) {
+        erros.push(`${item.nome} (${item.whatsapp}): ${errItem.message}`);
+      }
+    }
+
+    console.log(`Importação Michelle: ${inseridos} novos, ${atualizados} atualizados, ${jaTinhamOutroCorretor} já tinham outro corretor (ignorados)`);
+    res.json({ ok: true, inseridos, atualizados, jaTinhamOutroCorretor, totalErros: erros.length, erros });
+  } catch (err) {
+    console.error('Erro na importação da Michelle:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
 // ─── ROTA: DIAGNÓSTICO — busca leads por texto no imóvel (só consulta) ─
 // Mostra o que está gravado de verdade no banco pra um pedaço de texto,
 // ex: /api/admin/diagnostico-imovel?texto=JIBRAN — ajuda a confirmar se a
