@@ -2379,7 +2379,8 @@ app.get('/meu-crm', basicAuthAdminOuSdr, (req, res) => {
   if (req.authTipo !== 'corretor') {
     return res.status(403).send('Essa página é só pra login de corretor.');
   }
-  res.send(CORRETOR_HTML);
+  const nomeMaiusculo = req.corretorNome.toUpperCase();
+  res.send(CORRETOR_HTML.split('{{NOME_CORRETOR}}').join(nomeMaiusculo));
 });
 
 // ─── ROTA DE TESTE ───────────────────────────────────────────
