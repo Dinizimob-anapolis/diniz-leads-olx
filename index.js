@@ -2965,6 +2965,30 @@ app.all('/api/admin/importar-leads-michelle-forcar', basicAuth, async (req, res)
   }
 });
 
+// ─── ROTA: DIAGNÓSTICO — dados completos de um lead por WhatsApp ────────
+// Só consulta. Mostra tudo que importa pra entender por que um lead está
+// aparecendo (ou não) numa coluna específica de algum CRM.
+app.get('/api/admin/diagnostico-lead/:whatsapp', basicAuth, async (req, res) => {
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  }
+  try {
+    const whatsappBusca = String(req.params.whatsapp).replace(/\D/g, '');
+    const result = await pool.query(
+      `SELECT id, nome, whatsapp, corretor, status, status_alterado_em, carteira_sdr,
+              reaquecido_em, status_corretor, status_corretor_alterado_em, outros_corretores,
+              distribuido_em
+       FROM leads
+       WHERE whatsapp LIKE $1
+       ORDER BY distribuido_em DESC`,
+      [`%${whatsappBusca}%`]
+    );
+    res.json({ ok: true, total: result.rows.length, leads: result.rows });
+  } catch (err) {
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
 // ─── ROTA: DIAGNÓSTICO — busca leads por texto no imóvel (só consulta) ─
 // Mostra o que está gravado de verdade no banco pra um pedaço de texto,
 // ex: /api/admin/diagnostico-imovel?texto=JIBRAN — ajuda a confirmar se a
