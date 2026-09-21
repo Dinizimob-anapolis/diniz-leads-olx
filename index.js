@@ -173,6 +173,7 @@ async function initDb() {
           status_corretor_alterado_em = COALESCE(status_corretor_alterado_em, reaquecido_em)
       WHERE reaquecido_em IS NOT NULL
         AND corretor IS NOT NULL AND corretor <> ''
+        AND carteira_sdr IS NOT TRUE
         AND (status_corretor IS NULL OR status_corretor IN ('Novo', 'Reaquecidos'))
       RETURNING id
     `);
@@ -1610,7 +1611,7 @@ app.get('/api/leads/meus', basicAuthAdminOuSdr, async (req, res) => {
               ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr,
               status_corretor, status_corretor_alterado_em
        FROM leads
-       WHERE corretor = $1
+       WHERE corretor = $1 AND carteira_sdr IS NOT TRUE
        ORDER BY COALESCE(status_corretor_alterado_em, distribuido_em) DESC`,
       [req.corretorNome]
     );
@@ -2049,13 +2050,8 @@ app.patch('/api/leads/:id', basicAuthAdminOuSdr, async (req, res) => {
       // E se for pra "Visita agendada", é o ponto de virada: o lead passa
       // sozinho a aparecer também no Kanban da Juliane, dali pra frente.
       if (valor === 'Reaquecendo') {
-        // Também empurra o card do corretor (se ele já tiver um) pra coluna
-        // "Reaquecidos" — mesmo que ele já tivesse movido o card pra outro
-        // lugar antes. É o único ponto onde os dois boards se tocam.
         await pool.query(
-          `UPDATE leads SET status = $1, status_alterado_em = now(), reaquecido_em = now(),
-                  status_corretor = 'Reaquecido', status_corretor_alterado_em = now()
-           WHERE id = $2`,
+          `UPDATE leads SET status = $1, status_alterado_em = now(), reaquecido_em = now() WHERE id = $2`,
           [valor, id]
         );
       } else if (valor === 'Visita agendada') {
@@ -2072,6 +2068,26 @@ app.patch('/api/leads/:id', basicAuthAdminOuSdr, async (req, res) => {
     } else if (campo === 'status_corretor') {
       await pool.query(
         `UPDATE leads SET status_corretor = $1, status_corretor_alterado_em = now() WHERE id = $2`,
+        [valorFinal, id]
+      );
+    } else if (campo === 'corretor') {
+      // Ao atribuir/trocar o corretor: guarda o corretor anterior no
+      // histórico (outros_corretores — o mesmo aviso "já foi pra X" que a
+      // SDR já vê), libera da carteira da SDR e, se esse lead já tinha sido
+      // reaquecido alguma vez, entra pra ele já como "Reaquecido".
+      await pool.query(
+        `UPDATE leads
+         SET corretor = $1,
+             outros_corretores = CASE
+               WHEN corretor IS NOT NULL AND corretor <> '' AND corretor <> $1
+                    AND (outros_corretores IS NULL OR position(corretor IN outros_corretores) = 0)
+               THEN COALESCE(outros_corretores || ', ', '') || corretor
+               ELSE outros_corretores
+             END,
+             carteira_sdr = false,
+             status_corretor = CASE WHEN reaquecido_em IS NOT NULL THEN 'Reaquecido' ELSE status_corretor END,
+             status_corretor_alterado_em = CASE WHEN reaquecido_em IS NOT NULL THEN now() ELSE status_corretor_alterado_em END
+         WHERE id = $2`,
         [valorFinal, id]
       );
     } else {
