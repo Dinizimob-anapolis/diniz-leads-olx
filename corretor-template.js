@@ -3,7 +3,7 @@ const CORRETOR_HTML = `<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Meus Leads</title>
+<title>CRM - {{NOME_CORRETOR}}</title>
 <style>
   :root {
     --bg: #f7f8fb;
@@ -346,7 +346,7 @@ const CORRETOR_HTML = `<!DOCTYPE html>
 </head>
 <body>
 
-<h1>Meus Leads</h1>
+<h1>CRM - {{NOME_CORRETOR}}</h1>
 <div class="sub">Seus leads, organizados por etapa. Arraste o cartão entre as colunas pra mudar o status.</div>
 
 <div class="stats" id="stats"></div>
