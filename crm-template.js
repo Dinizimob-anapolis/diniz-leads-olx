@@ -115,6 +115,56 @@ const CRM_HTML = `<!DOCTYPE html>
     border-radius: 10px;
     font-weight: 700;
   }
+  .lupa-filtro-btn {
+    background: rgba(255,255,255,0.25);
+    border: none;
+    border-radius: 6px;
+    width: 24px;
+    height: 24px;
+    font-size: 12px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .lupa-filtro-btn.ativa {
+    background: #fff;
+    box-shadow: 0 0 0 2px rgba(255,255,255,0.5);
+  }
+  .filtro-data-painel {
+    background: #fff8e8;
+    border-bottom: 1px solid var(--card-border);
+    padding: 8px 9px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+  }
+  .filtro-data-painel label {
+    font-size: 10px;
+    color: var(--muted);
+    font-weight: 700;
+    margin: 0;
+  }
+  .filtro-data-painel input[type="date"] {
+    font-size: 11px;
+    padding: 3px 5px;
+    border: 1px solid var(--card-border);
+    border-radius: 6px;
+    flex: 1;
+    min-width: 90px;
+  }
+  .limpar-filtro-btn {
+    font-size: 10px;
+    font-weight: 700;
+    color: #e0453f;
+    background: none;
+    border: 1px solid #e0453f;
+    border-radius: 6px;
+    padding: 3px 8px;
+    cursor: pointer;
+    width: 100%;
+  }
   .column-cards {
     overflow-y: auto;
     padding: 9px;
@@ -304,6 +354,7 @@ const CRM_HTML = `<!DOCTYPE html>
 <div class="toolbar">
   <input type="text" id="busca" placeholder="Buscar por nome ou WhatsApp...">
   <button class="add-contato-btn" id="btn-atualizar" style="background:#fff;color:var(--accent);border:1px solid var(--accent);box-shadow:none;">↻ Atualizar</button>
+  <button class="add-contato-btn" id="btn-salvar-backup" style="background:#fff;color:#17a34a;border:1px solid #17a34a;box-shadow:none;">💾 Salvar backup</button>
   <button class="add-contato-btn" id="btn-adicionar">+ Adicionar contato</button>
 </div>
 
@@ -318,6 +369,40 @@ let TODOS_LEADS = [];
 let BUSCA = '';
 let LEAD_ARRASTADO = null;
 let ULTIMO_ADICIONADO_ID = null;
+let FILTROS_DATA_COLUNA = {}; // { [coluna]: { de, ate } } — filtro de período por coluna
+let COLUNA_FILTRO_ABERTA = null; // qual coluna está com o painel de data aberto agora
+
+function dataDoLeadParaFiltro(lead) {
+  return lead.status_alterado_em || lead.distribuido_em;
+}
+
+function leadPassaNoFiltroDeData(lead, coluna) {
+  const filtro = FILTROS_DATA_COLUNA[coluna];
+  if (!filtro || (!filtro.de && !filtro.ate)) return true;
+  const dataLead = dataDoLeadParaFiltro(lead);
+  if (!dataLead) return false;
+  const dia = String(dataLead).slice(0, 10);
+  if (filtro.de && dia < filtro.de) return false;
+  if (filtro.ate && dia > filtro.ate) return false;
+  return true;
+}
+
+function alternarFiltroData(coluna) {
+  COLUNA_FILTRO_ABERTA = COLUNA_FILTRO_ABERTA === coluna ? null : coluna;
+  render();
+}
+
+function definirFiltroData(coluna, campo, valor) {
+  if (!FILTROS_DATA_COLUNA[coluna]) FILTROS_DATA_COLUNA[coluna] = { de: '', ate: '' };
+  FILTROS_DATA_COLUNA[coluna][campo] = valor;
+  render();
+}
+
+function limparFiltroData(coluna) {
+  delete FILTROS_DATA_COLUNA[coluna];
+  COLUNA_FILTRO_ABERTA = null;
+  render();
+}
 
 const COLUNAS = ['Novo', 'Reaquecendo', 'Aguardando retorno', 'Repassado ao corretor', 'Visita agendada', 'Compra futura', 'Já comprou', 'Venda efetuada', 'Sem retorno'];
 
@@ -414,20 +499,35 @@ function render() {
 
   const board = document.getElementById('board');
   board.innerHTML = COLUNAS.map(coluna => {
-    const leadsColuna = leads.filter(l => statusDoLead(l) === coluna);
+    const leadsColunaSemFiltro = leads.filter(l => statusDoLead(l) === coluna);
+    const leadsColuna = leadsColunaSemFiltro.filter(l => leadPassaNoFiltroDeData(l, coluna));
     const cor = CORES_COLUNA[coluna];
     const vgvColuna = leadsColuna.reduce((soma, lead) => soma + parseValorImovel(lead.valor_imovel_sdr), 0);
+    const filtroAtivo = FILTROS_DATA_COLUNA[coluna] && (FILTROS_DATA_COLUNA[coluna].de || FILTROS_DATA_COLUNA[coluna].ate);
+    const painelAberto = COLUNA_FILTRO_ABERTA === coluna;
     return \`
       <div class="column" data-coluna="\${coluna}">
         <div class="column-header" style="background:\${cor.header};color:\${cor.texto}">
-          <div style="display:flex;justify-content:space-between;align-items:center;">
-            \${coluna}
-            <span class="column-count">\${leadsColuna.length}</span>
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">
+            <span>\${coluna}</span>
+            <div style="display:flex;align-items:center;gap:4px;">
+              <button class="lupa-filtro-btn \${filtroAtivo ? 'ativa' : ''}" title="Filtrar por período" onclick="alternarFiltroData('\${coluna}')">🔍</button>
+              <span class="column-count">\${leadsColuna.length}\${filtroAtivo ? \`/\${leadsColunaSemFiltro.length}\` : ''}</span>
+            </div>
           </div>
           \${vgvColuna > 0 ? \`<div style="font-size:11px;font-weight:700;opacity:0.95;margin-top:2px;">\${formatarReais(vgvColuna)}</div>\` : ''}
         </div>
+        \${painelAberto ? \`
+          <div class="filtro-data-painel">
+            <label>De</label>
+            <input type="date" value="\${(FILTROS_DATA_COLUNA[coluna] && FILTROS_DATA_COLUNA[coluna].de) || ''}" onchange="definirFiltroData('\${coluna}', 'de', this.value)">
+            <label>Até</label>
+            <input type="date" value="\${(FILTROS_DATA_COLUNA[coluna] && FILTROS_DATA_COLUNA[coluna].ate) || ''}" onchange="definirFiltroData('\${coluna}', 'ate', this.value)">
+            \${filtroAtivo ? \`<button class="limpar-filtro-btn" onclick="limparFiltroData('\${coluna}')">Limpar</button>\` : ''}
+          </div>
+        \` : ''}
         <div class="column-cards" data-coluna="\${coluna}">
-          \${leadsColuna.map(lead => cardHtml(lead, cor.accent)).join('') || ''}
+          \${leadsColuna.map(lead => cardHtml(lead, cor.accent)).join('') || (leadsColunaSemFiltro.length > 0 ? '<div style="text-align:center;color:var(--muted);font-size:12px;padding:12px;">Nenhum nesse período</div>' : '')}
         </div>
       </div>
     \`;
@@ -815,6 +915,23 @@ document.getElementById('overlay').addEventListener('click', e => {
 
 document.getElementById('btn-adicionar').addEventListener('click', abrirModalAdicionar);
 document.getElementById('btn-atualizar').addEventListener('click', () => carregar());
+document.getElementById('btn-salvar-backup').addEventListener('click', () => {
+  const btn = document.getElementById('btn-salvar-backup');
+  const textoOriginal = btn.textContent;
+  btn.textContent = 'Salvando...';
+  btn.disabled = true;
+  fetch('/api/admin/backups/agora')
+    .then(res => res.json())
+    .then(data => {
+      if (data.ok) {
+        alert(\`Backup salvo! \${data.totalLeads || ''} lead(s) no Postgres\${data.drive && data.drive.ok ? ' e no Google Drive' : ''}.\`);
+      } else {
+        alert('Não consegui salvar o backup: ' + (data.erro || 'erro desconhecido'));
+      }
+    })
+    .catch(() => alert('Não consegui salvar o backup. Confere sua internet e tenta de novo.'))
+    .finally(() => { btn.textContent = textoOriginal; btn.disabled = false; });
+});
 
 async function salvarCampo(id, campo, valor, aoTerminar) {
   try {
