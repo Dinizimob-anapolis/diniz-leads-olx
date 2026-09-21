@@ -163,6 +163,26 @@ async function initDb() {
   await pool.query(`ALTER TABLE leads_nao_identificados ADD COLUMN IF NOT EXISTS corretor TEXT;`);
   console.log('✅ Tabelas do lead router prontas (leads, leads_nao_identificados)');
 
+  // ─── Correção automática: leads já reaquecidos que estavam sem essa etapa
+  // marcada no board do corretor (antes dessa coluna existir, ou com o nome
+  // antigo "Reaquecidos" no plural) — corrige pra "Reaquecido" de uma vez.
+  try {
+    const corrigidosReaquecido = await pool.query(`
+      UPDATE leads
+      SET status_corretor = 'Reaquecido',
+          status_corretor_alterado_em = COALESCE(status_corretor_alterado_em, reaquecido_em)
+      WHERE reaquecido_em IS NOT NULL
+        AND corretor IS NOT NULL AND corretor <> ''
+        AND (status_corretor IS NULL OR status_corretor IN ('Novo', 'Reaquecidos'))
+      RETURNING id
+    `);
+    if (corrigidosReaquecido.rowCount > 0) {
+      console.log(`✅ Correção de leads reaquecidos: ${corrigidosReaquecido.rowCount} lead(s) movidos pra "Reaquecido" no board do corretor certo`);
+    }
+  } catch (err) {
+    console.error('Erro na correção de leads reaquecidos:', err);
+  }
+
   // ─── Correção automática de nomes de corretor com/sem acento ──────────
   // Unifica variações já salvas no banco (ex: "Lais" e "Laís" viram a mesma
   // pessoa) — roda a cada boot, mas só muda linha que realmente precisa.
