@@ -3,7 +3,7 @@ const CRM_HTML = `<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CRM — Carteira de Leads</title>
+<title>CRM - SDR</title>
 <style>
   :root {
     --bg: #f7f8fb;
@@ -346,7 +346,7 @@ const CRM_HTML = `<!DOCTYPE html>
 </head>
 <body>
 
-<h1>Carteira de Leads</h1>
+<h1>CRM - SDR</h1>
 <div class="sub">Arraste o cartão entre as colunas pra mudar o status. Toque num cartão pra ver detalhes e notas.</div>
 
 <div class="stats" id="stats"></div>
