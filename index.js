@@ -163,25 +163,6 @@ async function initDb() {
   await pool.query(`ALTER TABLE leads_nao_identificados ADD COLUMN IF NOT EXISTS corretor TEXT;`);
   console.log('✅ Tabelas do lead router prontas (leads, leads_nao_identificados)');
 
-  // ─── Correção automática: leads que já têm corretor definido devem estar
-  // liberados da carteira da SDR (regra nova — antes dela existir, leads
-  // atribuídos ficavam com carteira_sdr ainda marcada, escondendo eles do
-  // corretor no filtro atual). Aplica o mesmo padrão pra dados antigos.
-  try {
-    const liberados = await pool.query(`
-      UPDATE leads
-      SET carteira_sdr = false
-      WHERE corretor IS NOT NULL AND corretor <> ''
-        AND carteira_sdr = true
-      RETURNING id
-    `);
-    if (liberados.rowCount > 0) {
-      console.log(`✅ Correção de carteira: ${liberados.rowCount} lead(s) com corretor já definido, liberados da carteira da SDR (voltam a aparecer pro corretor)`);
-    }
-  } catch (err) {
-    console.error('Erro na correção de carteira dos leads com corretor:', err);
-  }
-
   // ─── Correção automática: leads já reaquecidos que estavam sem essa etapa
   // marcada no board do corretor (antes dessa coluna existir, ou com o nome
   // antigo "Reaquecidos" no plural) — corrige pra "Reaquecido" de uma vez.
@@ -2221,6 +2202,46 @@ app.all('/api/admin/backups/agora', basicAuth, async (req, res) => {
     const resultado = await fazerBackupDiario();
     res.json(resultado);
   } catch (err) {
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
+// ─── ROTA: RESTAURAR carteira_sdr A PARTIR DE UM BACKUP (uso pontual) ─
+// Corrige um incidente específico: uma correção de dados ruim zerou
+// carteira_sdr de vários leads que tinham corretor definido. Essa rota
+// olha um backup de ANTES do incidente e devolve carteira_sdr = true só
+// pros leads que: (a) o backup mostra como true, (b) hoje estão como
+// false, e (c) ainda têm corretor definido — não mexe em mais nada.
+app.all('/api/admin/backups/:id/restaurar-carteira-sdr', basicAuth, async (req, res) => {
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  }
+  try {
+    const backupResult = await pool.query('SELECT dados, criado_em FROM backups_leads WHERE id = $1', [req.params.id]);
+    if (backupResult.rows.length === 0) {
+      return res.status(404).json({ ok: false, erro: 'Backup não encontrado' });
+    }
+    const leadsNoBackup = backupResult.rows[0].dados;
+    let avaliados = 0;
+    let restaurados = 0;
+
+    for (const leadAntigo of leadsNoBackup) {
+      if (leadAntigo.carteira_sdr !== true) continue;
+      avaliados++;
+      const atual = await pool.query(
+        `UPDATE leads
+         SET carteira_sdr = true
+         WHERE id = $1 AND carteira_sdr = false AND corretor IS NOT NULL AND corretor <> ''
+         RETURNING id`,
+        [leadAntigo.id]
+      );
+      if (atual.rowCount > 0) restaurados++;
+    }
+
+    console.log(`Restauração de carteira_sdr a partir do backup ${req.params.id}: ${restaurados} de ${avaliados} avaliados`);
+    res.json({ ok: true, backupDe: backupResult.rows[0].criado_em, avaliados, restaurados });
+  } catch (err) {
+    console.error('Erro ao restaurar carteira_sdr:', err);
     res.status(500).json({ ok: false, erro: err.message });
   }
 });
