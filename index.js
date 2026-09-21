@@ -1241,6 +1241,7 @@ function basicAuthAdminOuSdr(req, res, next) {
   // de ambiente (ex: CORRETOR_LAIS_USER/CORRETOR_LAIS_PASS) e uma linha aqui.
   const LOGINS_CORRETORES = {
     junior: { user: process.env.CORRETOR_JUNIOR_USER || 'junior', pass: process.env.CORRETOR_JUNIOR_PASS, nome: 'Junior' },
+    michelle: { user: process.env.CORRETOR_MICHELLE_USER || 'michelle', pass: process.env.CORRETOR_MICHELLE_PASS, nome: 'Michelle' },
   };
 
   const algumaSenhaConfigurada = adminPass || sdrPass || julianePass ||
