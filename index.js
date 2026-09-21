@@ -1641,7 +1641,7 @@ app.get('/api/leads/meus', basicAuthAdminOuSdr, async (req, res) => {
               ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr,
               status_corretor, status_corretor_alterado_em
        FROM leads
-       WHERE corretor = $1 AND status IS DISTINCT FROM 'Reaquecendo'
+       WHERE corretor = $1 AND carteira_sdr IS NOT TRUE
        ORDER BY COALESCE(status_corretor_alterado_em, distribuido_em) DESC`,
       [req.corretorNome]
     );
@@ -2109,10 +2109,11 @@ app.patch('/api/leads/:id', basicAuthAdminOuSdr, async (req, res) => {
         [valorFinal, id]
       );
     } else if (campo === 'corretor') {
-      // Ao atribuir/trocar o corretor: guarda o corretor anterior no
-      // histórico (outros_corretores — o mesmo aviso "já foi pra X" que a
-      // SDR já vê), libera da carteira da SDR e, se esse lead já tinha sido
-      // reaquecido alguma vez, entra pra ele já como "Reaquecido".
+      // Ao atribuir/trocar o corretor manualmente (essa rota só é usada
+      // pelo CRM — a distribuição automática do Canal Pro nunca passa por
+      // aqui): guarda o corretor anterior no histórico (outros_corretores),
+      // libera da carteira da SDR, e marca como "Reaquecido" pro corretor
+      // que está recebendo — foi uma escolha da SDR, não distribuição fria.
       await pool.query(
         `UPDATE leads
          SET corretor = $1,
@@ -2123,8 +2124,8 @@ app.patch('/api/leads/:id', basicAuthAdminOuSdr, async (req, res) => {
                ELSE outros_corretores
              END,
              carteira_sdr = false,
-             status_corretor = CASE WHEN reaquecido_em IS NOT NULL THEN 'Reaquecido' ELSE status_corretor END,
-             status_corretor_alterado_em = CASE WHEN reaquecido_em IS NOT NULL THEN now() ELSE status_corretor_alterado_em END
+             status_corretor = 'Reaquecido',
+             status_corretor_alterado_em = now()
          WHERE id = $2`,
         [valorFinal, id]
       );
