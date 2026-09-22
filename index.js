@@ -2991,6 +2991,38 @@ app.get('/api/admin/diagnostico-lead/:whatsapp', basicAuth, async (req, res) => 
   }
 });
 
+// ─── ROTA: DIAGNÓSTICO — de onde vêm os leads do quadro da Juliane ──────
+// Só consulta. Mostra quantos entram por "tem corretor" (sem limite de
+// data) vs quantos entram por "recente + repassado ao corretor".
+app.get('/api/admin/diagnostico-juliane', basicAuth, async (req, res) => {
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  }
+  try {
+    const porCorretor = await pool.query(
+      `SELECT count(*) FROM leads WHERE corretor IS NOT NULL AND corretor <> ''`
+    );
+    const porCorretorRecente = await pool.query(
+      `SELECT count(*) FROM leads WHERE corretor IS NOT NULL AND corretor <> '' AND distribuido_em >= '2026-09-17'`
+    );
+    const porCorretorAntigo = await pool.query(
+      `SELECT count(*) FROM leads WHERE corretor IS NOT NULL AND corretor <> '' AND distribuido_em < '2026-09-17'`
+    );
+    const semCorretorRecenteRepassado = await pool.query(
+      `SELECT count(*) FROM leads WHERE (corretor IS NULL OR corretor = '') AND distribuido_em >= '2026-09-17' AND status = 'Repassado ao corretor'`
+    );
+    res.json({
+      ok: true,
+      totalComCorretor: Number(porCorretor.rows[0].count),
+      comCorretorChegouDe17_09EmDiante: Number(porCorretorRecente.rows[0].count),
+      comCorretorChegouAntesDe17_09: Number(porCorretorAntigo.rows[0].count),
+      semCorretorMasRecenteERepassado: Number(semCorretorRecenteRepassado.rows[0].count)
+    });
+  } catch (err) {
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
 // ─── ROTA: DIAGNÓSTICO — busca leads por texto no imóvel (só consulta) ─
 // Mostra o que está gravado de verdade no banco pra um pedaço de texto,
 // ex: /api/admin/diagnostico-imovel?texto=JIBRAN — ajuda a confirmar se a
