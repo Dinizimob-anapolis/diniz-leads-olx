@@ -1242,6 +1242,14 @@ function basicAuthAdminOuSdr(req, res, next) {
   const LOGINS_CORRETORES = {
     junior: { user: process.env.CORRETOR_JUNIOR_USER || 'junior', pass: process.env.CORRETOR_JUNIOR_PASS, nome: 'Junior' },
     michelle: { user: process.env.CORRETOR_MICHELLE_USER || 'michelle', pass: process.env.CORRETOR_MICHELLE_PASS, nome: 'Michelle' },
+    lais: { user: process.env.CORRETOR_LAIS_USER || 'lais', pass: process.env.CORRETOR_LAIS_PASS, nome: 'Laís' },
+    patricia: { user: process.env.CORRETOR_PATRICIA_USER || 'patricia', pass: process.env.CORRETOR_PATRICIA_PASS, nome: 'Patricia' },
+    nalcio: { user: process.env.CORRETOR_NALCIO_USER || 'nalcio', pass: process.env.CORRETOR_NALCIO_PASS, nome: 'Nalcio' },
+    renata: { user: process.env.CORRETOR_RENATA_USER || 'renata', pass: process.env.CORRETOR_RENATA_PASS, nome: 'Renata' },
+    bruno: { user: process.env.CORRETOR_BRUNO_USER || 'bruno.corretor', pass: process.env.CORRETOR_BRUNO_PASS, nome: 'Bruno' },
+    juliane: { user: process.env.CORRETOR_JULIANE_USER || 'juliane.corretor', pass: process.env.CORRETOR_JULIANE_PASS, nome: 'Juliane' },
+    amanda: { user: process.env.CORRETOR_AMANDA_USER || 'amanda', pass: process.env.CORRETOR_AMANDA_PASS, nome: 'Amanda' },
+    cyda: { user: process.env.CORRETOR_CYDA_USER || 'cyda', pass: process.env.CORRETOR_CYDA_PASS, nome: 'Cyda' },
   };
 
   const algumaSenhaConfigurada = adminPass || sdrPass || julianePass ||
