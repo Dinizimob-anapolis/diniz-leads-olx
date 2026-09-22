@@ -430,7 +430,7 @@ const JULIANE_HTML = `<!DOCTYPE html>
 <body>
 
 <h1 id="titulo-pagina">CRM - JULIANE</h1>
-<div class="sub" id="subtitulo-pagina">Quem já tem corretor cai direto na coluna dele. Sem corretor, cai em "Repassado ao corretor" pra você organizar.</div>
+<div class="sub" id="subtitulo-pagina">Quem já tem corretor cai direto na coluna dele. Sem corretor, só aparece o que chegou de 17/09 pra cá e já foi repassado pela SDR.</div>
 
 <div class="stats" id="stats"></div>
 
@@ -438,6 +438,7 @@ const JULIANE_HTML = `<!DOCTYPE html>
   <input type="text" id="busca" placeholder="Buscar por nome ou WhatsApp...">
   <button class="add-contato-btn" id="btn-atualizar" style="background:#fff;color:var(--accent);border:1px solid var(--accent);box-shadow:none;">↻ Atualizar</button>
   <button class="add-contato-btn" id="btn-salvar-backup" style="background:#fff;color:#17a34a;border:1px solid #17a34a;box-shadow:none;">💾 Salvar backup</button>
+  <button class="add-contato-btn" id="btn-baixar-csv" style="background:#fff;color:#3b6cf0;border:1px solid #3b6cf0;box-shadow:none;">⬇️ Baixar planilha</button>
   <button class="add-contato-btn" id="btn-adicionar">+ Adicionar contato</button>
 </div>
 
@@ -623,7 +624,7 @@ function trocarAba(aba) {
   document.getElementById('titulo-pagina').textContent = aba === 'sdr' ? 'CRM - SDR' : 'CRM - JULIANE';
   document.getElementById('subtitulo-pagina').textContent = aba === 'sdr'
     ? 'Você está vendo e editando a carteira da SDR.'
-    : 'Quem já tem corretor cai direto na coluna dele. Sem corretor, cai em "Repassado ao corretor" pra você organizar.';
+    : 'Quem já tem corretor cai direto na coluna dele. Sem corretor, só aparece o que chegou de 17/09 pra cá e já foi repassado pela SDR.';
   render();
 }
 
@@ -632,6 +633,32 @@ function leadsFiltrados() {
   if (!BUSCA) return todos;
   const b = BUSCA.toLowerCase();
   return todos.filter(l => (l.nome || '').toLowerCase().includes(b) || (l.whatsapp || '').includes(b));
+}
+
+// Monta o CSV só com o que está realmente visível na tela agora (aba
+// atual + busca + filtro de data por coluna), não com tudo do sistema.
+function exportarCSV() {
+  const funcaoColuna = ABA_CRM === 'sdr' ? statusDoLead : colunaCorretorDoLead;
+  const leads = leadsFiltrados().filter(l => leadPassaNoFiltroDeData(l, funcaoColuna(l)));
+  const cabecalho = ['Nome', 'WhatsApp', 'Coluna', 'Origem', 'Corretor', 'Status SDR', 'Valor do imóvel', 'Tarefa', 'Prazo da tarefa', 'Notas', 'Buscando', 'Chegou em'];
+  const linhas = leads.map(l => [
+    l.nome || '', l.whatsapp || '', funcaoColuna(l), l.origem || '', l.corretor || '', l.status || '',
+    l.valor_imovel_sdr || '', l.tarefa_sdr || '',
+    l.tarefa_data ? new Date(l.tarefa_data).toLocaleString('pt-BR') : '',
+    (l.notas_sdr || '').replace(/\\n/g, ' '), (l.buscando_sdr || '').replace(/\\n/g, ' '),
+    l.distribuido_em ? new Date(l.distribuido_em).toLocaleDateString('pt-BR') : ''
+  ]);
+  const escapar = v => \`"\${String(v).replace(/"/g, '""')}"\`;
+  const csv = [cabecalho, ...linhas].map(linha => linha.map(escapar).join(';')).join('\\r\\n');
+  const blob = new Blob(['\\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = \`crm-juliane-\${ABA_CRM}-\${new Date().toISOString().slice(0, 10)}.csv\`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 function render() {
@@ -1136,6 +1163,7 @@ document.getElementById('overlay').addEventListener('click', e => {
 
 document.getElementById('btn-adicionar').addEventListener('click', abrirModalAdicionar);
 document.getElementById('btn-atualizar').addEventListener('click', () => carregar());
+document.getElementById('btn-baixar-csv').addEventListener('click', exportarCSV);
 document.getElementById('btn-salvar-backup').addEventListener('click', () => {
   const btn = document.getElementById('btn-salvar-backup');
   const textoOriginal = btn.textContent;
