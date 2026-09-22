@@ -184,12 +184,37 @@ const JULIANE_HTML = `<!DOCTYPE html>
     padding: 11px;
     cursor: grab;
     box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    position: relative;
   }
   .lead:active { cursor: grabbing; }
   .lead.dragging { opacity: 0.4; }
-  .lead.reaquecer { border-color: var(--warn-border); background: linear-gradient(180deg, var(--warn-bg), var(--card) 32px); }
   .lead.atrasado { border-color: #e0453f !important; background: linear-gradient(180deg, #fdecec, var(--card) 32px); box-shadow: 0 0 0 2px #e0453f33; }
   .lead.recem-adicionado { animation: pulso 1.6s ease-in-out 2; }
+  .btn-historico {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #eef0f6;
+    color: var(--muted);
+    border: 1px solid var(--card-border);
+    font-size: 10px;
+    font-weight: 800;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+  .btn-historico:hover { background: #e0e4ee; }
+  .btn-historico.modal-versao {
+    position: static;
+    display: inline-flex;
+    margin-left: 6px;
+    vertical-align: middle;
+  }
   @keyframes pulso {
     0%, 100% { box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
     50% { box-shadow: 0 0 0 3px var(--warn-border); }
@@ -752,13 +777,14 @@ function cardHtml(lead, corBorda, mostrarOrigemTriagem, mostrarStatusSdr) {
   const chipsRepassados = corretoresRepassadosLista(lead);
   const dataEtapa = formatarData(lead.status_alterado_em || lead.distribuido_em);
   const tarefaAtrasada = !!(lead.tarefa_data && new Date(lead.tarefa_data) <= new Date());
-  const classeDestaque = tarefaAtrasada ? 'atrasado' : (duplicado ? 'reaquecer' : '');
+  const classeDestaque = tarefaAtrasada ? 'atrasado' : '';
 
   // O selo de reaquecido aparece em QUALQUER coluna (não só na triagem) —
-  // se a SDR reaqueceu esse contato, isso fica visível sempre. Já o selo
-  // "Canal" (chegou puro, sem corretor) só faz sentido mostrar na triagem.
+  // mas discreto, sem chamar muita atenção — se a SDR reaqueceu esse
+  // contato, é só uma informação a mais. Já o selo "Canal" (chegou puro,
+  // sem corretor) só faz sentido mostrar na triagem.
   const seloReaquecido = lead.reaquecido_em
-    ? \`<div style="background:#e0453f;color:#fff;font-weight:800;font-size:11px;padding:4px 8px;border-radius:6px;margin-top:6px;text-align:center;">🔥 REAQUECIDO</div>\`
+    ? \`<div style="color:#c96a12;font-weight:600;font-size:10.5px;margin-top:5px;">🔥 reaquecido</div>\`
     : '';
   const seloCanal = (mostrarOrigemTriagem && !lead.reaquecido_em)
     ? \`<span class="badge" style="background:#eef0f6;color:var(--muted);border:1px solid var(--card-border);margin-top:6px;">📡 Canal</span>\`
@@ -768,9 +794,15 @@ function cardHtml(lead, corBorda, mostrarOrigemTriagem, mostrarStatusSdr) {
   const seloStatusSdr = (mostrarStatusSdr && lead.status)
     ? \`<span class="badge" style="background:#eef2ff;color:#3b6cf0;border:1px solid #c7d5fb;margin-top:6px;">📋 SDR: \${lead.status}</span>\`
     : '';
+  // Histórico de corretores (quem já teve esse lead) fica escondido atrás
+  // de um botãozinho discreto — só abre se ela quiser conferir.
+  const botaoHistorico = duplicado
+    ? \`<button class="btn-historico" onclick="event.stopPropagation();mostrarHistoricoCorretor('\${lead.id}')" title="Ver histórico de corretores">H</button>\`
+    : '';
 
   return \`
     <div class="lead \${classeDestaque}" draggable="true" data-id="\${lead.id}" style="\${classeDestaque ? '' : \`border-left-color:\${corBorda}\`}">
+      \${botaoHistorico}
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:6px;">
         <div class="lead-nome">\${lead.nome || 'Sem nome'}</div>
         \${lead.valor_imovel_sdr ? \`<span style="font-size:10px;font-weight:700;color:#17a34a;white-space:nowrap;">💰 \${lead.valor_imovel_sdr}</span>\` : ''}
@@ -779,7 +811,6 @@ function cardHtml(lead, corBorda, mostrarOrigemTriagem, mostrarStatusSdr) {
       \${seloReaquecido}\${seloCanal}\${seloStatusSdr}
       \${dataEtapa ? \`<div class="lead-meta">Nessa etapa desde \${dataEtapa}</div>\` : ''}
       \${lead.origem ? \`<span class="badge origem">\${lead.origem}</span>\` : ''}
-      \${duplicado ? \`<span class="badge warn">⚠️ \${envolvidos.length}: \${envolvidos.join(', ')}</span>\` : ''}
       \${chipsRepassados.length > 0 ? \`<div>\${chipsRepassados.map(nome => \`<span class="chip-corretor" style="border-color:\${corDoCorretor(nome)};color:\${corDoCorretor(nome)};background:\${corDoCorretor(nome)}1a">\${nome}</span>\`).join('')}</div>\` : ''}
       \${lead.tarefa_sdr ? \`<div class="tarefa-preview" style="\${tarefaAtrasada ? 'color:#e0453f;' : ''}">\${tarefaAtrasada ? '⏰ ATRASADO — ' : '📌 '}\${lead.tarefa_sdr}\${lead.tarefa_data ? \` (\${new Date(lead.tarefa_data).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })})\` : ''}</div>\` : ''}
       \${lead.ultima_atualizacao_sdr ? \`<div class="tarefa-preview" style="color:var(--muted);font-weight:600;">🗓️ Atualizado até \${formatarData(lead.ultima_atualizacao_sdr)}</div>\` : ''}
@@ -798,14 +829,13 @@ function abrirModalLead(id) {
 
   document.getElementById('modal').innerHTML = \`
     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
-      <h2>\${lead.nome || 'Sem nome'}</h2>
+      <h2>\${lead.nome || 'Sem nome'}\${duplicado ? \`<button class="btn-historico modal-versao" onclick="mostrarHistoricoCorretor('\${lead.id}')" title="Ver histórico de corretores">H</button>\` : ''}</h2>
       <span id="badge-valor-imovel">\${lead.valor_imovel_sdr ? \`<span class="badge" style="background:#eafcea;color:#17a34a;border:1px solid #a8ecca;white-space:nowrap;">💰 \${lead.valor_imovel_sdr}</span>\` : ''}</span>
     </div>
     <div class="lead-meta">\${lead.whatsapp || 'sem WhatsApp'} · chegou em \${data}</div>
     \${ABA_CRM === 'sdr'
       ? (lead.origem ? \`<span class="badge origem">\${lead.origem}</span>\` : '')
       : \`<select id="modal-origem" class="badge-select"><option value="" \${!lead.origem ? 'selected' : ''}>— sem canal —</option>\${ORIGENS.map(o => \`<option value="\${o}" \${lead.origem === o ? 'selected' : ''}>\${o}</option>\`).join('')}</select>\`}
-    \${duplicado ? \`<span class="badge warn">⚠️ Já foi para \${envolvidos.length}: \${envolvidos.join(', ')} — não reenvie, reaqueça direto</span>\` : (lead.corretor ? \`<span class="badge origem">Corretor: \${lead.corretor}</span>\` : '')}
 
     \${ABA_CRM === 'sdr' ? \`
       <label>Status</label>
@@ -1082,6 +1112,18 @@ function flashModal() {
   if (!flash) return;
   flash.classList.add('show');
   setTimeout(() => flash.classList.remove('show'), 1600);
+}
+
+function mostrarHistoricoCorretor(id) {
+  const lead = leadsAtivos().find(l => String(l.id) === String(id));
+  if (!lead) return;
+  const envolvidos = corretoresEnvolvidos(lead);
+  const atual = lead.corretor || 'ninguém no momento';
+  const anteriores = envolvidos.filter(nome => nome !== lead.corretor);
+  const texto = anteriores.length > 0
+    ? \`Já passou por: \${anteriores.join(', ')}\\n\\nEstá agora com: \${atual}\`
+    : \`Está agora com: \${atual}\`;
+  alert(texto);
 }
 
 function fecharModal() {
