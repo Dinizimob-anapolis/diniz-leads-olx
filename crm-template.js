@@ -662,11 +662,7 @@ function abrirModalLead(id) {
       <option value="" \${!lead.corretor ? 'selected' : ''}>— Repassado ao corretor (sem corretor ainda) —</option>
       \${NOMES_OFICIAIS_CORRETORES.map(c => \`<option value="\${c}" \${lead.corretor === c ? 'selected' : ''}>\${c}</option>\`).join('')}
     </select>
-
-    \${statusDoLead(lead) === 'Repassado ao corretor' ? \`
-      <label>Corretor(es)</label>
-      <div id="modal-chips-corretores">\${renderChipsCorretores(lead)}</div>
-    \` : ''}
+    \${lead.corretor ? \`<div style="margin-top:6px;"><span class="chip-corretor" style="border-color:\${corDoCorretor(lead.corretor)};color:\${corDoCorretor(lead.corretor)};background:\${corDoCorretor(lead.corretor)}1a">\${lead.corretor}</span></div>\` : ''}
 
     <label>Tarefa</label>
     <input type="text" id="modal-tarefa" placeholder="Próximo passo, ex: ligar amanhã 14h" value="\${lead.tarefa_sdr || ''}">
@@ -752,9 +748,6 @@ function abrirModalLead(id) {
       alert('Não consegui salvar. Confere sua internet e tenta de novo.');
     });
   });
-
-  const chipsContainer = document.getElementById('modal-chips-corretores');
-  if (chipsContainer) ligarEventosChips(id, lead, chipsContainer);
 }
 
 function ligarEventosChips(id, lead, chipsContainer) {
