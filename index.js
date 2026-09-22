@@ -1291,7 +1291,7 @@ const CAMPOS_EDITAVEIS_CORRETOR = ['status_corretor', 'notas_sdr', 'tarefa_sdr',
 // Campos que a SDR pode editar pelo CRM — o resto (aprovado, visita, proposta,
 // venda, corretor, origem etc.) continua só pra quem loga como admin.
 const CAMPOS_EDITAVEIS_SDR = ['status', 'notas_sdr', 'carteira_sdr', 'tarefa_sdr', 'tarefa_data', 'corretores_repassados', 'ultima_atualizacao_sdr', 'valor_imovel_sdr', 'buscando_sdr', 'aprovado', 'visita', 'proposta', 'documentacao', 'venda', 'corretor'];
-const CAMPOS_EDITAVEIS_JULIANE = ['status', 'notas_sdr', 'carteira_juliane', 'tarefa_sdr', 'tarefa_data', 'corretores_repassados', 'ultima_atualizacao_sdr', 'valor_imovel_sdr', 'buscando_sdr', 'corretor', 'aprovado', 'visita', 'proposta', 'documentacao', 'venda', 'origem'];
+const CAMPOS_EDITAVEIS_JULIANE = ['status', 'notas_sdr', 'carteira_juliane', 'tarefa_sdr', 'tarefa_data', 'corretores_repassados', 'ultima_atualizacao_sdr', 'valor_imovel_sdr', 'buscando_sdr', 'corretor', 'aprovado', 'visita', 'proposta', 'documentacao', 'venda', 'origem', 'status_corretor'];
 
 // ─── ROTA: API DE LEADS (alimenta o dashboard) ───────────────
 app.get('/api/leads', basicAuthAdminOuSdr, async (req, res) => {
@@ -1631,9 +1631,10 @@ app.get('/api/leads/meus', basicAuthAdminOuSdr, async (req, res) => {
   if (!process.env.DATABASE_URL) {
     return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
   }
-  if (req.authTipo !== 'corretor') {
+  if (req.authTipo !== 'corretor' && !((req.authTipo === 'admin' || req.authTipo === 'juliane') && req.query.corretor)) {
     return res.status(403).json({ ok: false, erro: 'Esse login não é de corretor' });
   }
+  const nomeCorretor = req.authTipo === 'corretor' ? req.corretorNome : String(req.query.corretor);
   try {
     const result = await pool.query(
       `SELECT id, whatsapp, nome, corretor, origem, distribuido_em,
@@ -1643,7 +1644,7 @@ app.get('/api/leads/meus', basicAuthAdminOuSdr, async (req, res) => {
        FROM leads
        WHERE corretor = $1 AND (status_corretor_alterado_em IS NOT NULL OR carteira_sdr IS NOT TRUE)
        ORDER BY COALESCE(status_corretor_alterado_em, distribuido_em) DESC`,
-      [req.corretorNome]
+      [nomeCorretor]
     );
     res.json({ ok: true, leads: result.rows });
   } catch (err) {
@@ -1666,14 +1667,14 @@ app.get('/api/leads/todos-resumo', basicAuthAdminOuSdr, async (req, res) => {
               status_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr, tarefa_data, aprovado, visita, proposta, documentacao, venda, carteira_sdr
        FROM leads
        WHERE (
-           -- Já tem corretor definido: aparece sempre, vai pra coluna dele.
+           -- Já tem corretor definido: aparece sempre, vai pra coluna dele
+           -- (mesmo que o status na SDR já tenha avançado pra outra coisa).
            (corretor IS NOT NULL AND corretor <> '')
-           -- A SDR já decidiu repassar (mesmo sem ter escolhido o corretor
-           -- ainda): aparece, cai em "Novo Lead" até ela escolher.
-           OR status = 'Repassado ao corretor'
-           -- Chegou a partir de 17/09 E a SDR nunca pegou pra trabalhar
-           -- (carteira_sdr não marcada) — genuinamente intocado.
-           OR (distribuido_em >= '2026-09-17' AND carteira_sdr IS NOT TRUE)
+           -- Sem corretor ainda: só entra se for recente (17/09 em diante)
+           -- E a SDR já tiver marcado como "Repassado ao corretor" — nada
+           -- de lead antigo nem de etapas anteriores (Novo, Reaquecendo,
+           -- Aguardando retorno). Visão nova, bem mais enxuta.
+           OR (distribuido_em >= '2026-09-17' AND status = 'Repassado ao corretor')
          )
        ORDER BY COALESCE(status_alterado_em, distribuido_em) DESC
        LIMIT 2000`
@@ -3113,10 +3114,17 @@ app.get('/crm-juliane', basicAuthAdminOuSdr, (req, res) => {
 
 // ─── ROTA: CRM DO CORRETOR ────────────────────────────────────
 app.get('/meu-crm', basicAuthAdminOuSdr, (req, res) => {
-  if (req.authTipo !== 'corretor') {
-    return res.status(403).send('Essa página é só pra login de corretor.');
+  // Admin e Juliane podem "abrir" o CRM de qualquer corretor direto (sem
+  // precisar da senha dele), passando ?corretor=Nome na URL — é o atalho
+  // que a Juliane usa clicando no cabeçalho da coluna do corretor no
+  // quadro dela. Login de corretor normal ignora isso e só vê o próprio.
+  let nomeCorretor = req.corretorNome;
+  if ((req.authTipo === 'admin' || req.authTipo === 'juliane') && req.query.corretor) {
+    nomeCorretor = String(req.query.corretor);
+  } else if (req.authTipo !== 'corretor') {
+    return res.status(403).send('Essa página é só pra login de corretor (ou admin/Juliane passando ?corretor=Nome).');
   }
-  const nomeMaiusculo = req.corretorNome.toUpperCase();
+  const nomeMaiusculo = nomeCorretor.toUpperCase();
   res.send(CORRETOR_HTML.split('{{NOME_CORRETOR}}').join(nomeMaiusculo));
 });
 
