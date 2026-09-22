@@ -430,7 +430,7 @@ const JULIANE_HTML = `<!DOCTYPE html>
 <body>
 
 <h1 id="titulo-pagina">CRM - JULIANE</h1>
-<div class="sub" id="subtitulo-pagina">Quem já tem corretor cai direto na coluna dele. Sem corretor, só aparece o que chegou de 17/09 pra cá e já foi repassado pela SDR.</div>
+<div class="sub" id="subtitulo-pagina">Mostra só quem chegou de 17/09 pra cá. Quem já tem corretor cai direto na coluna dele; sem corretor, só aparece se já foi repassado pela SDR.</div>
 
 <div class="stats" id="stats"></div>
 
@@ -624,7 +624,7 @@ function trocarAba(aba) {
   document.getElementById('titulo-pagina').textContent = aba === 'sdr' ? 'CRM - SDR' : 'CRM - JULIANE';
   document.getElementById('subtitulo-pagina').textContent = aba === 'sdr'
     ? 'Você está vendo e editando a carteira da SDR.'
-    : 'Quem já tem corretor cai direto na coluna dele. Sem corretor, só aparece o que chegou de 17/09 pra cá e já foi repassado pela SDR.';
+    : 'Mostra só quem chegou de 17/09 pra cá. Quem já tem corretor cai direto na coluna dele; sem corretor, só aparece se já foi repassado pela SDR.';
   render();
 }
 
@@ -687,11 +687,18 @@ function render() {
     const vgvColuna = leadsColuna.reduce((soma, lead) => soma + parseValorImovel(lead.valor_imovel_sdr), 0);
     const filtroAtivo = FILTROS_DATA_COLUNA[coluna] && (FILTROS_DATA_COLUNA[coluna].de || FILTROS_DATA_COLUNA[coluna].ate);
     const painelAberto = COLUNA_FILTRO_ABERTA === coluna;
+    // Coluna de corretor de verdade (não a triagem "Novo Lead", nem no
+    // funil da SDR) — clicar no nome abre o CRM daquele corretor direto,
+    // sem precisar da senha dele. Atalho só pra Juliane/admin gerenciarem.
+    const ehColunaCorretor = ABA_CRM !== 'sdr' && coluna !== COLUNA_TRIAGEM;
+    const nomeColuna = ehColunaCorretor
+      ? \`<span style="cursor:pointer;text-decoration:underline;text-decoration-style:dotted;" title="Abrir o CRM de \${coluna}" onclick="window.open('/meu-crm?corretor=\${encodeURIComponent(coluna)}', '_blank')">\${coluna}</span>\`
+      : \`<span>\${coluna}</span>\`;
     return \`
       <div class="column" data-coluna="\${coluna}">
         <div class="column-header" style="background:\${cor.header};color:\${cor.texto}">
           <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">
-            <span>\${coluna}</span>
+            \${nomeColuna}
             <div style="display:flex;align-items:center;gap:4px;">
               <button class="lupa-filtro-btn \${filtroAtivo ? 'ativa' : ''}" title="Filtrar por período" onclick="alternarFiltroData('\${coluna}')">🔍</button>
               <span class="column-count">\${leadsColuna.length}\${filtroAtivo ? \`/\${leadsColunaSemFiltro.length}\` : ''}</span>
