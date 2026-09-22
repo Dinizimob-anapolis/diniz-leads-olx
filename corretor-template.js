@@ -355,6 +355,7 @@ const CORRETOR_HTML = `<!DOCTYPE html>
   <input type="text" id="busca" placeholder="Buscar por nome ou WhatsApp...">
   <button class="add-contato-btn" id="btn-atualizar" style="background:#fff;color:var(--accent);border:1px solid var(--accent);box-shadow:none;">↻ Atualizar</button>
   <button class="add-contato-btn" id="btn-salvar-backup" style="background:#fff;color:#17a34a;border:1px solid #17a34a;box-shadow:none;">💾 Salvar backup</button>
+  <button class="add-contato-btn" id="btn-baixar-csv" style="background:#fff;color:#3b6cf0;border:1px solid #3b6cf0;box-shadow:none;">⬇️ Baixar planilha</button>
 </div>
 
 <div class="board" id="board"></div>
@@ -440,9 +441,19 @@ function corDoCorretor(nome) {
   return PALETA_CORES[hash % PALETA_CORES.length];
 }
 
+// Se a Juliane (ou admin) abriu esse CRM pelo atalho da coluna do
+// corretor, a própria URL já vem com ?corretor=Nome — repassa isso nas
+// chamadas de API, senão elas não sabem de quem buscar os dados.
+const PARAM_CORRETOR = new URLSearchParams(location.search).get('corretor');
+function comParamCorretor(url) {
+  if (!PARAM_CORRETOR) return url;
+  const separador = url.includes('?') ? '&' : '?';
+  return \`\${url}\${separador}corretor=\${encodeURIComponent(PARAM_CORRETOR)}\`;
+}
+
 async function carregar() {
   try {
-    const res = await fetch('/api/leads/meus', { cache: 'no-store' });
+    const res = await fetch(comParamCorretor('/api/leads/meus'), { cache: 'no-store' });
     const data = await res.json();
     TODOS_LEADS = data.leads || data || [];
     render();
@@ -455,6 +466,31 @@ function leadsFiltrados() {
   if (!BUSCA) return TODOS_LEADS;
   const b = BUSCA.toLowerCase();
   return TODOS_LEADS.filter(l => (l.nome || '').toLowerCase().includes(b) || (l.whatsapp || '').includes(b));
+}
+
+// Monta o CSV só com o que está realmente visível na tela agora (busca +
+// filtro de data por coluna), não com a carteira inteira.
+function exportarCSV() {
+  const leads = leadsFiltrados().filter(l => leadPassaNoFiltroDeData(l, statusDoLead(l)));
+  const cabecalho = ['Nome', 'WhatsApp', 'Status', 'Origem', 'Imóvel', 'Valor do imóvel', 'Tarefa', 'Prazo da tarefa', 'Notas', 'Buscando', 'Chegou em'];
+  const linhas = leads.map(l => [
+    l.nome || '', l.whatsapp || '', statusDoLead(l), l.origem || '', l.imovel_desc || '',
+    l.valor_imovel_sdr || '', l.tarefa_sdr || '',
+    l.tarefa_data ? new Date(l.tarefa_data).toLocaleString('pt-BR') : '',
+    (l.notas_sdr || '').replace(/\\n/g, ' '), (l.buscando_sdr || '').replace(/\\n/g, ' '),
+    l.distribuido_em ? new Date(l.distribuido_em).toLocaleDateString('pt-BR') : ''
+  ]);
+  const escapar = v => \`"\${String(v).replace(/"/g, '""')}"\`;
+  const csv = [cabecalho, ...linhas].map(linha => linha.map(escapar).join(';')).join('\\r\\n');
+  const blob = new Blob(['\\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = \`meus-leads-\${new Date().toISOString().slice(0, 10)}.csv\`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 function render() {
@@ -715,6 +751,7 @@ document.getElementById('overlay').addEventListener('click', e => {
 });
 
 document.getElementById('btn-atualizar').addEventListener('click', () => carregar());
+document.getElementById('btn-baixar-csv').addEventListener('click', exportarCSV);
 document.getElementById('btn-salvar-backup').addEventListener('click', () => {
   const btn = document.getElementById('btn-salvar-backup');
   const textoOriginal = btn.textContent;
