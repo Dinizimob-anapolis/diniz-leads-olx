@@ -813,16 +813,20 @@ function abrirModalLead(id) {
         \${COLUNAS_FUNIL.map(c => \`<option value="\${c}" \${statusDoLead(lead) === c ? 'selected' : ''}>\${c}</option>\`).join('')}
       </select>
       \${lead.status_alterado_em ? \`<div class="lead-meta" style="margin-top:4px;">Nessa etapa desde \${formatarData(lead.status_alterado_em)}</div>\` : ''}
+      <label>Corretor</label>
+      <select id="modal-corretor">
+        <option value="" \${!lead.corretor ? 'selected' : ''}>— Repassado ao corretor (sem corretor ainda) —</option>
+        \${NOMES_OFICIAIS_CORRETORES.map(c => \`<option value="\${c}" \${lead.corretor === c ? 'selected' : ''}>\${c}</option>\`).join('')}
+      </select>
+      \${lead.corretor ? \`<div style="margin-top:6px;"><span class="chip-corretor" style="border-color:\${corDoCorretor(lead.corretor)};color:\${corDoCorretor(lead.corretor)};background:\${corDoCorretor(lead.corretor)}1a">\${lead.corretor}</span></div>\` : ''}
     \` : \`
       <label>Corretor</label>
       <select id="modal-corretor">
         <option value="" \${!lead.corretor ? 'selected' : ''}>— Novo Lead (sem corretor ainda) —</option>
         \${colunasCorretorAtual().filter(c => c !== COLUNA_TRIAGEM).map(c => \`<option value="\${c}" \${lead.corretor === c ? 'selected' : ''}>\${c}</option>\`).join('')}
       </select>
+      \${lead.corretor ? \`<div style="margin-top:6px;"><span class="chip-corretor" style="border-color:\${corDoCorretor(lead.corretor)};color:\${corDoCorretor(lead.corretor)};background:\${corDoCorretor(lead.corretor)}1a">\${lead.corretor}</span></div>\` : ''}
     \`}
-
-    <label>Corretor(es)</label>
-    <div id="modal-chips-corretores">\${renderChipsCorretores(lead)}</div>
 
     <label>Tarefa</label>
     <input type="text" id="modal-tarefa" placeholder="Próximo passo, ex: ligar amanhã 14h" value="\${lead.tarefa_sdr || ''}">
