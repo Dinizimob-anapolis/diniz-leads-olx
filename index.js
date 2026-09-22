@@ -1590,7 +1590,7 @@ app.get('/api/leads/carteira-sdr', basicAuthAdminOuSdr, async (req, res) => {
               outros_corretores, notas_sdr, reaquecido_em, tarefa_sdr, corretores_repassados,
               status_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr, tarefa_data, aprovado, visita, proposta, documentacao, venda
        FROM leads
-       WHERE carteira_sdr = true
+       WHERE carteira_sdr = true OR status = 'Repassado ao corretor'
        ORDER BY COALESCE(status_alterado_em, distribuido_em) DESC`
     );
     res.json({ ok: true, leads: result.rows });
