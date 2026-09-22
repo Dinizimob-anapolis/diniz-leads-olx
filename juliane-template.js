@@ -823,9 +823,10 @@ function cardHtml(lead, corBorda, mostrarOrigemTriagem, mostrarStatusSdr) {
   const seloCanal = (mostrarOrigemTriagem && !lead.reaquecido_em)
     ? \`<span class="badge" style="background:#eef0f6;color:var(--muted);border:1px solid var(--card-border);margin-top:6px;">📡 Canal</span>\`
     : '';
-  // Só nas colunas de corretor: mostra em qual coluna/status esse lead está
-  // hoje no CRM da SDR, pra Juliane saber o andamento sem abrir o outro CRM.
-  const seloStatusSdr = (mostrarStatusSdr && lead.status)
+  // Só nas colunas de corretor: mostra em qual status esse lead está hoje
+  // no CRM da SDR — mas só se ela realmente mexeu nele (status diferente
+  // do padrão "Novo"). Se nunca mexeu, não faz sentido mostrar nada.
+  const seloStatusSdr = (mostrarStatusSdr && lead.status && lead.status !== 'Novo')
     ? \`<span class="badge" style="background:#eef2ff;color:#3b6cf0;border:1px solid #c7d5fb;margin-top:6px;">📋 SDR: \${lead.status}</span>\`
     : '';
   // Histórico de corretores (quem já teve esse lead) fica escondido atrás
