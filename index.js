@@ -1674,15 +1674,22 @@ app.get('/api/leads/todos-resumo', basicAuthAdminOuSdr, async (req, res) => {
               outros_corretores, notas_sdr, reaquecido_em, tarefa_sdr, corretores_repassados,
               status_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr, tarefa_data, aprovado, visita, proposta, documentacao, venda, carteira_sdr
        FROM leads
-       WHERE distribuido_em >= '2026-09-17'
-         AND (
-           -- Tem corretor definido: aparece na coluna dele (mesmo que o
-           -- status na SDR já tenha avançado pra outra coisa).
-           (corretor IS NOT NULL AND corretor <> '')
-           -- Sem corretor ainda: só entra se a SDR já tiver marcado como
-           -- "Repassado ao corretor" — nada de etapas anteriores (Novo,
-           -- Reaquecendo, Aguardando retorno).
-           OR status = 'Repassado ao corretor'
+       WHERE (
+           -- Foi atribuído manualmente pelo CRM (alguém escolheu o
+           -- corretor de propósito) — aparece sempre, não importa a data.
+           status_corretor_alterado_em IS NOT NULL
+           OR (
+             distribuido_em >= '2026-09-17'
+             AND (
+               -- Tem corretor definido: aparece na coluna dele (mesmo que
+               -- o status na SDR já tenha avançado pra outra coisa).
+               (corretor IS NOT NULL AND corretor <> '')
+               -- Sem corretor ainda: só entra se a SDR já tiver marcado
+               -- como "Repassado ao corretor" — nada de etapas anteriores
+               -- (Novo, Reaquecendo, Aguardando retorno).
+               OR status = 'Repassado ao corretor'
+             )
+           )
          )
        ORDER BY COALESCE(status_alterado_em, distribuido_em) DESC
        LIMIT 2000`
