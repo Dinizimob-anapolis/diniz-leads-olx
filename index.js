@@ -1549,6 +1549,44 @@ app.post('/api/leads/conferir', basicAuthAdminOuSdr, async (req, res) => {
   if (!nome || !nome.trim()) {
     return res.status(400).json({ ok: false, erro: 'Nome é obrigatório' });
   }
+
+  // Corretor adicionando: o lead já nasce (ou passa a ser) dele — é um
+  // caminho diferente do da SDR/Juliane, que só marcam a própria carteira.
+  if (req.authTipo === 'corretor') {
+    try {
+      const existente = await pool.query('SELECT * FROM leads WHERE whatsapp = $1', [whatsappValido]);
+      if (existente.rows.length > 0) {
+        const leadAtual = existente.rows[0];
+        if (leadAtual.corretor && leadAtual.corretor !== req.corretorNome) {
+          return res.status(409).json({ ok: false, erro: `Esse contato já é do corretor ${leadAtual.corretor} — não dá pra adicionar aqui.` });
+        }
+        const atualizado = await pool.query(
+          `UPDATE leads SET corretor = $1, status_corretor = COALESCE(status_corretor, 'Novo'), status_corretor_alterado_em = now() WHERE id = $2 RETURNING *`,
+          [req.corretorNome, leadAtual.id]
+        );
+        return res.json({ ok: true, encontrado: true, criado: false, lead: atualizado.rows[0] });
+      }
+      const result = await pool.query(
+        `INSERT INTO leads (whatsapp, nome, corretor, status, status_corretor, status_corretor_alterado_em, distribuido_em)
+         VALUES ($1, $2, $3, 'Novo', 'Novo', now(), now())
+         RETURNING *`,
+        [whatsappValido, nome.trim(), req.corretorNome]
+      );
+      return res.json({ ok: true, encontrado: false, criado: true, lead: result.rows[0] });
+    } catch (err) {
+      if (err.code === '23505') {
+        const existente = await pool.query('SELECT * FROM leads WHERE whatsapp = $1', [whatsappValido]);
+        const atualizado = await pool.query(
+          `UPDATE leads SET corretor = $1, status_corretor = COALESCE(status_corretor, 'Novo'), status_corretor_alterado_em = now() WHERE id = $2 RETURNING *`,
+          [req.corretorNome, existente.rows[0].id]
+        );
+        return res.json({ ok: true, encontrado: true, criado: false, lead: atualizado.rows[0] });
+      }
+      console.error('Erro ao adicionar contato (corretor):', err);
+      return res.status(500).json({ ok: false, erro: err.message });
+    }
+  }
+
   // Quem adiciona marca só a própria carteira — SDR marca carteira_sdr,
   // Juliane marca carteira_juliane. Assim, o que a Juliane adiciona não
   // desaparece do quadro dela (que agora esconde tudo que tem carteira_sdr).
@@ -1674,7 +1712,8 @@ app.get('/api/leads/todos-resumo', basicAuthAdminOuSdr, async (req, res) => {
               outros_corretores, notas_sdr, reaquecido_em, tarefa_sdr, corretores_repassados,
               status_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr, tarefa_data, aprovado, visita, proposta, documentacao, venda, carteira_sdr
        FROM leads
-       WHERE (
+       WHERE COALESCE(status, '') <> 'Sem retorno'
+         AND (
            -- Foi atribuído manualmente pelo CRM (alguém escolheu o
            -- corretor de propósito) — aparece sempre, não importa a data.
            status_corretor_alterado_em IS NOT NULL
