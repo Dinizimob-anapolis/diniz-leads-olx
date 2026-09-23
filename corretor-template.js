@@ -353,6 +353,7 @@ const CORRETOR_HTML = `<!DOCTYPE html>
 
 <div class="toolbar">
   <input type="text" id="busca" placeholder="Buscar por nome ou WhatsApp...">
+  <button class="add-contato-btn" id="btn-adicionar">+ Adicionar contato</button>
   <button class="add-contato-btn" id="btn-atualizar" style="background:#fff;color:var(--accent);border:1px solid var(--accent);box-shadow:none;">↻ Atualizar</button>
   <button class="add-contato-btn" id="btn-salvar-backup" style="background:#fff;color:#17a34a;border:1px solid #17a34a;box-shadow:none;">💾 Salvar backup</button>
   <button class="add-contato-btn" id="btn-baixar-csv" style="background:#fff;color:#3b6cf0;border:1px solid #3b6cf0;box-shadow:none;">⬇️ Baixar planilha</button>
@@ -742,6 +743,74 @@ function flashModal() {
   setTimeout(() => flash.classList.remove('show'), 1200);
 }
 
+function abrirModalAdicionar() {
+  document.getElementById('modal').innerHTML = \`
+    <h2>Adicionar contato</h2>
+    <div class="lead-meta">Se já for seu, só atualiza. Se for de outro corretor, avisa e não mexe.</div>
+
+    <label>Nome</label>
+    <input type="text" id="add-nome" placeholder="Nome do contato">
+
+    <label>WhatsApp</label>
+    <input type="text" id="add-whatsapp" placeholder="Com DDD, ex: 62999998888">
+
+    <div id="add-aviso"></div>
+
+    <div class="modal-actions">
+      <button class="close-btn" id="modal-fechar">Cancelar</button>
+      <button class="primary-btn" id="add-confirmar">Adicionar</button>
+    </div>
+  \`;
+  document.getElementById('overlay').classList.add('show');
+  document.getElementById('modal-fechar').addEventListener('click', fecharModal);
+  document.getElementById('add-confirmar').addEventListener('click', confirmarAdicionar);
+  document.getElementById('add-whatsapp').addEventListener('keydown', e => {
+    if (e.key === 'Enter') confirmarAdicionar();
+  });
+  setTimeout(() => document.getElementById('add-nome').focus(), 50);
+}
+
+async function confirmarAdicionar() {
+  const nome = document.getElementById('add-nome').value.trim();
+  const whatsapp = document.getElementById('add-whatsapp').value.trim();
+  const avisoEl = document.getElementById('add-aviso');
+
+  if (!whatsapp) {
+    avisoEl.innerHTML = '<div class="aviso-modal warn">Digita o WhatsApp.</div>';
+    return;
+  }
+  if (!nome) {
+    avisoEl.innerHTML = '<div class="aviso-modal warn">Digita o nome também.</div>';
+    return;
+  }
+
+  avisoEl.innerHTML = '<div class="aviso-modal">Conferindo...</div>';
+
+  try {
+    const res = await fetch('/api/leads/conferir', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nome, whatsapp }),
+    });
+    const data = await res.json();
+
+    if (!data.ok) {
+      avisoEl.innerHTML = \`<div class="aviso-modal warn">⚠️ \${data.erro}</div>\`;
+      return;
+    }
+
+    avisoEl.innerHTML = data.encontrado
+      ? '<div class="aviso-modal ok">✅ Já existia — atualizado na sua carteira.</div>'
+      : '<div class="aviso-modal ok">✅ Novo contato, adicionado à sua carteira.</div>';
+
+    ULTIMO_ADICIONADO_ID = data.lead.id;
+    await carregar();
+    setTimeout(fecharModal, 900);
+  } catch (err) {
+    avisoEl.innerHTML = '<div class="aviso-modal warn">⚠️ Erro ao adicionar. Tenta de novo.</div>';
+  }
+}
+
 function fecharModal() {
   document.getElementById('overlay').classList.remove('show');
 }
@@ -750,6 +819,7 @@ document.getElementById('overlay').addEventListener('click', e => {
   if (e.target.id === 'overlay') fecharModal();
 });
 
+document.getElementById('btn-adicionar').addEventListener('click', abrirModalAdicionar);
 document.getElementById('btn-atualizar').addEventListener('click', () => carregar());
 document.getElementById('btn-baixar-csv').addEventListener('click', exportarCSV);
 document.getElementById('btn-salvar-backup').addEventListener('click', () => {
