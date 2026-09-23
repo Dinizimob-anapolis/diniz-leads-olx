@@ -1552,17 +1552,22 @@ app.post('/api/leads/conferir', basicAuthAdminOuSdr, async (req, res) => {
 
   // Corretor adicionando: o lead já nasce (ou passa a ser) dele — é um
   // caminho diferente do da SDR/Juliane, que só marcam a própria carteira.
-  if (req.authTipo === 'corretor') {
+  // Cobre tanto o login de corretor de verdade quanto o admin/Juliane
+  // "visitando" o CRM de um corretor pelo atalho (?corretor=Nome).
+  const nomeCorretorAlvo = req.authTipo === 'corretor'
+    ? req.corretorNome
+    : ((req.authTipo === 'admin' || req.authTipo === 'juliane') && req.body.corretorAlvo ? String(req.body.corretorAlvo) : null);
+  if (nomeCorretorAlvo) {
     try {
       const existente = await pool.query('SELECT * FROM leads WHERE whatsapp = $1', [whatsappValido]);
       if (existente.rows.length > 0) {
         const leadAtual = existente.rows[0];
-        if (leadAtual.corretor && leadAtual.corretor !== req.corretorNome) {
+        if (leadAtual.corretor && leadAtual.corretor !== nomeCorretorAlvo) {
           return res.status(409).json({ ok: false, erro: `Esse contato já é do corretor ${leadAtual.corretor} — não dá pra adicionar aqui.` });
         }
         const atualizado = await pool.query(
           `UPDATE leads SET corretor = $1, status_corretor = COALESCE(status_corretor, 'Novo'), status_corretor_alterado_em = now() WHERE id = $2 RETURNING *`,
-          [req.corretorNome, leadAtual.id]
+          [nomeCorretorAlvo, leadAtual.id]
         );
         return res.json({ ok: true, encontrado: true, criado: false, lead: atualizado.rows[0] });
       }
@@ -1570,7 +1575,7 @@ app.post('/api/leads/conferir', basicAuthAdminOuSdr, async (req, res) => {
         `INSERT INTO leads (whatsapp, nome, corretor, status, status_corretor, status_corretor_alterado_em, distribuido_em)
          VALUES ($1, $2, $3, 'Novo', 'Novo', now(), now())
          RETURNING *`,
-        [whatsappValido, nome.trim(), req.corretorNome]
+        [whatsappValido, nome.trim(), nomeCorretorAlvo]
       );
       return res.json({ ok: true, encontrado: false, criado: true, lead: result.rows[0] });
     } catch (err) {
@@ -1578,7 +1583,7 @@ app.post('/api/leads/conferir', basicAuthAdminOuSdr, async (req, res) => {
         const existente = await pool.query('SELECT * FROM leads WHERE whatsapp = $1', [whatsappValido]);
         const atualizado = await pool.query(
           `UPDATE leads SET corretor = $1, status_corretor = COALESCE(status_corretor, 'Novo'), status_corretor_alterado_em = now() WHERE id = $2 RETURNING *`,
-          [req.corretorNome, existente.rows[0].id]
+          [nomeCorretorAlvo, existente.rows[0].id]
         );
         return res.json({ ok: true, encontrado: true, criado: false, lead: atualizado.rows[0] });
       }
