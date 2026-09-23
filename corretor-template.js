@@ -342,6 +342,24 @@ const CORRETOR_HTML = `<!DOCTYPE html>
     font-weight: 800;
     vertical-align: middle;
   }
+
+  /* Ajustes essenciais pra celular — corretor abre esse link no telefone. */
+  @media (max-width: 600px) {
+    body { padding: 12px; }
+    .toolbar { flex-wrap: wrap; }
+    .toolbar input[type="text"] { flex: 1 1 100%; }
+    .add-contato-btn {
+      padding: 11px 16px;
+      font-size: 14.5px;
+      flex: 1 1 auto;
+    }
+    .column { min-width: 84vw; max-width: 84vw; }
+    .lead { padding: 13px; }
+    .lead-nome { font-size: 14.5px; }
+    .lupa-filtro-btn { width: 26px; height: 26px; font-size: 13px; }
+    .btn-historico { width: 22px; height: 22px; font-size: 11px; }
+    .column-header { padding: 12px 11px; font-size: 15px; }
+  }
 </style>
 </head>
 <body>
@@ -630,6 +648,8 @@ function cardHtml(lead, corBorda) {
       <div class="lead-meta">\${lead.whatsapp || 'sem WhatsApp'}</div>
       \${dataEtapa ? \`<div class="lead-meta">Nessa etapa desde \${dataEtapa}</div>\` : ''}
       \${lead.origem ? \`<span class="badge origem">\${lead.origem}</span>\` : ''}
+      \${lead.imovel_desc ? \`<span class="badge" style="background:#f3ecff;color:#7c3aed;border:1px solid #ddd0fb;">🏠 \${lead.imovel_desc}</span>\` : ''}
+      \${lead.imovel_codigo ? \`<span class="badge" style="background:#eef6ff;color:#0b6bcb;border:1px solid #bfe0fb;">CRM: \${lead.imovel_codigo}</span>\` : ''}
       \${lead.tarefa_sdr ? \`<div class="tarefa-preview" style="\${tarefaAtrasada ? 'color:#e0453f;' : ''}">\${tarefaAtrasada ? '⏰ ATRASADO — ' : '📌 '}\${lead.tarefa_sdr}\${lead.tarefa_data ? \` (\${new Date(lead.tarefa_data).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })})\` : ''}</div>\` : ''}
       \${lead.ultima_atualizacao_sdr ? \`<div class="tarefa-preview" style="color:var(--muted);font-weight:600;">🗓️ Atualizado até \${formatarData(lead.ultima_atualizacao_sdr)}</div>\` : ''}
       \${lead.notas_sdr ? \`<div class="lead-notas">\${lead.notas_sdr.split('\\n')[0]}</div>\` : ''}
@@ -651,6 +671,8 @@ function abrirModalLead(id) {
     </div>
     <div class="lead-meta">\${lead.whatsapp || 'sem WhatsApp'} · chegou em \${data}</div>
     \${lead.origem ? \`<span class="badge origem">\${lead.origem}</span>\` : ''}
+    \${lead.imovel_desc ? \`<span class="badge" style="background:#f3ecff;color:#7c3aed;border:1px solid #ddd0fb;">🏠 \${lead.imovel_desc}</span>\` : ''}
+      \${lead.imovel_codigo ? \`<span class="badge" style="background:#eef6ff;color:#0b6bcb;border:1px solid #bfe0fb;">CRM: \${lead.imovel_codigo}</span>\` : ''}
 
     <label>Status</label>
     <select id="modal-status">
