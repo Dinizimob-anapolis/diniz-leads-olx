@@ -1712,7 +1712,7 @@ app.get('/api/leads/todos-resumo', basicAuthAdminOuSdr, async (req, res) => {
               outros_corretores, notas_sdr, reaquecido_em, tarefa_sdr, corretores_repassados,
               status_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr, tarefa_data, aprovado, visita, proposta, documentacao, venda, carteira_sdr
        FROM leads
-       WHERE COALESCE(status, '') <> 'Sem retorno'
+       WHERE COALESCE(status, '') NOT IN ('Sem retorno', 'Reaquecendo')
          AND (
            -- Foi atribuído manualmente pelo CRM (alguém escolheu o
            -- corretor de propósito) — aparece sempre, não importa a data.
