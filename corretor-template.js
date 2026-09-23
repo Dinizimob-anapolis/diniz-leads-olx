@@ -823,7 +823,7 @@ async function confirmarAdicionar() {
     const res = await fetch('/api/leads/conferir', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ nome, whatsapp }),
+      body: JSON.stringify({ nome, whatsapp, corretorAlvo: PARAM_CORRETOR || undefined }),
     });
     const data = await res.json();
 
