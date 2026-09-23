@@ -585,6 +585,19 @@ function normalizarNomeCorretor(nomeDigitado) {
   return oficial || chave;
 }
 
+// O código do imóvel guarda coisas diferentes conforme a origem: pra
+// OLX/Canal Pro é o número do CRM de verdade; pra Patrocinado (Insta/Face)
+// é um código tipo "VD01" que é parte do NOME do imóvel, não um CRM — por
+// isso junta com o nome em vez de rotular como CRM nesse caso.
+function badgeImovel(lead) {
+  if (!lead.imovel_desc && !lead.imovel_codigo) return '';
+  if (lead.origem === 'OLX/Canal Pro') {
+    return \`\${lead.imovel_desc ? \`<span class="badge" style="background:#f3ecff;color:#7c3aed;border:1px solid #ddd0fb;">🏠 \${lead.imovel_desc}</span>\` : ''}\${lead.imovel_codigo ? \`<span class="badge" style="background:#eef6ff;color:#0b6bcb;border:1px solid #bfe0fb;">CRM: \${lead.imovel_codigo}</span>\` : ''}\`;
+  }
+  const nomeCompleto = [lead.imovel_codigo, lead.imovel_desc].filter(Boolean).join(' - ');
+  return \`<span class="badge" style="background:#f3ecff;color:#7c3aed;border:1px solid #ddd0fb;">🏠 \${nomeCompleto}</span>\`;
+}
+
 function corDoCorretor(nome) {
   let hash = 0;
   for (let i = 0; i < nome.length; i++) hash = (hash * 31 + nome.charCodeAt(i)) >>> 0;
@@ -832,12 +845,6 @@ function cardHtml(lead, corBorda, mostrarOrigemTriagem, mostrarStatusSdr) {
   const seloCanal = (mostrarOrigemTriagem && !lead.reaquecido_em)
     ? \`<span class="badge" style="background:#eef0f6;color:var(--muted);border:1px solid var(--card-border);margin-top:6px;">📡 Canal</span>\`
     : '';
-  // Só nas colunas de corretor: mostra em qual status esse lead está hoje
-  // no CRM da SDR — mas só se ela realmente mexeu nele (status diferente
-  // do padrão "Novo"). Se nunca mexeu, não faz sentido mostrar nada.
-  const seloStatusSdr = (mostrarStatusSdr && lead.status === 'Repassado ao corretor')
-    ? \`<span class="badge" style="background:#eef2ff;color:#3b6cf0;border:1px solid #c7d5fb;margin-top:6px;">📋 SDR: \${lead.status}</span>\`
-    : '';
   // Histórico de corretores (quem já teve esse lead) fica escondido atrás
   // de um botãozinho discreto — só abre se ela quiser conferir.
   const botaoHistorico = duplicado
@@ -852,11 +859,10 @@ function cardHtml(lead, corBorda, mostrarOrigemTriagem, mostrarStatusSdr) {
         \${lead.valor_imovel_sdr ? \`<span style="font-size:10px;font-weight:700;color:#17a34a;white-space:nowrap;">💰 \${lead.valor_imovel_sdr}</span>\` : ''}
       </div>
       <div class="lead-meta">\${lead.whatsapp || 'sem WhatsApp'}</div>
-      \${seloReaquecido}\${seloCanal}\${seloStatusSdr}
+      \${seloReaquecido}\${seloCanal}
       \${dataEtapa ? \`<div class="lead-meta">Nessa etapa desde \${dataEtapa}</div>\` : ''}
       \${lead.origem ? \`<span class="badge origem">\${lead.origem}</span>\` : ''}
-      \${lead.imovel_desc ? \`<span class="badge" style="background:#f3ecff;color:#7c3aed;border:1px solid #ddd0fb;">🏠 \${lead.imovel_desc}</span>\` : ''}
-      \${lead.imovel_codigo ? \`<span class="badge" style="background:#eef6ff;color:#0b6bcb;border:1px solid #bfe0fb;">CRM: \${lead.imovel_codigo}</span>\` : ''}
+      \${badgeImovel(lead)}
       \${lead.corretor ? \`<div><span class="chip-corretor" style="border-color:\${corDoCorretor(lead.corretor)};color:\${corDoCorretor(lead.corretor)};background:\${corDoCorretor(lead.corretor)}1a">\${lead.corretor}</span></div>\` : ''}
       \${lead.tarefa_sdr ? \`<div class="tarefa-preview" style="\${tarefaAtrasada ? 'color:#e0453f;' : ''}">\${tarefaAtrasada ? '⏰ ATRASADO — ' : '📌 '}\${lead.tarefa_sdr}\${lead.tarefa_data ? \` (\${new Date(lead.tarefa_data).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })})\` : ''}</div>\` : ''}
       \${lead.ultima_atualizacao_sdr ? \`<div class="tarefa-preview" style="color:var(--muted);font-weight:600;">🗓️ Atualizado até \${formatarData(lead.ultima_atualizacao_sdr)}</div>\` : ''}
@@ -882,8 +888,7 @@ function abrirModalLead(id) {
     \${ABA_CRM === 'sdr'
       ? (lead.origem ? \`<span class="badge origem">\${lead.origem}</span>\` : '')
       : \`<select id="modal-origem" class="badge-select"><option value="" \${!lead.origem ? 'selected' : ''}>— sem canal —</option>\${ORIGENS.map(o => \`<option value="\${o}" \${lead.origem === o ? 'selected' : ''}>\${o}</option>\`).join('')}</select>\`}
-    \${lead.imovel_desc ? \`<span class="badge" style="background:#f3ecff;color:#7c3aed;border:1px solid #ddd0fb;">🏠 \${lead.imovel_desc}</span>\` : ''}
-      \${lead.imovel_codigo ? \`<span class="badge" style="background:#eef6ff;color:#0b6bcb;border:1px solid #bfe0fb;">CRM: \${lead.imovel_codigo}</span>\` : ''}
+    \${badgeImovel(lead)}
 
     \${ABA_CRM === 'sdr' ? \`
       <label>Status</label>
