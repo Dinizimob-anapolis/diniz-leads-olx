@@ -1,9 +1,9 @@
-const CRM_HTML = `<!DOCTYPE html>
+const JULIANE_HTML = `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CRM - SDR</title>
+<title>CRM - JULIANE</title>
 <style>
   :root {
     --bg: #f7f8fb;
@@ -184,12 +184,37 @@ const CRM_HTML = `<!DOCTYPE html>
     padding: 11px;
     cursor: grab;
     box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    position: relative;
   }
   .lead:active { cursor: grabbing; }
   .lead.dragging { opacity: 0.4; }
-  .lead.reaquecer { border-color: var(--warn-border); background: linear-gradient(180deg, var(--warn-bg), var(--card) 32px); }
   .lead.atrasado { border-color: #e0453f !important; background: linear-gradient(180deg, #fdecec, var(--card) 32px); box-shadow: 0 0 0 2px #e0453f33; }
   .lead.recem-adicionado { animation: pulso 1.6s ease-in-out 2; }
+  .btn-historico {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #eef0f6;
+    color: var(--muted);
+    border: 1px solid var(--card-border);
+    font-size: 10px;
+    font-weight: 800;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+  .btn-historico:hover { background: #e0e4ee; }
+  .btn-historico.modal-versao {
+    position: static;
+    display: inline-flex;
+    margin-left: 6px;
+    vertical-align: middle;
+  }
   @keyframes pulso {
     0%, 100% { box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
     50% { box-shadow: 0 0 0 3px var(--warn-border); }
@@ -207,6 +232,19 @@ const CRM_HTML = `<!DOCTYPE html>
   }
   .badge.warn { background: var(--warn-bg); color: var(--warn-text); border: 1px solid var(--warn-border); }
   .badge.origem { background: #eef0f6; color: var(--muted); border: 1px solid var(--card-border); }
+  .badge-select {
+    display: inline-block;
+    font-size: 11.5px;
+    font-weight: 700;
+    padding: 3px 6px;
+    border-radius: 10px;
+    margin-top: 6px;
+    margin-right: 4px;
+    background: #eef0f6;
+    color: var(--muted);
+    border: 1px solid var(--card-border);
+    cursor: pointer;
+  }
 
   .lead-notas {
     margin-top: 8px;
@@ -293,8 +331,24 @@ const CRM_HTML = `<!DOCTYPE html>
     font-weight: 700;
     cursor: pointer;
   }
-  .saved-flash { color: var(--ok); font-size: 11px; font-weight: 700; margin-left: 8px; opacity: 0; transition: opacity .3s; }
-  .saved-flash.show { opacity: 1; }
+  .saved-flash {
+    position: fixed;
+    top: 26px;
+    left: 50%;
+    transform: translateX(-50%) translateY(-16px);
+    background: #17a34a;
+    color: #fff;
+    font-size: 16px;
+    font-weight: 800;
+    padding: 12px 26px;
+    border-radius: 12px;
+    box-shadow: 0 10px 28px rgba(0,0,0,0.3);
+    z-index: 300;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .25s ease, transform .25s ease;
+  }
+  .saved-flash.show { opacity: 1; transform: translateX(-50%) translateY(0); }
   .aviso-modal {
     font-size: 12px;
     border-radius: 8px;
@@ -327,6 +381,35 @@ const CRM_HTML = `<!DOCTYPE html>
     padding: 0 0 0 2px;
     opacity: 0.7;
   }
+  .etapas-venda {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 4px;
+  }
+  .etapa-item {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 12px;
+    background: #f4f5f9;
+    border: 1px solid var(--card-border);
+    border-radius: 8px;
+    padding: 6px 10px;
+    cursor: pointer;
+  }
+  .etapa-item input[type="checkbox"] {
+    width: 15px;
+    height: 15px;
+    cursor: pointer;
+    accent-color: #17a34a;
+  }
+  .etapa-item.marcada {
+    background: #eafcea;
+    border-color: #17a34a;
+    color: #17a34a;
+    font-weight: 700;
+  }
   .chip-add {
     display: inline-flex;
     align-items: center;
@@ -346,8 +429,8 @@ const CRM_HTML = `<!DOCTYPE html>
 </head>
 <body>
 
-<h1>CRM - SDR</h1>
-<div class="sub">Arraste o cartão entre as colunas pra mudar o status. Toque num cartão pra ver detalhes e notas.</div>
+<h1 id="titulo-pagina">CRM - JULIANE</h1>
+<div class="sub" id="subtitulo-pagina">Mostra só quem chegou de 17/09 pra cá. Quem já tem corretor cai direto na coluna dele; sem corretor, só aparece se já foi repassado pela SDR.</div>
 
 <div class="stats" id="stats"></div>
 
@@ -366,7 +449,9 @@ const CRM_HTML = `<!DOCTYPE html>
 </div>
 
 <script>
-let TODOS_LEADS = [];
+let LEADS_JULIANE = [];
+let LEADS_SDR = [];
+let ABA_CRM = 'juliane'; // 'juliane' ou 'sdr'
 let BUSCA = '';
 let LEAD_ARRASTADO = null;
 let ULTIMO_ADICIONADO_ID = null;
@@ -405,24 +490,73 @@ function limparFiltroData(coluna) {
   render();
 }
 
-const COLUNAS = ['Novo', 'Reaquecendo', 'Aguardando retorno', 'Repassado ao corretor', 'Visita agendada', 'Compra futura', 'Já comprou', 'Venda efetuada', 'Sem retorno'];
+function leadsAtivos() {
+  return ABA_CRM === 'sdr' ? LEADS_SDR : LEADS_JULIANE;
+}
+
+const COLUNAS_FUNIL = ['Novo', 'Reaquecendo', 'Aguardando retorno', 'Repassado ao corretor', 'Visita agendada', 'Compra futura', 'Já comprou', 'Venda efetuada', 'Sem retorno'];
 
 // Paleta viva, uma cor por coluna — usada no cabeçalho e na barrinha
-// lateral de cada cartão daquela coluna.
-const CORES_COLUNA = {
+// lateral de cada cartão daquela coluna. (Quadro em formato de funil — usado na aba "CRM da SDR")
+const CORES_COLUNA_FUNIL = {
   'Novo':                   { header: '#3b6cf0', accent: '#3b6cf0', texto: '#ffffff' },
   'Reaquecendo':            { header: '#f2941c', accent: '#f2941c', texto: '#ffffff' },
   'Aguardando retorno':     { header: '#9b4de0', accent: '#9b4de0', texto: '#ffffff' },
-  'Visita agendada':        { header: '#0aa5c2', accent: '#0aa5c2', texto: '#ffffff' },
   'Repassado ao corretor':  { header: '#e8479e', accent: '#e8479e', texto: '#ffffff' },
+  'Visita agendada':        { header: '#0aa5c2', accent: '#0aa5c2', texto: '#ffffff' },
   'Compra futura':          { header: '#5b6bf5', accent: '#5b6bf5', texto: '#ffffff' },
   'Já comprou':             { header: '#c9a20a', accent: '#c9a20a', texto: '#ffffff' },
-  'Sem retorno':            { header: '#6b7280', accent: '#6b7280', texto: '#ffffff' },
   'Venda efetuada':         { header: '#17a34a', accent: '#17a34a', texto: '#ffffff' },
+  'Sem retorno':            { header: '#6b7280', accent: '#6b7280', texto: '#ffffff' },
 };
 
+// Nome fixo da coluna de triagem — leads sem corretor definido caem aqui.
+const COLUNA_TRIAGEM = 'Novo Lead';
+
+// Opções de canal/origem — mesmas do /dashboard, pra bater com o que já existe.
+const ORIGENS = ['OLX/Canal Pro', 'Patrocinado', 'TikTok', 'Instagram', 'Comentário', 'SDR', 'Juliane', 'Outro'];
+
+// Quadro por corretor — usado na aba principal da Juliane. As colunas são
+// montadas na hora, com base em quem realmente tem lead no sistema.
+// Ordem e conjunto fixos de corretores no quadro da Juliane — não muda
+// sozinho conforme os dados; só muda quando alguém pedir pra ajustar aqui.
+const ORDEM_CORRETORES_JULIANE = ['Junior', 'Laís', 'Patricia', 'Michelle', 'Nalcio', 'Renata', 'Bruno', 'Juliane', 'Amanda', 'Cyda'];
+
+// Uma cor fixa e diferente pra cada um (não é por hash, pra ficar sempre
+// igual e fácil de reconhecer de relance).
+const CORES_CORRETORES_JULIANE = {
+  'Junior':    '#3b6cf0',
+  'Laís':      '#e8479e',
+  'Patricia':  '#12b76a',
+  'Michelle':  '#9b4de0',
+  'Nalcio':    '#0aa5c2',
+  'Renata':    '#c9a20a',
+  'Bruno':     '#e0453f',
+  'Juliane':   '#5b6bf5',
+  'Amanda':    '#f2789c',
+  'Cyda':      '#2dd4bf',
+};
+
+function colunasCorretorAtual() {
+  return [COLUNA_TRIAGEM, ...ORDEM_CORRETORES_JULIANE];
+}
+
+function corColunaCorretor(coluna) {
+  if (coluna === COLUNA_TRIAGEM) return { header: '#64748b', accent: '#64748b', texto: '#ffffff' };
+  const cor = CORES_CORRETORES_JULIANE[coluna] || corDoCorretor(coluna);
+  return { header: cor, accent: cor, texto: '#ffffff' };
+}
+
+// Em qual coluna esse lead cai, no quadro por corretor: já tem corretor
+// definido → vai direto pra coluna dele. Sem corretor → "Novo Lead", seja
+// ele reaquecido pela SDR ou direto do canal — a etiqueta no card (🔥
+// REAQUECIDO ou 📡 Canal) já conta essa diferença, sem precisar de duas colunas.
+function colunaCorretorDoLead(lead) {
+  return (lead.corretor && lead.corretor.trim()) ? lead.corretor.trim() : COLUNA_TRIAGEM;
+}
+
 function statusDoLead(lead) {
-  return COLUNAS.includes(lead.status) ? lead.status : 'Novo';
+  return COLUNAS_FUNIL.includes(lead.status) ? lead.status : 'Novo';
 }
 
 function temHistoricoDuplicado(lead) {
@@ -471,29 +605,45 @@ function renderChipsCorretores(lead) {
 
 async function carregar() {
   try {
-    const res = await fetch('/api/leads/carteira-sdr', { cache: 'no-store' });
-    const data = await res.json();
-    TODOS_LEADS = data.leads || data || [];
+    const [resTodos, resSdr] = await Promise.all([
+      fetch('/api/leads/todos-resumo', { cache: 'no-store' }),
+      fetch('/api/leads/carteira-sdr', { cache: 'no-store' }),
+    ]);
+    const dataTodos = await resTodos.json();
+    const dataSdr = await resSdr.json();
+    LEADS_JULIANE = dataTodos.leads || dataTodos || [];
+    LEADS_SDR = dataSdr.leads || dataSdr || [];
     render();
   } catch (err) {
     document.getElementById('board').innerHTML = '<div style="color:var(--muted);padding:20px;">Erro ao carregar leads. Recarregue a página.</div>';
   }
 }
 
-function leadsFiltrados() {
-  if (!BUSCA) return TODOS_LEADS;
-  const b = BUSCA.toLowerCase();
-  return TODOS_LEADS.filter(l => (l.nome || '').toLowerCase().includes(b) || (l.whatsapp || '').includes(b));
+function trocarAba(aba) {
+  ABA_CRM = aba;
+  document.getElementById('titulo-pagina').textContent = aba === 'sdr' ? 'CRM - SDR' : 'CRM - JULIANE';
+  document.getElementById('subtitulo-pagina').textContent = aba === 'sdr'
+    ? 'Você está vendo e editando a carteira da SDR.'
+    : 'Mostra só quem chegou de 17/09 pra cá. Quem já tem corretor cai direto na coluna dele; sem corretor, só aparece se já foi repassado pela SDR.';
+  render();
 }
 
-// Monta o CSV só com o que está realmente visível na tela agora (busca +
-// filtro de data por coluna), não com a carteira inteira.
+function leadsFiltrados() {
+  const todos = leadsAtivos();
+  if (!BUSCA) return todos;
+  const b = BUSCA.toLowerCase();
+  return todos.filter(l => (l.nome || '').toLowerCase().includes(b) || (l.whatsapp || '').includes(b));
+}
+
+// Monta o CSV só com o que está realmente visível na tela agora (aba
+// atual + busca + filtro de data por coluna), não com tudo do sistema.
 function exportarCSV() {
-  const leads = leadsFiltrados().filter(l => leadPassaNoFiltroDeData(l, statusDoLead(l)));
-  const cabecalho = ['Nome', 'WhatsApp', 'Status', 'Origem', 'Imóvel', 'Corretor', 'Valor do imóvel', 'Tarefa', 'Prazo da tarefa', 'Notas', 'Buscando', 'Chegou em'];
+  const funcaoColuna = ABA_CRM === 'sdr' ? statusDoLead : colunaCorretorDoLead;
+  const leads = leadsFiltrados().filter(l => leadPassaNoFiltroDeData(l, funcaoColuna(l)));
+  const cabecalho = ['Nome', 'WhatsApp', 'Coluna', 'Origem', 'Corretor', 'Status SDR', 'Valor do imóvel', 'Tarefa', 'Prazo da tarefa', 'Notas', 'Buscando', 'Chegou em'];
   const linhas = leads.map(l => [
-    l.nome || '', l.whatsapp || '', statusDoLead(l), l.origem || '', l.imovel_desc || '',
-    l.corretor || '', l.valor_imovel_sdr || '', l.tarefa_sdr || '',
+    l.nome || '', l.whatsapp || '', funcaoColuna(l), l.origem || '', l.corretor || '', l.status || '',
+    l.valor_imovel_sdr || '', l.tarefa_sdr || '',
     l.tarefa_data ? new Date(l.tarefa_data).toLocaleString('pt-BR') : '',
     (l.notas_sdr || '').replace(/\\n/g, ' '), (l.buscando_sdr || '').replace(/\\n/g, ' '),
     l.distribuido_em ? new Date(l.distribuido_em).toLocaleDateString('pt-BR') : ''
@@ -504,7 +654,7 @@ function exportarCSV() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = \`crm-sdr-\${new Date().toISOString().slice(0, 10)}.csv\`;
+  a.download = \`crm-juliane-\${ABA_CRM}-\${new Date().toISOString().slice(0, 10)}.csv\`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -512,30 +662,43 @@ function exportarCSV() {
 }
 
 function render() {
+  const leadsBase = leadsAtivos();
   const leads = leadsFiltrados();
-  const reaquecerCount = TODOS_LEADS.filter(temHistoricoDuplicado).length;
+  const reaquecerCount = leadsBase.filter(temHistoricoDuplicado).length;
 
-  const vgvTotal = TODOS_LEADS.reduce((soma, lead) => soma + parseValorImovel(lead.valor_imovel_sdr), 0);
+  const vgvTotal = leadsBase.reduce((soma, lead) => soma + parseValorImovel(lead.valor_imovel_sdr), 0);
 
   document.getElementById('stats').innerHTML = \`
-    <div class="stat"><span class="num">\${TODOS_LEADS.length}</span>na carteira</div>
+    <div class="stat"><span class="num">\${leadsBase.length}</span>\${ABA_CRM === 'sdr' ? 'na carteira' : 'no sistema'}</div>
     <div class="stat" style="color:#b5720a"><span class="num">\${reaquecerCount}</span>pra reaquecer</div>
     \${vgvTotal > 0 ? \`<div class="stat" style="color:#17a34a"><span class="num">\${formatarReais(vgvTotal)}</span>VGV total</div>\` : ''}
+    <button class="stat" id="btn-trocar-aba" style="cursor:pointer;border:1px solid var(--accent);color:var(--accent);font-weight:700;font-family:inherit;background:#fff;" onclick="trocarAba('\${ABA_CRM === 'sdr' ? 'juliane' : 'sdr'}')">\${ABA_CRM === 'sdr' ? '← Voltar pro quadro por corretor' : 'Ver CRM da SDR →'}</button>
   \`;
 
+  const colunasAtuais = ABA_CRM === 'sdr' ? COLUNAS_FUNIL : colunasCorretorAtual();
+  const funcaoColuna = ABA_CRM === 'sdr' ? statusDoLead : colunaCorretorDoLead;
+  const funcaoCor = ABA_CRM === 'sdr' ? (c => CORES_COLUNA_FUNIL[c]) : corColunaCorretor;
+
   const board = document.getElementById('board');
-  board.innerHTML = COLUNAS.map(coluna => {
-    const leadsColunaSemFiltro = leads.filter(l => statusDoLead(l) === coluna);
+  board.innerHTML = colunasAtuais.map(coluna => {
+    const leadsColunaSemFiltro = leads.filter(l => funcaoColuna(l) === coluna);
     const leadsColuna = leadsColunaSemFiltro.filter(l => leadPassaNoFiltroDeData(l, coluna));
-    const cor = CORES_COLUNA[coluna];
+    const cor = funcaoCor(coluna);
     const vgvColuna = leadsColuna.reduce((soma, lead) => soma + parseValorImovel(lead.valor_imovel_sdr), 0);
     const filtroAtivo = FILTROS_DATA_COLUNA[coluna] && (FILTROS_DATA_COLUNA[coluna].de || FILTROS_DATA_COLUNA[coluna].ate);
     const painelAberto = COLUNA_FILTRO_ABERTA === coluna;
+    // Coluna de corretor de verdade (não a triagem "Novo Lead", nem no
+    // funil da SDR) — clicar no nome abre o CRM daquele corretor direto,
+    // sem precisar da senha dele. Atalho só pra Juliane/admin gerenciarem.
+    const ehColunaCorretor = ABA_CRM !== 'sdr' && coluna !== COLUNA_TRIAGEM;
+    const nomeColuna = ehColunaCorretor
+      ? \`<span style="cursor:pointer;text-decoration:underline;text-decoration-style:dotted;" title="Abrir o CRM de \${coluna}" onclick="window.open('/meu-crm?corretor=\${encodeURIComponent(coluna)}', '_blank')">\${coluna}</span>\`
+      : \`<span>\${coluna}</span>\`;
     return \`
       <div class="column" data-coluna="\${coluna}">
         <div class="column-header" style="background:\${cor.header};color:\${cor.texto}">
           <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">
-            <span>\${coluna}</span>
+            \${nomeColuna}
             <div style="display:flex;align-items:center;gap:4px;">
               <button class="lupa-filtro-btn \${filtroAtivo ? 'ativa' : ''}" title="Filtrar por período" onclick="alternarFiltroData('\${coluna}')">🔍</button>
               <span class="column-count">\${leadsColuna.length}\${filtroAtivo ? \`/\${leadsColunaSemFiltro.length}\` : ''}</span>
@@ -553,7 +716,7 @@ function render() {
           </div>
         \` : ''}
         <div class="column-cards" data-coluna="\${coluna}">
-          \${leadsColuna.map(lead => cardHtml(lead, cor.accent)).join('') || (leadsColunaSemFiltro.length > 0 ? '<div style="text-align:center;color:var(--muted);font-size:12px;padding:12px;">Nenhum nesse período</div>' : '')}
+          \${leadsColuna.map(lead => cardHtml(lead, cor.accent, coluna === COLUNA_TRIAGEM && ABA_CRM !== 'sdr', coluna !== COLUNA_TRIAGEM && ABA_CRM !== 'sdr')).join('') || (leadsColunaSemFiltro.length > 0 ? '<div style="text-align:center;color:var(--muted);font-size:12px;padding:12px;">Nenhum nesse período</div>' : '')}
         </div>
       </div>
     \`;
@@ -579,8 +742,16 @@ function render() {
       e.preventDefault();
       col.closest('.column').classList.remove('dragover');
       if (LEAD_ARRASTADO) {
-        const novoStatus = col.dataset.coluna;
-        salvarCampo(LEAD_ARRASTADO, 'status', novoStatus, () => { render(); });
+        const colunaDestino = col.dataset.coluna;
+        if (ABA_CRM === 'sdr') {
+          salvarCampo(LEAD_ARRASTADO, 'status', colunaDestino, () => { render(); });
+        } else {
+          // Quadro por corretor: arrastar pra uma coluna de corretor ATRIBUI
+          // aquele corretor de verdade (afeta o /dashboard). Arrastar de volta
+          // pra "Repassado ao corretor" deixa o corretor vazio novamente.
+          const novoCorretor = colunaDestino === COLUNA_TRIAGEM ? '' : colunaDestino;
+          salvarCampo(LEAD_ARRASTADO, 'corretor', novoCorretor, () => { render(); });
+        }
         LEAD_ARRASTADO = null;
       }
     });
@@ -634,34 +805,59 @@ function formatarReais(valor) {
   return valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function cardHtml(lead, corBorda) {
+function cardHtml(lead, corBorda, mostrarOrigemTriagem, mostrarStatusSdr) {
   const duplicado = temHistoricoDuplicado(lead);
   const envolvidos = corretoresEnvolvidos(lead);
   const chipsRepassados = corretoresRepassadosLista(lead);
   const dataEtapa = formatarData(lead.status_alterado_em || lead.distribuido_em);
   const tarefaAtrasada = !!(lead.tarefa_data && new Date(lead.tarefa_data) <= new Date());
-  const classeDestaque = tarefaAtrasada ? 'atrasado' : (duplicado ? 'reaquecer' : '');
+  const classeDestaque = tarefaAtrasada ? 'atrasado' : '';
+
+  // O selo de reaquecido aparece em QUALQUER coluna (não só na triagem) —
+  // mas discreto, sem chamar muita atenção — se a SDR reaqueceu esse
+  // contato, é só uma informação a mais. Já o selo "Canal" (chegou puro,
+  // sem corretor) só faz sentido mostrar na triagem.
+  const seloReaquecido = lead.reaquecido_em
+    ? \`<div style="color:#c96a12;font-weight:600;font-size:10.5px;margin-top:5px;">🔥 reaquecido</div>\`
+    : '';
+  const seloCanal = (mostrarOrigemTriagem && !lead.reaquecido_em)
+    ? \`<span class="badge" style="background:#eef0f6;color:var(--muted);border:1px solid var(--card-border);margin-top:6px;">📡 Canal</span>\`
+    : '';
+  // Só nas colunas de corretor: mostra em qual status esse lead está hoje
+  // no CRM da SDR — mas só se ela realmente mexeu nele (status diferente
+  // do padrão "Novo"). Se nunca mexeu, não faz sentido mostrar nada.
+  const seloStatusSdr = (mostrarStatusSdr && lead.status === 'Repassado ao corretor')
+    ? \`<span class="badge" style="background:#eef2ff;color:#3b6cf0;border:1px solid #c7d5fb;margin-top:6px;">📋 SDR: \${lead.status}</span>\`
+    : '';
+  // Histórico de corretores (quem já teve esse lead) fica escondido atrás
+  // de um botãozinho discreto — só abre se ela quiser conferir.
+  const botaoHistorico = duplicado
+    ? \`<button class="btn-historico" onclick="event.stopPropagation();mostrarHistoricoCorretor('\${lead.id}')" title="Ver histórico de corretores">H</button>\`
+    : '';
+
   return \`
     <div class="lead \${classeDestaque}" draggable="true" data-id="\${lead.id}" style="\${classeDestaque ? '' : \`border-left-color:\${corBorda}\`}">
+      \${botaoHistorico}
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:6px;">
         <div class="lead-nome">\${lead.nome || 'Sem nome'}</div>
         \${lead.valor_imovel_sdr ? \`<span style="font-size:10px;font-weight:700;color:#17a34a;white-space:nowrap;">💰 \${lead.valor_imovel_sdr}</span>\` : ''}
       </div>
       <div class="lead-meta">\${lead.whatsapp || 'sem WhatsApp'}</div>
+      \${seloReaquecido}\${seloCanal}\${seloStatusSdr}
       \${dataEtapa ? \`<div class="lead-meta">Nessa etapa desde \${dataEtapa}</div>\` : ''}
       \${lead.origem ? \`<span class="badge origem">\${lead.origem}</span>\` : ''}
-      \${duplicado ? \`<span class="badge warn">⚠️ \${envolvidos.length}: \${envolvidos.join(', ')}</span>\` : ''}
+      \${lead.imovel_desc ? \`<span class="badge" style="background:#f3ecff;color:#7c3aed;border:1px solid #ddd0fb;">🏠 \${lead.imovel_desc}</span>\` : ''}
+      \${lead.imovel_codigo ? \`<span class="badge" style="background:#eef6ff;color:#0b6bcb;border:1px solid #bfe0fb;">CRM: \${lead.imovel_codigo}</span>\` : ''}
       \${lead.corretor ? \`<div><span class="chip-corretor" style="border-color:\${corDoCorretor(lead.corretor)};color:\${corDoCorretor(lead.corretor)};background:\${corDoCorretor(lead.corretor)}1a">\${lead.corretor}</span></div>\` : ''}
       \${lead.tarefa_sdr ? \`<div class="tarefa-preview" style="\${tarefaAtrasada ? 'color:#e0453f;' : ''}">\${tarefaAtrasada ? '⏰ ATRASADO — ' : '📌 '}\${lead.tarefa_sdr}\${lead.tarefa_data ? \` (\${new Date(lead.tarefa_data).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })})\` : ''}</div>\` : ''}
       \${lead.ultima_atualizacao_sdr ? \`<div class="tarefa-preview" style="color:var(--muted);font-weight:600;">🗓️ Atualizado até \${formatarData(lead.ultima_atualizacao_sdr)}</div>\` : ''}
-      \${lead.notas_sdr ? \`<div class="lead-notas">\${lead.notas_sdr.split('\\n')[0]}</div>\` : ''}
       \${lead.buscando_sdr ? \`<div class="lead-notas" style="color:#5b6bf5;font-weight:600;">🔎 \${lead.buscando_sdr.split('\\n')[0]}</div>\` : ''}
     </div>
   \`;
 }
 
 function abrirModalLead(id) {
-  const lead = TODOS_LEADS.find(l => String(l.id) === String(id));
+  const lead = leadsAtivos().find(l => String(l.id) === String(id));
   if (!lead) return;
   const duplicado = temHistoricoDuplicado(lead);
   const envolvidos = corretoresEnvolvidos(lead);
@@ -670,25 +866,36 @@ function abrirModalLead(id) {
 
   document.getElementById('modal').innerHTML = \`
     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
-      <h2>\${lead.nome || 'Sem nome'}</h2>
+      <h2>\${lead.nome || 'Sem nome'}\${duplicado ? \`<button class="btn-historico modal-versao" onclick="mostrarHistoricoCorretor('\${lead.id}')" title="Ver histórico de corretores">H</button>\` : ''}</h2>
       <span id="badge-valor-imovel">\${lead.valor_imovel_sdr ? \`<span class="badge" style="background:#eafcea;color:#17a34a;border:1px solid #a8ecca;white-space:nowrap;">💰 \${lead.valor_imovel_sdr}</span>\` : ''}</span>
     </div>
     <div class="lead-meta">\${lead.whatsapp || 'sem WhatsApp'} · chegou em \${data}</div>
-    \${lead.origem ? \`<span class="badge origem">\${lead.origem}</span>\` : ''}
-    \${duplicado ? \`<span class="badge warn">⚠️ Já foi para \${envolvidos.length}: \${envolvidos.join(', ')} — não reenvie, reaqueça direto</span>\` : (lead.corretor ? \`<span class="badge origem">Corretor: \${lead.corretor}</span>\` : '')}
+    \${ABA_CRM === 'sdr'
+      ? (lead.origem ? \`<span class="badge origem">\${lead.origem}</span>\` : '')
+      : \`<select id="modal-origem" class="badge-select"><option value="" \${!lead.origem ? 'selected' : ''}>— sem canal —</option>\${ORIGENS.map(o => \`<option value="\${o}" \${lead.origem === o ? 'selected' : ''}>\${o}</option>\`).join('')}</select>\`}
+    \${lead.imovel_desc ? \`<span class="badge" style="background:#f3ecff;color:#7c3aed;border:1px solid #ddd0fb;">🏠 \${lead.imovel_desc}</span>\` : ''}
+      \${lead.imovel_codigo ? \`<span class="badge" style="background:#eef6ff;color:#0b6bcb;border:1px solid #bfe0fb;">CRM: \${lead.imovel_codigo}</span>\` : ''}
 
-    <label>Status</label>
-    <select id="modal-status">
-      \${COLUNAS.map(c => \`<option value="\${c}" \${statusDoLead(lead) === c ? 'selected' : ''}>\${c}</option>\`).join('')}
-    </select>
-    \${lead.status_alterado_em ? \`<div class="lead-meta" style="margin-top:4px;">Nessa etapa desde \${formatarData(lead.status_alterado_em)}</div>\` : ''}
-
-    <label>Corretor</label>
-    <select id="modal-corretor">
-      <option value="" \${!lead.corretor ? 'selected' : ''}>— Repassado ao corretor (sem corretor ainda) —</option>
-      \${NOMES_OFICIAIS_CORRETORES.map(c => \`<option value="\${c}" \${lead.corretor === c ? 'selected' : ''}>\${c}</option>\`).join('')}
-    </select>
-    \${lead.corretor ? \`<div style="margin-top:6px;"><span class="chip-corretor" style="border-color:\${corDoCorretor(lead.corretor)};color:\${corDoCorretor(lead.corretor)};background:\${corDoCorretor(lead.corretor)}1a">\${lead.corretor}</span></div>\` : ''}
+    \${ABA_CRM === 'sdr' ? \`
+      <label>Status</label>
+      <select id="modal-status">
+        \${COLUNAS_FUNIL.map(c => \`<option value="\${c}" \${statusDoLead(lead) === c ? 'selected' : ''}>\${c}</option>\`).join('')}
+      </select>
+      \${lead.status_alterado_em ? \`<div class="lead-meta" style="margin-top:4px;">Nessa etapa desde \${formatarData(lead.status_alterado_em)}</div>\` : ''}
+      <label>Corretor</label>
+      <select id="modal-corretor">
+        <option value="" \${!lead.corretor ? 'selected' : ''}>— Repassado ao corretor (sem corretor ainda) —</option>
+        \${NOMES_OFICIAIS_CORRETORES.map(c => \`<option value="\${c}" \${lead.corretor === c ? 'selected' : ''}>\${c}</option>\`).join('')}
+      </select>
+      \${lead.corretor ? \`<div style="margin-top:6px;"><span class="chip-corretor" style="border-color:\${corDoCorretor(lead.corretor)};color:\${corDoCorretor(lead.corretor)};background:\${corDoCorretor(lead.corretor)}1a">\${lead.corretor}</span></div>\` : ''}
+    \` : \`
+      <label>Corretor</label>
+      <select id="modal-corretor">
+        <option value="" \${!lead.corretor ? 'selected' : ''}>— Novo Lead (sem corretor ainda) —</option>
+        \${colunasCorretorAtual().filter(c => c !== COLUNA_TRIAGEM).map(c => \`<option value="\${c}" \${lead.corretor === c ? 'selected' : ''}>\${c}</option>\`).join('')}
+      </select>
+      \${lead.corretor ? \`<div style="margin-top:6px;"><span class="chip-corretor" style="border-color:\${corDoCorretor(lead.corretor)};color:\${corDoCorretor(lead.corretor)};background:\${corDoCorretor(lead.corretor)}1a">\${lead.corretor}</span></div>\` : ''}
+    \`}
 
     <label>Tarefa</label>
     <input type="text" id="modal-tarefa" placeholder="Próximo passo, ex: ligar amanhã 14h" value="\${lead.tarefa_sdr || ''}">
@@ -707,6 +914,15 @@ function abrirModalLead(id) {
       </div>
     </div>
 
+    <label>Etapa da venda</label>
+    <div class="etapas-venda" id="etapas-venda">
+      <label class="etapa-item \${lead.aprovado ? 'marcada' : ''}"><input type="checkbox" data-campo="aprovado" \${lead.aprovado ? 'checked' : ''}> Aprovado</label>
+      <label class="etapa-item \${lead.visita ? 'marcada' : ''}"><input type="checkbox" data-campo="visita" \${lead.visita ? 'checked' : ''}> Visita</label>
+      <label class="etapa-item \${lead.documentacao ? 'marcada' : ''}"><input type="checkbox" data-campo="documentacao" \${lead.documentacao ? 'checked' : ''}> Documentação</label>
+      <label class="etapa-item \${lead.proposta ? 'marcada' : ''}"><input type="checkbox" data-campo="proposta" \${lead.proposta ? 'checked' : ''}> Proposta</label>
+      <label class="etapa-item \${lead.venda ? 'marcada' : ''}"><input type="checkbox" data-campo="venda" \${lead.venda ? 'checked' : ''}> Venda</label>
+    </div>
+
     <label>Notas</label>
     <textarea id="modal-notas" placeholder="O que já foi conversado, quando retomar...">\${lead.notas_sdr || ''}</textarea>
 
@@ -717,25 +933,57 @@ function abrirModalLead(id) {
       <button class="close-btn" id="modal-fechar">Fechar</button>
       <div>
         \${waLink ? \`<a class="wa-btn" href="\${waLink}" target="_blank">WhatsApp ↗</a>\` : ''}
-        <span class="saved-flash" id="modal-flash">salvo ✓</span>
+        <span class="saved-flash" id="modal-flash">✅ Salvo!</span>
       </div>
     </div>
     <button class="primary-btn" id="modal-salvar" style="width:100%;margin-top:10px;">💾 Salvar</button>
-    <button class="close-btn" id="modal-remover" style="width:100%;margin-top:8px;color:#b5720a;border-color:var(--warn-border);">Remover da carteira</button>
+    \${ABA_CRM === 'sdr'
+      ? '<button class="close-btn" id="modal-remover" style="width:100%;margin-top:8px;color:#b5720a;border-color:var(--warn-border);">Remover da carteira</button>'
+      : '<button class="close-btn" id="modal-excluir" style="width:100%;margin-top:8px;color:#e0453f;border-color:#e0453f;">🗑️ Excluir permanentemente</button>'}
   \`;
 
   document.getElementById('overlay').classList.add('show');
   document.getElementById('modal-fechar').addEventListener('click', fecharModal);
-  document.getElementById('modal-remover').addEventListener('click', () => {
-    if (!confirm(\`Remover "\${lead.nome || 'esse contato'}" da sua carteira? Ele some do seu Kanban, mas continua no sistema.\`)) return;
-    salvarCampo(id, 'carteira_sdr', false, () => { fecharModal(); carregar(); });
-  });
-  document.getElementById('modal-status').addEventListener('change', e => {
-    salvarCampo(id, 'status', e.target.value, () => { render(); abrirModalLead(id); });
-  });
-  document.getElementById('modal-corretor').addEventListener('change', e => {
-    salvarCampo(id, 'corretor', e.target.value, () => { render(); abrirModalLead(id); });
-  });
+  const btnRemover = document.getElementById('modal-remover');
+  if (btnRemover) {
+    btnRemover.addEventListener('click', () => {
+      if (!confirm(\`Remover "\${lead.nome || 'esse contato'}" da carteira da SDR? Ele some desse Kanban, mas continua no sistema.\`)) return;
+      salvarCampo(id, 'carteira_sdr', false, () => { fecharModal(); carregar(); });
+    });
+  }
+  const btnExcluir = document.getElementById('modal-excluir');
+  if (btnExcluir) {
+    btnExcluir.addEventListener('click', () => {
+      if (!confirm(\`Excluir "\${lead.nome || 'esse contato'}" PERMANENTEMENTE? Isso apaga de vez do sistema — some do seu CRM, do CRM da SDR e do /dashboard. Não tem como desfazer (só recuperando de um backup). Confirma?\`)) return;
+      fetch(\`/api/leads/\${id}\`, { method: 'DELETE' })
+        .then(res => res.json())
+        .then(data => {
+          if (!data.ok) { alert('Não consegui excluir: ' + (data.erro || 'erro desconhecido')); return; }
+          fecharModal();
+          carregar();
+        })
+        .catch(() => alert('Não consegui excluir. Confere sua internet e tenta de novo.'));
+    });
+  }
+  const selectStatus = document.getElementById('modal-status');
+  if (selectStatus) {
+    selectStatus.addEventListener('change', e => {
+      salvarCampo(id, 'status', e.target.value, () => { render(); abrirModalLead(id); });
+    });
+  }
+  const selectCorretor = document.getElementById('modal-corretor');
+  if (selectCorretor) {
+    selectCorretor.addEventListener('change', e => {
+      salvarCampo(id, 'corretor', e.target.value, () => { render(); abrirModalLead(id); });
+    });
+  }
+  const selectOrigem = document.getElementById('modal-origem');
+  if (selectOrigem) {
+    selectOrigem.addEventListener('change', e => {
+      lead.origem = e.target.value;
+      salvarCampo(id, 'origem', e.target.value, () => { render(); flashModal(); });
+    });
+  }
   document.getElementById('modal-salvar').addEventListener('click', () => {
     const notas = document.getElementById('modal-notas').value;
     const buscando = document.getElementById('modal-buscando').value;
@@ -774,6 +1022,19 @@ function abrirModalLead(id) {
       alert('Não consegui salvar. Confere sua internet e tenta de novo.');
     });
   });
+
+  const chipsContainer = document.getElementById('modal-chips-corretores');
+  if (chipsContainer) ligarEventosChips(id, lead, chipsContainer);
+
+  document.querySelectorAll('#etapas-venda input[type="checkbox"]').forEach(input => {
+    input.addEventListener('change', e => {
+      const campo = e.target.dataset.campo;
+      const valorNovo = e.target.checked;
+      lead[campo] = valorNovo;
+      e.target.closest('.etapa-item').classList.toggle('marcada', valorNovo);
+      salvarCampo(id, campo, valorNovo, () => { render(); flashModal(); });
+    });
+  });
 }
 
 function ligarEventosChips(id, lead, chipsContainer) {
@@ -792,49 +1053,17 @@ function ligarEventosChips(id, lead, chipsContainer) {
   const addBtn = chipsContainer.querySelector('#add-corretor-btn');
   if (addBtn) {
     addBtn.addEventListener('click', () => {
-      // Lista pra escolher em vez de digitar — evita erro de digitação e
-      // já grava o corretor de verdade (campo "corretor"), pra aparecer
-      // direto na coluna dele no quadro por corretor da Juliane.
-      const select = document.createElement('select');
-      select.style.fontSize = '12px';
-      select.style.padding = '4px 6px';
-      select.style.borderRadius = '8px';
-      select.style.border = '1px solid var(--card-border)';
-      select.innerHTML = '<option value="">Escolher corretor...</option>' +
-        NOMES_OFICIAIS_CORRETORES.map(n => \`<option value="\${n}">\${n}</option>\`).join('') +
-        '<option value="__outro">Outro (digitar)...</option>';
-      addBtn.replaceWith(select);
-      select.focus();
-
-      select.addEventListener('change', () => {
-        let nome = select.value;
-        if (nome === '__outro') {
-          nome = prompt('Nome do corretor:');
-          if (nome) nome = normalizarNomeCorretor(nome);
-        }
-        if (!nome || !nome.trim()) {
-          chipsContainer.innerHTML = renderChipsCorretores(lead);
-          ligarEventosChips(id, lead, chipsContainer);
-          return;
-        }
-        nome = nome.trim();
-        const atual = corretoresRepassadosLista(lead);
-        if (!atual.includes(nome)) atual.push(nome);
-        const valorChips = atual.join(', ');
-
-        // Salva a etiqueta de histórico E o corretor atual, junto.
-        Promise.all([
-          fetch(\`/api/leads/\${id}\`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ campo: 'corretores_repassados', valor: valorChips }) }),
-          fetch(\`/api/leads/\${id}\`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ campo: 'corretor', valor: nome }) }),
-        ]).then(() => {
-          lead.corretores_repassados = valorChips;
-          lead.corretor = nome;
-          render();
-          chipsContainer.innerHTML = renderChipsCorretores(lead);
-          ligarEventosChips(id, lead, chipsContainer);
-        }).catch(() => {
-          alert('Não consegui salvar. Confere sua internet e tenta de novo.');
-        });
+      let nome = prompt('Nome do corretor:');
+      if (nome) nome = normalizarNomeCorretor(nome);
+      if (!nome || !nome.trim()) return;
+      const atual = corretoresRepassadosLista(lead);
+      if (!atual.includes(nome.trim())) atual.push(nome.trim());
+      const valor = atual.join(', ');
+      salvarCampo(id, 'corretores_repassados', valor, () => {
+        lead.corretores_repassados = valor;
+        render();
+        chipsContainer.innerHTML = renderChipsCorretores(lead);
+        ligarEventosChips(id, lead, chipsContainer);
       });
     });
   }
@@ -921,7 +1150,19 @@ function flashModal() {
   const flash = document.getElementById('modal-flash');
   if (!flash) return;
   flash.classList.add('show');
-  setTimeout(() => flash.classList.remove('show'), 1200);
+  setTimeout(() => flash.classList.remove('show'), 1600);
+}
+
+function mostrarHistoricoCorretor(id) {
+  const lead = leadsAtivos().find(l => String(l.id) === String(id));
+  if (!lead) return;
+  const envolvidos = corretoresEnvolvidos(lead);
+  const atual = lead.corretor || 'ninguém no momento';
+  const anteriores = envolvidos.filter(nome => nome !== lead.corretor);
+  const texto = anteriores.length > 0
+    ? \`Já passou por: \${anteriores.join(', ')}\\n\\nEstá agora com: \${atual}\`
+    : \`Está agora com: \${atual}\`;
+  alert(texto);
 }
 
 function fecharModal() {
@@ -960,7 +1201,7 @@ async function salvarCampo(id, campo, valor, aoTerminar) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ campo, valor }),
     });
-    const lead = TODOS_LEADS.find(l => String(l.id) === String(id));
+    const lead = leadsAtivos().find(l => String(l.id) === String(id));
     if (lead) lead[campo] = valor;
     if (aoTerminar) aoTerminar();
   } catch (err) {
@@ -976,4 +1217,4 @@ setInterval(carregar, 60000); // atualiza sozinho a cada 1 min
 </body>
 </html>`;
 
-module.exports = { CRM_HTML };
+module.exports = { JULIANE_HTML };
