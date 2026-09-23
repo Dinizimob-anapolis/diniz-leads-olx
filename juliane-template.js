@@ -747,10 +747,19 @@ function render() {
           salvarCampo(LEAD_ARRASTADO, 'status', colunaDestino, () => { render(); });
         } else {
           // Quadro por corretor: arrastar pra uma coluna de corretor ATRIBUI
-          // aquele corretor de verdade (afeta o /dashboard). Arrastar de volta
-          // pra "Repassado ao corretor" deixa o corretor vazio novamente.
+          // aquele corretor de verdade (afeta o /dashboard). Como é fácil
+          // soltar sem querer, pede confirmação antes de valer de verdade.
           const novoCorretor = colunaDestino === COLUNA_TRIAGEM ? '' : colunaDestino;
-          salvarCampo(LEAD_ARRASTADO, 'corretor', novoCorretor, () => { render(); });
+          const lead = leadsAtivos().find(l => String(l.id) === String(LEAD_ARRASTADO));
+          const nomeLead = lead ? (lead.nome || 'esse contato') : 'esse contato';
+          const mensagem = novoCorretor
+            ? \`Tem certeza que quer transferir "\${nomeLead}" para \${novoCorretor}?\`
+            : \`Tem certeza que quer tirar "\${nomeLead}" de \${lead ? lead.corretor : 'o corretor atual'} e voltar pra "Novo Lead"?\`;
+          if (confirm(mensagem)) {
+            salvarCampo(LEAD_ARRASTADO, 'corretor', novoCorretor, () => { render(); });
+          } else {
+            render();
+          }
         }
         LEAD_ARRASTADO = null;
       }
@@ -846,6 +855,8 @@ function cardHtml(lead, corBorda, mostrarOrigemTriagem, mostrarStatusSdr) {
       \${seloReaquecido}\${seloCanal}\${seloStatusSdr}
       \${dataEtapa ? \`<div class="lead-meta">Nessa etapa desde \${dataEtapa}</div>\` : ''}
       \${lead.origem ? \`<span class="badge origem">\${lead.origem}</span>\` : ''}
+      \${lead.imovel_desc ? \`<span class="badge" style="background:#f3ecff;color:#7c3aed;border:1px solid #ddd0fb;">🏠 \${lead.imovel_desc}</span>\` : ''}
+      \${lead.imovel_codigo ? \`<span class="badge" style="background:#eef6ff;color:#0b6bcb;border:1px solid #bfe0fb;">CRM: \${lead.imovel_codigo}</span>\` : ''}
       \${lead.corretor ? \`<div><span class="chip-corretor" style="border-color:\${corDoCorretor(lead.corretor)};color:\${corDoCorretor(lead.corretor)};background:\${corDoCorretor(lead.corretor)}1a">\${lead.corretor}</span></div>\` : ''}
       \${lead.tarefa_sdr ? \`<div class="tarefa-preview" style="\${tarefaAtrasada ? 'color:#e0453f;' : ''}">\${tarefaAtrasada ? '⏰ ATRASADO — ' : '📌 '}\${lead.tarefa_sdr}\${lead.tarefa_data ? \` (\${new Date(lead.tarefa_data).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })})\` : ''}</div>\` : ''}
       \${lead.ultima_atualizacao_sdr ? \`<div class="tarefa-preview" style="color:var(--muted);font-weight:600;">🗓️ Atualizado até \${formatarData(lead.ultima_atualizacao_sdr)}</div>\` : ''}
@@ -871,6 +882,8 @@ function abrirModalLead(id) {
     \${ABA_CRM === 'sdr'
       ? (lead.origem ? \`<span class="badge origem">\${lead.origem}</span>\` : '')
       : \`<select id="modal-origem" class="badge-select"><option value="" \${!lead.origem ? 'selected' : ''}>— sem canal —</option>\${ORIGENS.map(o => \`<option value="\${o}" \${lead.origem === o ? 'selected' : ''}>\${o}</option>\`).join('')}</select>\`}
+    \${lead.imovel_desc ? \`<span class="badge" style="background:#f3ecff;color:#7c3aed;border:1px solid #ddd0fb;">🏠 \${lead.imovel_desc}</span>\` : ''}
+      \${lead.imovel_codigo ? \`<span class="badge" style="background:#eef6ff;color:#0b6bcb;border:1px solid #bfe0fb;">CRM: \${lead.imovel_codigo}</span>\` : ''}
 
     \${ABA_CRM === 'sdr' ? \`
       <label>Status</label>
