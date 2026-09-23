@@ -423,7 +423,7 @@ function limparFiltroData(coluna) {
   render();
 }
 
-const COLUNAS = ['Novo', 'Reaquecido', 'Aguardando retorno', 'Aguardando documentação', 'Aprovado', 'Visita', 'Em negociação', 'Venda', 'Sem retorno'];
+const COLUNAS = ['Novo', 'Reaquecido', 'Aguardando retorno', 'Aguardando documentação', 'Aguardando aprovação', 'Aprovado', 'Visita', 'Em negociação', 'Venda', 'Sem retorno'];
 
 // Paleta viva, uma cor por coluna — usada no cabeçalho e na barrinha
 // lateral de cada cartão daquela coluna.
@@ -432,6 +432,7 @@ const CORES_COLUNA = {
   'Reaquecido':               { header: '#f2941c', accent: '#f2941c', texto: '#ffffff' },
   'Aguardando retorno':       { header: '#9b4de0', accent: '#9b4de0', texto: '#ffffff' },
   'Aguardando documentação':  { header: '#0aa5c2', accent: '#0aa5c2', texto: '#ffffff' },
+  'Aguardando aprovação':     { header: '#2d9cdb', accent: '#2d9cdb', texto: '#ffffff' },
   'Aprovado':                 { header: '#5b6bf5', accent: '#5b6bf5', texto: '#ffffff' },
   'Visita':                   { header: '#c9a20a', accent: '#c9a20a', texto: '#ffffff' },
   'Em negociação':            { header: '#e8479e', accent: '#e8479e', texto: '#ffffff' },
