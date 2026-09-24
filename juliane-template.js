@@ -228,7 +228,7 @@ const JULIANE_HTML = `<!DOCTYPE html>
   }
   .btn-ouro.ativo { background: #fff3c4; border-color: #f2c94c; filter: none; opacity: 1; }
   .btn-ouro.modal-versao { position: static; display: inline-flex; margin-left: 6px; vertical-align: middle; }
-  .lead.cliente-ouro { background: linear-gradient(180deg, #fff8dc, var(--card) 40px); box-shadow: 0 0 0 2px #f2c94c66; }
+  .lead.cliente-ouro { border-color: #d4a017 !important; background: linear-gradient(180deg, #ffe58a, var(--card) 90px); box-shadow: 0 0 0 3px #f2c94c; }
   .btn-historico.modal-versao {
     position: static;
     display: inline-flex;
@@ -238,6 +238,21 @@ const JULIANE_HTML = `<!DOCTYPE html>
   @keyframes pulso {
     0%, 100% { box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
     50% { box-shadow: 0 0 0 3px var(--warn-border); }
+  }
+  .alerta-atrasadas {
+    background: #e0453f;
+    color: #fff;
+    font-weight: 800;
+    font-size: 14px;
+    text-align: center;
+    padding: 10px 14px;
+    border-radius: 10px;
+    margin-bottom: 12px;
+    animation: piscar-alerta 1.1s ease-in-out infinite;
+  }
+  @keyframes piscar-alerta {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
   }
   .lead-nome { font-size: 13px; font-weight: 700; }
   .lead-meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
@@ -452,6 +467,8 @@ const JULIANE_HTML = `<!DOCTYPE html>
 <h1 id="titulo-pagina">CRM - JULIANE</h1>
 <div class="sub" id="subtitulo-pagina">Mostra só quem chegou de 17/09 pra cá. Quem já tem corretor cai direto na coluna dele; sem corretor, só aparece se já foi repassado pela SDR.</div>
 
+<div id="alerta-atrasadas" class="alerta-atrasadas" style="display:none;"></div>
+
 <div class="stats" id="stats"></div>
 
 <div class="toolbar">
@@ -636,6 +653,29 @@ function renderChipsCorretores(lead) {
   }).join('') + \`<button class="chip-add" id="add-corretor-btn" type="button">+</button>\`;
 }
 
+// Faixa vermelha piscando no topo — considera as duas listas juntas
+// (SDR e Juliane), não importa em qual aba ela está olhando agora.
+function atualizarAlertaAtrasadas() {
+  const el = document.getElementById('alerta-atrasadas');
+  if (!el) return;
+  const agora = new Date();
+  const todos = [...LEADS_SDR, ...LEADS_JULIANE];
+  const vistos = new Set();
+  let atrasadas = 0;
+  for (const l of todos) {
+    if (vistos.has(l.id)) continue;
+    vistos.add(l.id);
+    if (l.tarefa_data && new Date(l.tarefa_data) <= agora) atrasadas++;
+  }
+  if (atrasadas > 0) {
+    el.style.display = 'block';
+    el.textContent = \`⏰ Você tem \${atrasadas} tarefa\${atrasadas > 1 ? 's' : ''} atrasada\${atrasadas > 1 ? 's' : ''}!\`;
+  } else {
+    el.style.display = 'none';
+  }
+}
+setInterval(atualizarAlertaAtrasadas, 60000);
+
 async function carregar() {
   try {
     const [resTodos, resSdr] = await Promise.all([
@@ -700,6 +740,8 @@ function render() {
   const reaquecerCount = leadsBase.filter(temHistoricoDuplicado).length;
 
   const vgvTotal = leadsBase.reduce((soma, lead) => soma + parseValorImovel(lead.valor_imovel_sdr), 0);
+
+  atualizarAlertaAtrasadas();
 
   document.getElementById('stats').innerHTML = \`
     <div class="stat"><span class="num">\${leadsBase.length}</span>\${ABA_CRM === 'sdr' ? 'na carteira' : 'no sistema'}</div>
