@@ -184,11 +184,32 @@ const CRM_HTML = `<!DOCTYPE html>
     padding: 11px;
     cursor: grab;
     box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    position: relative;
   }
   .lead:active { cursor: grabbing; }
   .lead.dragging { opacity: 0.4; }
   .lead.reaquecer { border-color: var(--warn-border); background: linear-gradient(180deg, var(--warn-bg), var(--card) 32px); }
   .lead.atrasado { border-color: #e0453f !important; background: linear-gradient(180deg, #fdecec, var(--card) 32px); box-shadow: 0 0 0 2px #e0453f33; }
+  .lead.cliente-ouro { background: linear-gradient(180deg, #fff8dc, var(--card) 40px); box-shadow: 0 0 0 2px #f2c94c66; }
+  .btn-ouro {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: #f4f4f6;
+    border: 1px solid var(--card-border);
+    font-size: 12px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    filter: grayscale(1);
+    opacity: 0.55;
+  }
+  .btn-ouro.ativo { background: #fff3c4; border-color: #f2c94c; filter: none; opacity: 1; }
+  .btn-ouro.modal-versao { position: static; display: inline-flex; margin-left: 6px; vertical-align: middle; }
   .lead.recem-adicionado { animation: pulso 1.6s ease-in-out 2; }
   @keyframes pulso {
     0%, 100% { box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
@@ -656,9 +677,11 @@ function cardHtml(lead, corBorda) {
   const chipsRepassados = corretoresRepassadosLista(lead);
   const dataEtapa = formatarData(lead.status_alterado_em || lead.distribuido_em);
   const tarefaAtrasada = !!(lead.tarefa_data && new Date(lead.tarefa_data) <= new Date());
-  const classeDestaque = tarefaAtrasada ? 'atrasado' : (duplicado ? 'reaquecer' : '');
+  const classeDestaque = \`\${tarefaAtrasada ? 'atrasado' : (duplicado ? 'reaquecer' : '')} \${lead.cliente_ouro ? 'cliente-ouro' : ''}\`.trim();
+  const botaoOuro = \`<button class="btn-ouro \${lead.cliente_ouro ? 'ativo' : ''}" onclick="event.stopPropagation();alternarClienteOuro('\${lead.id}', \${!lead.cliente_ouro})" title="\${lead.cliente_ouro ? 'Cliente Ouro — clique pra desmarcar' : 'Marcar como Cliente Ouro'}">⭐</button>\`;
   return \`
-    <div class="lead \${classeDestaque}" draggable="true" data-id="\${lead.id}" style="\${classeDestaque ? '' : \`border-left-color:\${corBorda}\`}">
+    <div class="lead \${classeDestaque}" draggable="true" data-id="\${lead.id}" style="\${classeDestaque.includes('atrasado') || classeDestaque.includes('reaquecer') ? '' : \`border-left-color:\${corBorda}\`}">
+      \${botaoOuro}
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:6px;">
         <div class="lead-nome">\${lead.nome || 'Sem nome'}</div>
         \${lead.valor_imovel_sdr ? \`<span style="font-size:10px;font-weight:700;color:#17a34a;white-space:nowrap;">💰 \${lead.valor_imovel_sdr}</span>\` : ''}
@@ -687,7 +710,7 @@ function abrirModalLead(id) {
 
   document.getElementById('modal').innerHTML = \`
     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
-      <h2>\${lead.nome || 'Sem nome'}</h2>
+      <h2>\${lead.nome || 'Sem nome'}<button class="btn-ouro modal-versao \${lead.cliente_ouro ? 'ativo' : ''}" onclick="alternarClienteOuro('\${lead.id}', \${!lead.cliente_ouro})" title="\${lead.cliente_ouro ? 'Cliente Ouro — clique pra desmarcar' : 'Marcar como Cliente Ouro'}">⭐</button></h2>
       <span id="badge-valor-imovel">\${lead.valor_imovel_sdr ? \`<span class="badge" style="background:#eafcea;color:#17a34a;border:1px solid #a8ecca;white-space:nowrap;">💰 \${lead.valor_imovel_sdr}</span>\` : ''}</span>
     </div>
     <div class="lead-meta">\${lead.whatsapp || 'sem WhatsApp'} · chegou em \${data}</div>
@@ -945,6 +968,13 @@ function flashModal() {
   if (!flash) return;
   flash.classList.add('show');
   setTimeout(() => flash.classList.remove('show'), 1200);
+}
+
+function alternarClienteOuro(id, novoValor) {
+  salvarCampo(id, 'cliente_ouro', novoValor, () => {
+    render();
+    if (document.getElementById('overlay').classList.contains('show')) abrirModalLead(id);
+  });
 }
 
 function fecharModal() {
