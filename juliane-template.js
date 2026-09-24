@@ -193,7 +193,7 @@ const JULIANE_HTML = `<!DOCTYPE html>
   .btn-historico {
     position: absolute;
     top: 8px;
-    right: 8px;
+    right: 32px;
     width: 18px;
     height: 18px;
     border-radius: 50%;
@@ -209,6 +209,26 @@ const JULIANE_HTML = `<!DOCTYPE html>
     cursor: pointer;
   }
   .btn-historico:hover { background: #e0e4ee; }
+  .btn-ouro {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: #f4f4f6;
+    border: 1px solid var(--card-border);
+    font-size: 11px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    filter: grayscale(1);
+    opacity: 0.55;
+  }
+  .btn-ouro.ativo { background: #fff3c4; border-color: #f2c94c; filter: none; opacity: 1; }
+  .btn-ouro.modal-versao { position: static; display: inline-flex; margin-left: 6px; vertical-align: middle; }
+  .lead.cliente-ouro { background: linear-gradient(180deg, #fff8dc, var(--card) 40px); box-shadow: 0 0 0 2px #f2c94c66; }
   .btn-historico.modal-versao {
     position: static;
     display: inline-flex;
@@ -833,7 +853,7 @@ function cardHtml(lead, corBorda, mostrarOrigemTriagem, mostrarStatusSdr) {
   const chipsRepassados = corretoresRepassadosLista(lead);
   const dataEtapa = formatarData(lead.status_alterado_em || lead.distribuido_em);
   const tarefaAtrasada = !!(lead.tarefa_data && new Date(lead.tarefa_data) <= new Date());
-  const classeDestaque = tarefaAtrasada ? 'atrasado' : '';
+  const classeDestaque = \`\${tarefaAtrasada ? 'atrasado' : ''} \${lead.cliente_ouro ? 'cliente-ouro' : ''}\`.trim();
 
   // O selo de reaquecido aparece em QUALQUER coluna (não só na triagem) —
   // mas discreto, sem chamar muita atenção — se a SDR reaqueceu esse
@@ -850,10 +870,11 @@ function cardHtml(lead, corBorda, mostrarOrigemTriagem, mostrarStatusSdr) {
   const botaoHistorico = duplicado
     ? \`<button class="btn-historico" onclick="event.stopPropagation();mostrarHistoricoCorretor('\${lead.id}')" title="Ver histórico de corretores">H</button>\`
     : '';
+  const botaoOuro = \`<button class="btn-ouro \${lead.cliente_ouro ? 'ativo' : ''}" onclick="event.stopPropagation();alternarClienteOuro('\${lead.id}', \${!lead.cliente_ouro})" title="\${lead.cliente_ouro ? 'Cliente Ouro — clique pra desmarcar' : 'Marcar como Cliente Ouro'}">⭐</button>\`;
 
   return \`
-    <div class="lead \${classeDestaque}" draggable="true" data-id="\${lead.id}" style="\${classeDestaque ? '' : \`border-left-color:\${corBorda}\`}">
-      \${botaoHistorico}
+    <div class="lead \${classeDestaque}" draggable="true" data-id="\${lead.id}" style="\${classeDestaque.includes('atrasado') ? '' : \`border-left-color:\${corBorda}\`}">
+      \${botaoHistorico}\${botaoOuro}
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:6px;">
         <div class="lead-nome">\${lead.nome || 'Sem nome'}</div>
         \${lead.valor_imovel_sdr ? \`<span style="font-size:10px;font-weight:700;color:#17a34a;white-space:nowrap;">💰 \${lead.valor_imovel_sdr}</span>\` : ''}
@@ -881,7 +902,7 @@ function abrirModalLead(id) {
 
   document.getElementById('modal').innerHTML = \`
     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
-      <h2>\${lead.nome || 'Sem nome'}\${duplicado ? \`<button class="btn-historico modal-versao" onclick="mostrarHistoricoCorretor('\${lead.id}')" title="Ver histórico de corretores">H</button>\` : ''}</h2>
+      <h2>\${lead.nome || 'Sem nome'}\${duplicado ? \`<button class="btn-historico modal-versao" onclick="mostrarHistoricoCorretor('\${lead.id}')" title="Ver histórico de corretores">H</button>\` : ''}<button class="btn-ouro modal-versao \${lead.cliente_ouro ? 'ativo' : ''}" onclick="alternarClienteOuro('\${lead.id}', \${!lead.cliente_ouro})" title="\${lead.cliente_ouro ? 'Cliente Ouro — clique pra desmarcar' : 'Marcar como Cliente Ouro'}">⭐</button></h2>
       <span id="badge-valor-imovel">\${lead.valor_imovel_sdr ? \`<span class="badge" style="background:#eafcea;color:#17a34a;border:1px solid #a8ecca;white-space:nowrap;">💰 \${lead.valor_imovel_sdr}</span>\` : ''}</span>
     </div>
     <div class="lead-meta">\${lead.whatsapp || 'sem WhatsApp'} · chegou em \${data}</div>
@@ -1170,6 +1191,13 @@ function flashModal() {
   if (!flash) return;
   flash.classList.add('show');
   setTimeout(() => flash.classList.remove('show'), 1600);
+}
+
+function alternarClienteOuro(id, novoValor) {
+  salvarCampo(id, 'cliente_ouro', novoValor, () => {
+    render();
+    if (document.getElementById('overlay').classList.contains('show')) abrirModalLead(id);
+  });
 }
 
 function mostrarHistoricoCorretor(id) {
