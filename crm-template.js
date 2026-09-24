@@ -190,7 +190,7 @@ const CRM_HTML = `<!DOCTYPE html>
   .lead.dragging { opacity: 0.4; }
   .lead.reaquecer { border-color: var(--warn-border); background: linear-gradient(180deg, var(--warn-bg), var(--card) 32px); }
   .lead.atrasado { border-color: #e0453f !important; background: linear-gradient(180deg, #fdecec, var(--card) 32px); box-shadow: 0 0 0 2px #e0453f33; }
-  .lead.cliente-ouro { background: linear-gradient(180deg, #fff8dc, var(--card) 40px); box-shadow: 0 0 0 2px #f2c94c66; }
+  .lead.cliente-ouro { border-color: #d4a017 !important; background: linear-gradient(180deg, #ffe58a, var(--card) 90px); box-shadow: 0 0 0 3px #f2c94c; }
   .btn-ouro {
     position: absolute;
     top: 8px;
@@ -214,6 +214,21 @@ const CRM_HTML = `<!DOCTYPE html>
   @keyframes pulso {
     0%, 100% { box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
     50% { box-shadow: 0 0 0 3px var(--warn-border); }
+  }
+  .alerta-atrasadas {
+    background: #e0453f;
+    color: #fff;
+    font-weight: 800;
+    font-size: 14px;
+    text-align: center;
+    padding: 10px 14px;
+    border-radius: 10px;
+    margin-bottom: 12px;
+    animation: piscar-alerta 1.1s ease-in-out infinite;
+  }
+  @keyframes piscar-alerta {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
   }
   .lead-nome { font-size: 13px; font-weight: 700; }
   .lead-meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
@@ -370,6 +385,8 @@ const CRM_HTML = `<!DOCTYPE html>
 <h1>CRM - SDR</h1>
 <div class="sub">Arraste o cartão entre as colunas pra mudar o status. Toque num cartão pra ver detalhes e notas.</div>
 
+<div id="alerta-atrasadas" class="alerta-atrasadas" style="display:none;"></div>
+
 <div class="stats" id="stats"></div>
 
 <div class="toolbar">
@@ -506,6 +523,22 @@ function renderChipsCorretores(lead) {
   }).join('') + \`<button class="chip-add" id="add-corretor-btn" type="button">+</button>\`;
 }
 
+// Faixa vermelha piscando no topo — avisa quando tem tarefa atrasada, sem
+// precisar recarregar os dados (a data já está nos leads carregados).
+function atualizarAlertaAtrasadas() {
+  const el = document.getElementById('alerta-atrasadas');
+  if (!el) return;
+  const agora = new Date();
+  const atrasadas = TODOS_LEADS.filter(l => l.tarefa_data && new Date(l.tarefa_data) <= agora).length;
+  if (atrasadas > 0) {
+    el.style.display = 'block';
+    el.textContent = \`⏰ Você tem \${atrasadas} tarefa\${atrasadas > 1 ? 's' : ''} atrasada\${atrasadas > 1 ? 's' : ''}!\`;
+  } else {
+    el.style.display = 'none';
+  }
+}
+setInterval(atualizarAlertaAtrasadas, 60000);
+
 async function carregar() {
   try {
     const res = await fetch('/api/leads/carteira-sdr', { cache: 'no-store' });
@@ -553,6 +586,8 @@ function render() {
   const reaquecerCount = TODOS_LEADS.filter(temHistoricoDuplicado).length;
 
   const vgvTotal = TODOS_LEADS.reduce((soma, lead) => soma + parseValorImovel(lead.valor_imovel_sdr), 0);
+
+  atualizarAlertaAtrasadas();
 
   document.getElementById('stats').innerHTML = \`
     <div class="stat"><span class="num">\${TODOS_LEADS.length}</span>na carteira</div>
