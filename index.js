@@ -1541,7 +1541,7 @@ app.post('/api/leads/conferir', basicAuthAdminOuSdr, async (req, res) => {
   if (!process.env.DATABASE_URL) {
     return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
   }
-  const { nome, whatsapp } = req.body;
+  const { nome, whatsapp, origem } = req.body;
   const whatsappValido = canonicalizarWhatsapp(whatsapp);
   if (!whatsappValido) {
     return res.status(400).json({ ok: false, erro: 'WhatsApp inválido — confere o DDD e os dígitos.' });
@@ -1558,10 +1558,11 @@ app.post('/api/leads/conferir', basicAuthAdminOuSdr, async (req, res) => {
     ? req.corretorNome
     : ((req.authTipo === 'admin' || req.authTipo === 'juliane') && req.body.corretorAlvo ? String(req.body.corretorAlvo) : null);
   if (nomeCorretorAlvo) {
-    // O corretor escolhe se é lead da imobiliária ou pessoal dele —
-    // qualquer outro caminho (distribuição, planilha, SDR/Juliane) usa o
-    // padrão 'Imobiliária' direto na coluna, sem precisar escolher.
+    // O corretor escolhe se é lead da imobiliária ou pessoal dele, e
+    // também a origem — qualquer outro caminho (distribuição, planilha,
+    // SDR/Juliane) continua automático, sem precisar escolher nada disso.
     const tipoLeadEscolhido = req.body.tipoLead === 'Pessoal' ? 'Pessoal' : 'Imobiliária';
+    const origemEscolhida = (origem && String(origem).trim()) ? String(origem).trim() : null;
     try {
       const existente = await pool.query('SELECT * FROM leads WHERE whatsapp = $1', [whatsappValido]);
       if (existente.rows.length > 0) {
@@ -1570,24 +1571,24 @@ app.post('/api/leads/conferir', basicAuthAdminOuSdr, async (req, res) => {
           return res.status(409).json({ ok: false, erro: `Esse contato já é do corretor ${leadAtual.corretor} — não dá pra adicionar aqui.` });
         }
         const atualizado = await pool.query(
-          `UPDATE leads SET corretor = $1, status_corretor = COALESCE(status_corretor, 'Novo'), status_corretor_alterado_em = now(), tipo_lead = $2 WHERE id = $3 RETURNING *`,
-          [nomeCorretorAlvo, tipoLeadEscolhido, leadAtual.id]
+          `UPDATE leads SET corretor = $1, status_corretor = COALESCE(status_corretor, 'Novo'), status_corretor_alterado_em = now(), tipo_lead = $2, origem = COALESCE(origem, $3) WHERE id = $4 RETURNING *`,
+          [nomeCorretorAlvo, tipoLeadEscolhido, origemEscolhida, leadAtual.id]
         );
         return res.json({ ok: true, encontrado: true, criado: false, lead: atualizado.rows[0] });
       }
       const result = await pool.query(
-        `INSERT INTO leads (whatsapp, nome, corretor, status, status_corretor, status_corretor_alterado_em, distribuido_em, tipo_lead)
-         VALUES ($1, $2, $3, 'Novo', 'Novo', now(), now(), $4)
+        `INSERT INTO leads (whatsapp, nome, corretor, status, status_corretor, status_corretor_alterado_em, distribuido_em, tipo_lead, origem)
+         VALUES ($1, $2, $3, 'Novo', 'Novo', now(), now(), $4, $5)
          RETURNING *`,
-        [whatsappValido, nome.trim(), nomeCorretorAlvo, tipoLeadEscolhido]
+        [whatsappValido, nome.trim(), nomeCorretorAlvo, tipoLeadEscolhido, origemEscolhida]
       );
       return res.json({ ok: true, encontrado: false, criado: true, lead: result.rows[0] });
     } catch (err) {
       if (err.code === '23505') {
         const existente = await pool.query('SELECT * FROM leads WHERE whatsapp = $1', [whatsappValido]);
         const atualizado = await pool.query(
-          `UPDATE leads SET corretor = $1, status_corretor = COALESCE(status_corretor, 'Novo'), status_corretor_alterado_em = now(), tipo_lead = $2 WHERE id = $3 RETURNING *`,
-          [nomeCorretorAlvo, tipoLeadEscolhido, existente.rows[0].id]
+          `UPDATE leads SET corretor = $1, status_corretor = COALESCE(status_corretor, 'Novo'), status_corretor_alterado_em = now(), tipo_lead = $2, origem = COALESCE(origem, $3) WHERE id = $4 RETURNING *`,
+          [nomeCorretorAlvo, tipoLeadEscolhido, origemEscolhida, existente.rows[0].id]
         );
         return res.json({ ok: true, encontrado: true, criado: false, lead: atualizado.rows[0] });
       }
@@ -1599,14 +1600,15 @@ app.post('/api/leads/conferir', basicAuthAdminOuSdr, async (req, res) => {
   // Quem adiciona marca só a própria carteira — SDR marca carteira_sdr,
   // Juliane marca carteira_juliane. Assim, o que a Juliane adiciona não
   // desaparece do quadro dela (que agora esconde tudo que tem carteira_sdr).
-  const origemNovo = req.authTipo === 'juliane' ? 'Juliane' : 'SDR';
+  // A origem agora é escolhida por quem adiciona (não é mais fixa).
+  const origemNovo = (origem && String(origem).trim()) ? String(origem).trim() : (req.authTipo === 'juliane' ? 'Juliane' : 'SDR');
   const colunaCarteira = req.authTipo === 'juliane' ? 'carteira_juliane' : 'carteira_sdr';
   try {
     const existente = await pool.query('SELECT * FROM leads WHERE whatsapp = $1', [whatsappValido]);
     if (existente.rows.length > 0) {
       const atualizado = await pool.query(
-        `UPDATE leads SET ${colunaCarteira} = true, status_alterado_em = now() WHERE id = $1 RETURNING *`,
-        [existente.rows[0].id]
+        `UPDATE leads SET ${colunaCarteira} = true, status_alterado_em = now(), origem = COALESCE(origem, $2) WHERE id = $1 RETURNING *`,
+        [existente.rows[0].id, origemNovo]
       );
       return res.json({ ok: true, encontrado: true, criado: false, lead: atualizado.rows[0] });
     }
@@ -1621,8 +1623,8 @@ app.post('/api/leads/conferir', basicAuthAdminOuSdr, async (req, res) => {
     if (err.code === '23505') {
       const existente = await pool.query('SELECT * FROM leads WHERE whatsapp = $1', [whatsappValido]);
       const atualizado = await pool.query(
-        `UPDATE leads SET ${colunaCarteira} = true, status_alterado_em = now() WHERE id = $1 RETURNING *`,
-        [existente.rows[0].id]
+        `UPDATE leads SET ${colunaCarteira} = true, status_alterado_em = now(), origem = COALESCE(origem, $2) WHERE id = $1 RETURNING *`,
+        [existente.rows[0].id, origemNovo]
       );
       return res.json({ ok: true, encontrado: true, criado: false, lead: atualizado.rows[0] });
     }
@@ -1719,13 +1721,16 @@ app.get('/api/leads/todos-resumo', basicAuthAdminOuSdr, async (req, res) => {
     const result = await pool.query(
       `SELECT id, whatsapp, nome, corretor, origem, imovel_desc, imovel_codigo, status, distribuido_em,
               outros_corretores, notas_sdr, reaquecido_em, tarefa_sdr, corretores_repassados,
-              status_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr, tarefa_data, aprovado, visita, proposta, documentacao, venda, carteira_sdr
+              status_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr, tarefa_data, aprovado, visita, proposta, documentacao, venda, carteira_sdr, carteira_juliane
        FROM leads
        WHERE COALESCE(status, '') NOT IN ('Sem retorno', 'Reaquecendo')
          AND (
+           -- Ela mesma adicionou esse contato pelo CRM dela — fica visível
+           -- pra ela na hora, não importa data nem status.
+           carteira_juliane = true
            -- Foi atribuído manualmente pelo CRM (alguém escolheu o
            -- corretor de propósito) — aparece sempre, não importa a data.
-           status_corretor_alterado_em IS NOT NULL
+           OR status_corretor_alterado_em IS NOT NULL
            OR (
              distribuido_em >= '2026-09-17'
              AND (
