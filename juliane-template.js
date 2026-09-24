@@ -239,21 +239,6 @@ const JULIANE_HTML = `<!DOCTYPE html>
     0%, 100% { box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
     50% { box-shadow: 0 0 0 3px var(--warn-border); }
   }
-  .alerta-atrasadas {
-    background: #e0453f;
-    color: #fff;
-    font-weight: 800;
-    font-size: 14px;
-    text-align: center;
-    padding: 10px 14px;
-    border-radius: 10px;
-    margin-bottom: 12px;
-    animation: piscar-alerta 1.1s ease-in-out infinite;
-  }
-  @keyframes piscar-alerta {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.35; }
-  }
   .lead-nome { font-size: 13px; font-weight: 700; }
   .lead-meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
   .badge {
@@ -467,8 +452,6 @@ const JULIANE_HTML = `<!DOCTYPE html>
 <h1 id="titulo-pagina">CRM - JULIANE</h1>
 <div class="sub" id="subtitulo-pagina">Mostra só quem chegou de 17/09 pra cá. Quem já tem corretor cai direto na coluna dele; sem corretor, só aparece se já foi repassado pela SDR.</div>
 
-<div id="alerta-atrasadas" class="alerta-atrasadas" style="display:none;"></div>
-
 <div class="stats" id="stats"></div>
 
 <div class="toolbar">
@@ -653,29 +636,6 @@ function renderChipsCorretores(lead) {
   }).join('') + \`<button class="chip-add" id="add-corretor-btn" type="button">+</button>\`;
 }
 
-// Faixa vermelha piscando no topo — considera as duas listas juntas
-// (SDR e Juliane), não importa em qual aba ela está olhando agora.
-function atualizarAlertaAtrasadas() {
-  const el = document.getElementById('alerta-atrasadas');
-  if (!el) return;
-  const agora = new Date();
-  const todos = [...LEADS_SDR, ...LEADS_JULIANE];
-  const vistos = new Set();
-  let atrasadas = 0;
-  for (const l of todos) {
-    if (vistos.has(l.id)) continue;
-    vistos.add(l.id);
-    if (l.tarefa_data && new Date(l.tarefa_data) <= agora) atrasadas++;
-  }
-  if (atrasadas > 0) {
-    el.style.display = 'block';
-    el.textContent = \`⏰ Você tem \${atrasadas} tarefa\${atrasadas > 1 ? 's' : ''} atrasada\${atrasadas > 1 ? 's' : ''}!\`;
-  } else {
-    el.style.display = 'none';
-  }
-}
-setInterval(atualizarAlertaAtrasadas, 60000);
-
 async function carregar() {
   try {
     const [resTodos, resSdr] = await Promise.all([
@@ -740,8 +700,6 @@ function render() {
   const reaquecerCount = leadsBase.filter(temHistoricoDuplicado).length;
 
   const vgvTotal = leadsBase.reduce((soma, lead) => soma + parseValorImovel(lead.valor_imovel_sdr), 0);
-
-  atualizarAlertaAtrasadas();
 
   document.getElementById('stats').innerHTML = \`
     <div class="stat"><span class="num">\${leadsBase.length}</span>\${ABA_CRM === 'sdr' ? 'na carteira' : 'no sistema'}</div>
@@ -912,13 +870,13 @@ function cardHtml(lead, corBorda, mostrarOrigemTriagem, mostrarStatusSdr) {
   const botaoHistorico = duplicado
     ? \`<button class="btn-historico" onclick="event.stopPropagation();mostrarHistoricoCorretor('\${lead.id}')" title="Ver histórico de corretores">H</button>\`
     : '';
-  const botaoOuro = \`<button class="btn-ouro \${lead.cliente_ouro ? 'ativo' : ''}" onclick="event.stopPropagation();alternarClienteOuro('\${lead.id}', \${!lead.cliente_ouro})" title="\${lead.cliente_ouro ? 'Cliente Ouro — clique pra desmarcar' : 'Marcar como Cliente Ouro'}">⭐</button>\`;
+  const botaoOuro = \`<button class="btn-ouro modal-versao \${lead.cliente_ouro ? 'ativo' : ''}" onclick="event.stopPropagation();alternarClienteOuro('\${lead.id}', \${!lead.cliente_ouro})" title="\${lead.cliente_ouro ? 'Cliente Ouro — clique pra desmarcar' : 'Marcar como Cliente Ouro'}">⭐</button>\`;
 
   return \`
     <div class="lead \${classeDestaque}" draggable="true" data-id="\${lead.id}" style="\${classeDestaque.includes('atrasado') ? '' : \`border-left-color:\${corBorda}\`}">
-      \${botaoHistorico}\${botaoOuro}
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:6px;">
-        <div class="lead-nome">\${lead.nome || 'Sem nome'}</div>
+      \${botaoHistorico}
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:6px;padding-right:26px;">
+        <div class="lead-nome">\${lead.nome || 'Sem nome'}\${botaoOuro}</div>
         \${lead.valor_imovel_sdr ? \`<span style="font-size:10px;font-weight:700;color:#17a34a;white-space:nowrap;">💰 \${lead.valor_imovel_sdr}</span>\` : ''}
       </div>
       <div class="lead-meta">\${lead.whatsapp || 'sem WhatsApp'}</div>
