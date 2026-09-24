@@ -37,12 +37,15 @@ const EVOLUTION_TOKEN = 'A0929C1CF6C5-4E04-9FFB-3A4B073EE943';
 const JULIANE_LL = '5562992166458';
 const CYDA       = '5562993652226';
 
+// A partir de 23/09/2026: só a Laís recebe leads da distribuição
+// automática (decisão do Bruno). Os outros ficam comentados aqui — é só
+// descomentar quando quiser voltar o rodízio entre eles.
 const CORRETORES = [
   { nome: 'Laís',   fone: '5562992754858' },
-  { nome: 'Nalcio', fone: '5562982077466' },
-  { nome: 'Renata', fone: '5562992670935' },
-  { nome: 'Junior', fone: '5562981625610' },
-  { nome: 'Thayná', fone: '5562991749547' },
+  // { nome: 'Nalcio', fone: '5562982077466' },
+  // { nome: 'Renata', fone: '5562992670935' },
+  // { nome: 'Junior', fone: '5562981625610' },
+  // { nome: 'Thayná', fone: '5562991749547' },
 ];
 
 // Nomes extras que aparecem como opção no dropdown de corretor do dashboard,
@@ -77,7 +80,7 @@ const pool = new Pool({
 const THROTTLE_AVISO_MS = 6 * 60 * 60 * 1000; // 6 horas
 
 // Campos do funil que podem ser editados manualmente pelo dashboard
-const CAMPOS_EDITAVEIS = ['nome', 'origem', 'corretor', 'interesse', 'status', 'aprovado', 'visita', 'proposta', 'venda', 'imovel_desc', 'sem_retorno', 'em_andamento', 'notas_sdr', 'carteira_sdr', 'tarefa_sdr', 'tarefa_data', 'corretores_repassados', 'ultima_atualizacao_sdr', 'valor_imovel_sdr', 'carteira_juliane', 'buscando_sdr', 'documentacao', 'status_corretor'];
+const CAMPOS_EDITAVEIS = ['nome', 'origem', 'corretor', 'interesse', 'status', 'aprovado', 'visita', 'proposta', 'venda', 'imovel_desc', 'sem_retorno', 'em_andamento', 'notas_sdr', 'carteira_sdr', 'tarefa_sdr', 'tarefa_data', 'corretores_repassados', 'ultima_atualizacao_sdr', 'valor_imovel_sdr', 'carteira_juliane', 'buscando_sdr', 'documentacao', 'status_corretor', 'tipo_lead'];
 
 async function initDb() {
   if (!process.env.DATABASE_URL) {
@@ -129,7 +132,8 @@ async function initDb() {
       ADD COLUMN IF NOT EXISTS buscando_sdr TEXT,
       ADD COLUMN IF NOT EXISTS documentacao BOOLEAN DEFAULT false,
       ADD COLUMN IF NOT EXISTS status_corretor TEXT DEFAULT 'Novo',
-      ADD COLUMN IF NOT EXISTS status_corretor_alterado_em TIMESTAMPTZ;
+      ADD COLUMN IF NOT EXISTS status_corretor_alterado_em TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS tipo_lead TEXT DEFAULT 'Imobiliária';
   `);
 
   // ─── Tabela de backups automáticos (dump diário de todos os leads) ─
@@ -579,17 +583,13 @@ function agruparCampanhas(linhas) {
 // ─── ÍNDICE PERSISTENTE ──────────────────────────────────────
 const INDEX_FILE = '/tmp/index.json';
 
-function lerIndice() {
-  try {
-    const data = fs.readFileSync(INDEX_FILE, 'utf8');
-    return JSON.parse(data).index || 0;
-  } catch { return 0; }
+async function lerIndice() {
+  const valor = await lerConfig('indice_rodizio_corretores');
+  return valor ? parseInt(valor, 10) || 0 : 0;
 }
 
-function salvarIndice(index) {
-  try {
-    fs.writeFileSync(INDEX_FILE, JSON.stringify({ index }));
-  } catch (e) { console.error('Erro ao salvar índice:', e); }
+async function salvarIndice(index) {
+  await salvarConfig('indice_rodizio_corretores', String(index));
 }
 
 // ─── BUFFER DE MENSAGENS (agrupamento 10 min) ────────────────
@@ -1051,9 +1051,9 @@ app.post('/lead-canalpro', async (req, res) => {
       return res.status(200).json({ ok: true, msg: 'Aluguel enviado para Cyda' });
     }
 
-    const indexAtual = lerIndice();
-    const corretor = CORRETORES[indexAtual];
-    salvarIndice((indexAtual + 1) % CORRETORES.length);
+    const indexAtual = await lerIndice();
+    const corretor = CORRETORES[indexAtual % CORRETORES.length];
+    await salvarIndice((indexAtual + 1) % CORRETORES.length);
 
     const texto =
       `Segue um lead que veio através do Canal Pro\n\n` +
@@ -1294,7 +1294,7 @@ function basicAuthAdminOuSdr(req, res, next) {
 
 // Campos que o corretor pode editar no próprio Kanban — nada de reatribuir
 // corretor, nem mexer em carteiras, nem em campos administrativos.
-const CAMPOS_EDITAVEIS_CORRETOR = ['status_corretor', 'notas_sdr', 'tarefa_sdr', 'tarefa_data', 'ultima_atualizacao_sdr', 'valor_imovel_sdr', 'buscando_sdr'];
+const CAMPOS_EDITAVEIS_CORRETOR = ['status_corretor', 'notas_sdr', 'tarefa_sdr', 'tarefa_data', 'ultima_atualizacao_sdr', 'valor_imovel_sdr', 'buscando_sdr', 'tipo_lead'];
 
 // Campos que a SDR pode editar pelo CRM — o resto (aprovado, visita, proposta,
 // venda, corretor, origem etc.) continua só pra quem loga como admin.
@@ -1558,6 +1558,10 @@ app.post('/api/leads/conferir', basicAuthAdminOuSdr, async (req, res) => {
     ? req.corretorNome
     : ((req.authTipo === 'admin' || req.authTipo === 'juliane') && req.body.corretorAlvo ? String(req.body.corretorAlvo) : null);
   if (nomeCorretorAlvo) {
+    // O corretor escolhe se é lead da imobiliária ou pessoal dele —
+    // qualquer outro caminho (distribuição, planilha, SDR/Juliane) usa o
+    // padrão 'Imobiliária' direto na coluna, sem precisar escolher.
+    const tipoLeadEscolhido = req.body.tipoLead === 'Pessoal' ? 'Pessoal' : 'Imobiliária';
     try {
       const existente = await pool.query('SELECT * FROM leads WHERE whatsapp = $1', [whatsappValido]);
       if (existente.rows.length > 0) {
@@ -1566,24 +1570,24 @@ app.post('/api/leads/conferir', basicAuthAdminOuSdr, async (req, res) => {
           return res.status(409).json({ ok: false, erro: `Esse contato já é do corretor ${leadAtual.corretor} — não dá pra adicionar aqui.` });
         }
         const atualizado = await pool.query(
-          `UPDATE leads SET corretor = $1, status_corretor = COALESCE(status_corretor, 'Novo'), status_corretor_alterado_em = now() WHERE id = $2 RETURNING *`,
-          [nomeCorretorAlvo, leadAtual.id]
+          `UPDATE leads SET corretor = $1, status_corretor = COALESCE(status_corretor, 'Novo'), status_corretor_alterado_em = now(), tipo_lead = $2 WHERE id = $3 RETURNING *`,
+          [nomeCorretorAlvo, tipoLeadEscolhido, leadAtual.id]
         );
         return res.json({ ok: true, encontrado: true, criado: false, lead: atualizado.rows[0] });
       }
       const result = await pool.query(
-        `INSERT INTO leads (whatsapp, nome, corretor, status, status_corretor, status_corretor_alterado_em, distribuido_em)
-         VALUES ($1, $2, $3, 'Novo', 'Novo', now(), now())
+        `INSERT INTO leads (whatsapp, nome, corretor, status, status_corretor, status_corretor_alterado_em, distribuido_em, tipo_lead)
+         VALUES ($1, $2, $3, 'Novo', 'Novo', now(), now(), $4)
          RETURNING *`,
-        [whatsappValido, nome.trim(), nomeCorretorAlvo]
+        [whatsappValido, nome.trim(), nomeCorretorAlvo, tipoLeadEscolhido]
       );
       return res.json({ ok: true, encontrado: false, criado: true, lead: result.rows[0] });
     } catch (err) {
       if (err.code === '23505') {
         const existente = await pool.query('SELECT * FROM leads WHERE whatsapp = $1', [whatsappValido]);
         const atualizado = await pool.query(
-          `UPDATE leads SET corretor = $1, status_corretor = COALESCE(status_corretor, 'Novo'), status_corretor_alterado_em = now() WHERE id = $2 RETURNING *`,
-          [nomeCorretorAlvo, existente.rows[0].id]
+          `UPDATE leads SET corretor = $1, status_corretor = COALESCE(status_corretor, 'Novo'), status_corretor_alterado_em = now(), tipo_lead = $2 WHERE id = $3 RETURNING *`,
+          [nomeCorretorAlvo, tipoLeadEscolhido, existente.rows[0].id]
         );
         return res.json({ ok: true, encontrado: true, criado: false, lead: atualizado.rows[0] });
       }
@@ -1691,7 +1695,7 @@ app.get('/api/leads/meus', basicAuthAdminOuSdr, async (req, res) => {
       `SELECT id, whatsapp, nome, corretor, origem, imovel_desc, imovel_codigo, distribuido_em,
               notas_sdr, tarefa_sdr, tarefa_data,
               ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr,
-              status_corretor, status_corretor_alterado_em
+              status_corretor, status_corretor_alterado_em, tipo_lead
        FROM leads
        WHERE corretor = $1 AND (status_corretor_alterado_em IS NOT NULL OR carteira_sdr IS NOT TRUE)
        ORDER BY COALESCE(status_corretor_alterado_em, distribuido_em) DESC`,
