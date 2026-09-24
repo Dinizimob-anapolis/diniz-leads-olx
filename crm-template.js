@@ -367,6 +367,9 @@ const CRM_HTML = `<!DOCTYPE html>
 
 <script>
 let TODOS_LEADS = [];
+
+// Opções de canal/origem pra quando alguém adiciona um contato manualmente.
+const ORIGENS = ['OLX/Canal Pro', 'Patrocinado', 'TikTok', 'Instagram', 'Comentário', 'Indicação', 'SDR', 'Outro'];
 let BUSCA = '';
 let LEAD_ARRASTADO = null;
 let ULTIMO_ADICIONADO_ID = null;
@@ -866,6 +869,11 @@ function abrirModalAdicionar() {
     <label>WhatsApp</label>
     <input type="text" id="add-whatsapp" placeholder="Com DDD, ex: 62999998888">
 
+    <label>Origem</label>
+    <select id="add-origem">
+      \${ORIGENS.map(o => \`<option value="\${o}" \${o === 'SDR' ? 'selected' : ''}>\${o}</option>\`).join('')}
+    </select>
+
     <div id="add-aviso"></div>
 
     <div class="modal-actions">
@@ -902,7 +910,7 @@ async function confirmarAdicionar() {
     const res = await fetch('/api/leads/conferir', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ nome, whatsapp }),
+      body: JSON.stringify({ nome, whatsapp, origem: document.getElementById('add-origem').value }),
     });
     const data = await res.json();
 
