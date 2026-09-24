@@ -80,7 +80,7 @@ const pool = new Pool({
 const THROTTLE_AVISO_MS = 6 * 60 * 60 * 1000; // 6 horas
 
 // Campos do funil que podem ser editados manualmente pelo dashboard
-const CAMPOS_EDITAVEIS = ['nome', 'origem', 'corretor', 'interesse', 'status', 'aprovado', 'visita', 'proposta', 'venda', 'imovel_desc', 'sem_retorno', 'em_andamento', 'notas_sdr', 'carteira_sdr', 'tarefa_sdr', 'tarefa_data', 'corretores_repassados', 'ultima_atualizacao_sdr', 'valor_imovel_sdr', 'carteira_juliane', 'buscando_sdr', 'documentacao', 'status_corretor', 'tipo_lead'];
+const CAMPOS_EDITAVEIS = ['nome', 'origem', 'corretor', 'interesse', 'status', 'aprovado', 'visita', 'proposta', 'venda', 'imovel_desc', 'sem_retorno', 'em_andamento', 'notas_sdr', 'carteira_sdr', 'tarefa_sdr', 'tarefa_data', 'corretores_repassados', 'ultima_atualizacao_sdr', 'valor_imovel_sdr', 'carteira_juliane', 'buscando_sdr', 'documentacao', 'status_corretor', 'tipo_lead', 'cliente_ouro'];
 
 async function initDb() {
   if (!process.env.DATABASE_URL) {
@@ -133,7 +133,8 @@ async function initDb() {
       ADD COLUMN IF NOT EXISTS documentacao BOOLEAN DEFAULT false,
       ADD COLUMN IF NOT EXISTS status_corretor TEXT DEFAULT 'Novo',
       ADD COLUMN IF NOT EXISTS status_corretor_alterado_em TIMESTAMPTZ,
-      ADD COLUMN IF NOT EXISTS tipo_lead TEXT DEFAULT 'Imobiliária';
+      ADD COLUMN IF NOT EXISTS tipo_lead TEXT DEFAULT 'Imobiliária',
+      ADD COLUMN IF NOT EXISTS cliente_ouro BOOLEAN DEFAULT false;
   `);
 
   // ─── Tabela de backups automáticos (dump diário de todos os leads) ─
@@ -1294,12 +1295,12 @@ function basicAuthAdminOuSdr(req, res, next) {
 
 // Campos que o corretor pode editar no próprio Kanban — nada de reatribuir
 // corretor, nem mexer em carteiras, nem em campos administrativos.
-const CAMPOS_EDITAVEIS_CORRETOR = ['status_corretor', 'notas_sdr', 'tarefa_sdr', 'tarefa_data', 'ultima_atualizacao_sdr', 'valor_imovel_sdr', 'buscando_sdr', 'tipo_lead'];
+const CAMPOS_EDITAVEIS_CORRETOR = ['status_corretor', 'notas_sdr', 'tarefa_sdr', 'tarefa_data', 'ultima_atualizacao_sdr', 'valor_imovel_sdr', 'buscando_sdr', 'tipo_lead', 'cliente_ouro'];
 
 // Campos que a SDR pode editar pelo CRM — o resto (aprovado, visita, proposta,
 // venda, corretor, origem etc.) continua só pra quem loga como admin.
-const CAMPOS_EDITAVEIS_SDR = ['status', 'notas_sdr', 'carteira_sdr', 'tarefa_sdr', 'tarefa_data', 'corretores_repassados', 'ultima_atualizacao_sdr', 'valor_imovel_sdr', 'buscando_sdr', 'aprovado', 'visita', 'proposta', 'documentacao', 'venda', 'corretor'];
-const CAMPOS_EDITAVEIS_JULIANE = ['status', 'notas_sdr', 'carteira_juliane', 'tarefa_sdr', 'tarefa_data', 'corretores_repassados', 'ultima_atualizacao_sdr', 'valor_imovel_sdr', 'buscando_sdr', 'corretor', 'aprovado', 'visita', 'proposta', 'documentacao', 'venda', 'origem', 'status_corretor'];
+const CAMPOS_EDITAVEIS_SDR = ['status', 'notas_sdr', 'carteira_sdr', 'tarefa_sdr', 'tarefa_data', 'corretores_repassados', 'ultima_atualizacao_sdr', 'valor_imovel_sdr', 'buscando_sdr', 'aprovado', 'visita', 'proposta', 'documentacao', 'venda', 'corretor', 'cliente_ouro'];
+const CAMPOS_EDITAVEIS_JULIANE = ['status', 'notas_sdr', 'carteira_juliane', 'tarefa_sdr', 'tarefa_data', 'corretores_repassados', 'ultima_atualizacao_sdr', 'valor_imovel_sdr', 'buscando_sdr', 'corretor', 'aprovado', 'visita', 'proposta', 'documentacao', 'venda', 'origem', 'status_corretor', 'cliente_ouro'];
 
 // ─── ROTA: API DE LEADS (alimenta o dashboard) ───────────────
 app.get('/api/leads', basicAuthAdminOuSdr, async (req, res) => {
@@ -1645,7 +1646,7 @@ app.get('/api/leads/carteira-sdr', basicAuthAdminOuSdr, async (req, res) => {
     const result = await pool.query(
       `SELECT id, whatsapp, nome, corretor, origem, imovel_desc, imovel_codigo, status, distribuido_em,
               outros_corretores, notas_sdr, reaquecido_em, tarefa_sdr, corretores_repassados,
-              status_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr, tarefa_data, aprovado, visita, proposta, documentacao, venda
+              status_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr, tarefa_data, aprovado, visita, proposta, documentacao, venda, cliente_ouro
        FROM leads
        WHERE carteira_sdr = true OR status = 'Repassado ao corretor'
        ORDER BY COALESCE(status_alterado_em, distribuido_em) DESC`
@@ -1669,7 +1670,7 @@ app.get('/api/leads/carteira-juliane', basicAuthAdminOuSdr, async (req, res) => 
     const result = await pool.query(
       `SELECT id, whatsapp, nome, corretor, origem, status, distribuido_em,
               outros_corretores, notas_sdr, reaquecido_em, tarefa_sdr, corretores_repassados,
-              status_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr, tarefa_data, aprovado, visita, proposta, documentacao, venda
+              status_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr, tarefa_data, aprovado, visita, proposta, documentacao, venda, cliente_ouro
        FROM leads
        WHERE carteira_juliane = true
        ORDER BY COALESCE(status_alterado_em, distribuido_em) DESC`
@@ -1697,7 +1698,7 @@ app.get('/api/leads/meus', basicAuthAdminOuSdr, async (req, res) => {
       `SELECT id, whatsapp, nome, corretor, origem, imovel_desc, imovel_codigo, distribuido_em,
               notas_sdr, tarefa_sdr, tarefa_data,
               ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr,
-              status_corretor, status_corretor_alterado_em, tipo_lead
+              status_corretor, status_corretor_alterado_em, tipo_lead, cliente_ouro
        FROM leads
        WHERE corretor = $1 AND (status_corretor_alterado_em IS NOT NULL OR carteira_sdr IS NOT TRUE)
        ORDER BY COALESCE(status_corretor_alterado_em, distribuido_em) DESC`,
@@ -1721,7 +1722,7 @@ app.get('/api/leads/todos-resumo', basicAuthAdminOuSdr, async (req, res) => {
     const result = await pool.query(
       `SELECT id, whatsapp, nome, corretor, origem, imovel_desc, imovel_codigo, status, distribuido_em,
               outros_corretores, notas_sdr, reaquecido_em, tarefa_sdr, corretores_repassados,
-              status_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr, tarefa_data, aprovado, visita, proposta, documentacao, venda, carteira_sdr, carteira_juliane
+              status_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr, tarefa_data, aprovado, visita, proposta, documentacao, venda, carteira_sdr, carteira_juliane, cliente_ouro
        FROM leads
        WHERE COALESCE(status, '') NOT IN ('Sem retorno', 'Reaquecendo')
          AND (
