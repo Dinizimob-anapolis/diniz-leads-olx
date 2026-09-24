@@ -385,6 +385,9 @@ const CORRETOR_HTML = `<!DOCTYPE html>
 
 <script>
 let TODOS_LEADS = [];
+
+// Opções de canal/origem pra quando o corretor adiciona um contato.
+const ORIGENS = ['OLX/Canal Pro', 'Patrocinado', 'TikTok', 'Instagram', 'Comentário', 'Indicação', 'Outro'];
 let BUSCA = '';
 let LEAD_ARRASTADO = null;
 let ULTIMO_ADICIONADO_ID = null;
@@ -663,6 +666,7 @@ function cardHtml(lead, corBorda) {
       \${dataEtapa ? \`<div class="lead-meta">Nessa etapa desde \${dataEtapa}</div>\` : ''}
       \${lead.origem ? \`<span class="badge origem">\${lead.origem}</span>\` : ''}
       \${badgeImovel(lead)}
+      \${lead.tipo_lead === 'Pessoal' ? \`<span class="badge" style="background:#fff3e0;color:#c96a12;border:1px solid #ffdca8;">👤 Lead pessoal</span>\` : \`<span class="badge" style="background:#e8f0fe;color:#1a56db;border:1px solid #c3d7fb;">🏢 Lead da imobiliária</span>\`}
       \${lead.tarefa_sdr ? \`<div class="tarefa-preview" style="\${tarefaAtrasada ? 'color:#e0453f;' : ''}">\${tarefaAtrasada ? '⏰ ATRASADO — ' : '📌 '}\${lead.tarefa_sdr}\${lead.tarefa_data ? \` (\${new Date(lead.tarefa_data).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })})\` : ''}</div>\` : ''}
       \${lead.ultima_atualizacao_sdr ? \`<div class="tarefa-preview" style="color:var(--muted);font-weight:600;">🗓️ Atualizado até \${formatarData(lead.ultima_atualizacao_sdr)}</div>\` : ''}
       \${lead.notas_sdr ? \`<div class="lead-notas">\${lead.notas_sdr.split('\\n')[0]}</div>\` : ''}
@@ -685,6 +689,12 @@ function abrirModalLead(id) {
     <div class="lead-meta">\${lead.whatsapp || 'sem WhatsApp'} · chegou em \${data}</div>
     \${lead.origem ? \`<span class="badge origem">\${lead.origem}</span>\` : ''}
     \${badgeImovel(lead)}
+
+    <label>Tipo de lead</label>
+    <select id="modal-tipo-lead">
+      <option value="Imobiliária" \${lead.tipo_lead !== 'Pessoal' ? 'selected' : ''}>🏢 Lead da imobiliária</option>
+      <option value="Pessoal" \${lead.tipo_lead === 'Pessoal' ? 'selected' : ''}>👤 Lead pessoal</option>
+    </select>
 
     <label>Status</label>
     <select id="modal-status">
@@ -727,6 +737,9 @@ function abrirModalLead(id) {
 
   document.getElementById('overlay').classList.add('show');
   document.getElementById('modal-fechar').addEventListener('click', fecharModal);
+  document.getElementById('modal-tipo-lead').addEventListener('change', e => {
+    salvarCampo(id, 'tipo_lead', e.target.value, () => { render(); abrirModalLead(id); });
+  });
   document.getElementById('modal-status').addEventListener('change', e => {
     salvarCampo(id, 'status_corretor', e.target.value, () => { render(); abrirModalLead(id); });
   });
@@ -788,6 +801,17 @@ function abrirModalAdicionar() {
     <label>WhatsApp</label>
     <input type="text" id="add-whatsapp" placeholder="Com DDD, ex: 62999998888">
 
+    <label>Tipo de lead</label>
+    <select id="add-tipo-lead">
+      <option value="Imobiliária">🏢 Lead da imobiliária</option>
+      <option value="Pessoal">👤 Lead pessoal (contato meu)</option>
+    </select>
+
+    <label>Origem</label>
+    <select id="add-origem">
+      \${ORIGENS.map(o => \`<option value="\${o}">\${o}</option>\`).join('')}
+    </select>
+
     <div id="add-aviso"></div>
 
     <div class="modal-actions">
@@ -824,7 +848,7 @@ async function confirmarAdicionar() {
     const res = await fetch('/api/leads/conferir', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ nome, whatsapp, corretorAlvo: PARAM_CORRETOR || undefined }),
+      body: JSON.stringify({ nome, whatsapp, corretorAlvo: PARAM_CORRETOR || undefined, tipoLead: document.getElementById('add-tipo-lead').value, origem: document.getElementById('add-origem').value }),
     });
     const data = await res.json();
 
