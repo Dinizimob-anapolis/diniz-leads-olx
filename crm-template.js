@@ -713,12 +713,11 @@ function cardHtml(lead, corBorda) {
   const dataEtapa = formatarData(lead.status_alterado_em || lead.distribuido_em);
   const tarefaAtrasada = !!(lead.tarefa_data && new Date(lead.tarefa_data) <= new Date());
   const classeDestaque = \`\${tarefaAtrasada ? 'atrasado' : (duplicado ? 'reaquecer' : '')} \${lead.cliente_ouro ? 'cliente-ouro' : ''}\`.trim();
-  const botaoOuro = \`<button class="btn-ouro \${lead.cliente_ouro ? 'ativo' : ''}" onclick="event.stopPropagation();alternarClienteOuro('\${lead.id}', \${!lead.cliente_ouro})" title="\${lead.cliente_ouro ? 'Cliente Ouro — clique pra desmarcar' : 'Marcar como Cliente Ouro'}">⭐</button>\`;
+  const botaoOuro = \`<button class="btn-ouro modal-versao \${lead.cliente_ouro ? 'ativo' : ''}" onclick="event.stopPropagation();alternarClienteOuro('\${lead.id}', \${!lead.cliente_ouro})" title="\${lead.cliente_ouro ? 'Cliente Ouro — clique pra desmarcar' : 'Marcar como Cliente Ouro'}">⭐</button>\`;
   return \`
     <div class="lead \${classeDestaque}" draggable="true" data-id="\${lead.id}" style="\${classeDestaque.includes('atrasado') || classeDestaque.includes('reaquecer') ? '' : \`border-left-color:\${corBorda}\`}">
-      \${botaoOuro}
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:6px;">
-        <div class="lead-nome">\${lead.nome || 'Sem nome'}</div>
+        <div class="lead-nome">\${lead.nome || 'Sem nome'}\${botaoOuro}</div>
         \${lead.valor_imovel_sdr ? \`<span style="font-size:10px;font-weight:700;color:#17a34a;white-space:nowrap;">💰 \${lead.valor_imovel_sdr}</span>\` : ''}
       </div>
       <div class="lead-meta">\${lead.whatsapp || 'sem WhatsApp'}</div>
