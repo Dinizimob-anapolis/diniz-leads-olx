@@ -1788,10 +1788,17 @@ app.get('/api/analytics', basicAuthAdminOuSdr, async (req, res) => {
     const { inicio, fim } = req.query;
     const temPeriodo = inicio && fim;
 
-    // Corretor só vê os próprios números — nunca aceita corretor vindo da
-    // URL, só o nome que já veio da autenticação (evita um corretor olhar
-    // o desempenho dos outros trocando o parâmetro na mão).
-    const escopoCorretor = req.authTipo === 'corretor' ? req.corretorNome : null;
+    // Corretor logado (authTipo === 'corretor') só vê os próprios números —
+    // nunca aceita corretor vindo da URL, só o nome que já veio da
+    // autenticação (evita um corretor olhar o desempenho dos outros
+    // trocando o parâmetro na mão). Admin/Juliane podem opcionalmente
+    // filtrar por um corretor específico via ?corretor=Nome — é o que
+    // acontece quando abrem o CRM de alguém pelo atalho (/meu-crm?corretor=...)
+    // e clicam em "Meus números" de lá, que repassa esse mesmo parâmetro.
+    const corretorDaQuery = req.query.corretor ? String(req.query.corretor) : null;
+    const escopoCorretor = req.authTipo === 'corretor'
+      ? req.corretorNome
+      : ((req.authTipo === 'admin' || req.authTipo === 'juliane') ? corretorDaQuery : null);
 
     const condLeads = [];
     const paramsLeads = [];
@@ -3364,9 +3371,16 @@ app.get('/crm', basicAuthAdminOuSdr, (req, res) => {
 // ─── ROTA: ANALYTICS (resultados e desempenho de todos os leads) ─
 app.get('/analytics', basicAuthAdminOuSdr, (req, res) => {
   res.set('Cache-Control', 'no-store');
-  // Corretor vê só os números dele mesmo — muda o título/subtítulo e o link
-  // de "voltar" pro CRM dele. A restrição de dados de verdade acontece no
-  // /api/analytics (aqui é só texto da página).
+  // Corretor logado vê só os próprios números. Admin/Juliane também caem no
+  // modo "de um corretor só" quando vêm com ?corretor=Nome na URL — é o que
+  // acontece ao abrir /meu-crm?corretor=Nome e clicar em "Meus números" de
+  // lá. A restrição de dados de verdade acontece no /api/analytics; aqui é
+  // só o texto da página (título e o link de "voltar").
+  // Escapa antes de jogar no HTML (o nome vem da URL) — só permite letras,
+  // números, espaço e alguns acentos/caracteres comuns em nome próprio.
+  const corretorBruto = req.query.corretor ? String(req.query.corretor) : null;
+  const corretorDaQuery = corretorBruto ? corretorBruto.replace(/[^\p{L}\p{N} .'-]/gu, '').slice(0, 60) : null;
+
   if (req.authTipo === 'corretor') {
     const html = ANALYTICS_HTML
       .split('{{TITULO}}').join('📊 Meus números')
@@ -3375,6 +3389,17 @@ app.get('/analytics', basicAuthAdminOuSdr, (req, res) => {
       .split('{{VOLTAR_TEXTO}}').join('← Voltar pro meu CRM');
     return res.send(html);
   }
+
+  if ((req.authTipo === 'admin' || req.authTipo === 'juliane') && corretorDaQuery) {
+    const voltarHref = '/meu-crm?corretor=' + encodeURIComponent(corretorDaQuery);
+    const html = ANALYTICS_HTML
+      .split('{{TITULO}}').join('📊 Números de ' + corretorDaQuery)
+      .split('{{SUBTITULO}}').join('Resultados e desempenho desse corretor')
+      .split('{{VOLTAR_HREF}}').join(voltarHref)
+      .split('{{VOLTAR_TEXTO}}').join('← Voltar pro CRM de ' + corretorDaQuery);
+    return res.send(html);
+  }
+
   const html = ANALYTICS_HTML
     .split('{{TITULO}}').join('📊 Analytics')
     .split('{{SUBTITULO}}').join('Resultados e desempenho de todos os leads, corretores e canais')
