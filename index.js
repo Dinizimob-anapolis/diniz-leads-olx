@@ -1732,17 +1732,18 @@ app.get('/api/leads/todos-resumo', basicAuthAdminOuSdr, async (req, res) => {
            -- Foi atribuído manualmente pelo CRM (alguém escolheu o
            -- corretor de propósito) — aparece sempre, não importa a data.
            OR status_corretor_alterado_em IS NOT NULL
+           -- A SDR já marcou explicitamente como repassado — aparece sempre,
+           -- não importa se a flag carteira_sdr ainda está true.
+           OR status = 'Repassado ao corretor'
            OR (
              distribuido_em >= '2026-09-17'
-             AND (
-               -- Tem corretor definido: aparece na coluna dele (mesmo que
-               -- o status na SDR já tenha avançado pra outra coisa).
-               (corretor IS NOT NULL AND corretor <> '')
-               -- Sem corretor ainda: só entra se a SDR já tiver marcado
-               -- como "Repassado ao corretor" — nada de etapas anteriores
-               -- (Novo, Reaquecendo, Aguardando retorno).
-               OR status = 'Repassado ao corretor'
-             )
+             -- Tem corretor definido (mesmo que atribuído automaticamente
+             -- na distribuição) E a SDR já soltou o lead da carteira dela —
+             -- ou seja, não está mais em etapa ativa da SDR (Aguardando
+             -- retorno, Aguardando documentação, etc.). Enquanto
+             -- carteira_sdr = true, o lead ainda é dela, não da Juliane.
+             AND (corretor IS NOT NULL AND corretor <> '')
+             AND carteira_sdr IS NOT TRUE
            )
          )
        ORDER BY COALESCE(status_alterado_em, distribuido_em) DESC
