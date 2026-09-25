@@ -1731,7 +1731,10 @@ app.get('/api/leads/todos-resumo', basicAuthAdminOuSdr, async (req, res) => {
            carteira_juliane = true
            -- Foi atribuído manualmente pelo CRM (alguém escolheu o
            -- corretor de propósito) — aparece sempre, não importa a data.
-           OR status_corretor_alterado_em IS NOT NULL
+           -- Só conta se realmente sobrou um corretor: se o campo foi
+           -- carimbado mas o corretor ficou vazio (ex: alguém limpou o
+           -- select), não é mais um "repasse" válido.
+           OR (status_corretor_alterado_em IS NOT NULL AND corretor IS NOT NULL AND corretor <> '')
            -- A SDR já marcou explicitamente como repassado — aparece sempre,
            -- não importa se a flag carteira_sdr ainda está true.
            OR status = 'Repassado ao corretor'
@@ -2185,21 +2188,32 @@ app.patch('/api/leads/:id', basicAuthAdminOuSdr, async (req, res) => {
       // aqui): guarda o corretor anterior no histórico (outros_corretores),
       // libera da carteira da SDR, e marca como "Reaquecido" pro corretor
       // que está recebendo — foi uma escolha da SDR, não distribuição fria.
-      await pool.query(
-        `UPDATE leads
-         SET corretor = $1,
-             outros_corretores = CASE
-               WHEN corretor IS NOT NULL AND corretor <> '' AND corretor <> $1
-                    AND (outros_corretores IS NULL OR position(corretor IN outros_corretores) = 0)
-               THEN COALESCE(outros_corretores || ', ', '') || corretor
-               ELSE outros_corretores
-             END,
-             carteira_sdr = false,
-             status_corretor = 'Reaquecido',
-             status_corretor_alterado_em = now()
-         WHERE id = $2`,
-        [valorFinal, id]
-      );
+      // Limpar o corretor (valor vazio) é diferente de atribuir: não é um
+      // repasse, é "tirar esse lead de circulação por enquanto" — não deve
+      // carimbar status_corretor_alterado_em (senão ele reaparece pra
+      // Juliane sem corretor nenhum) nem mexer em carteira_sdr/histórico.
+      if (valorFinal && valorFinal.trim()) {
+        await pool.query(
+          `UPDATE leads
+           SET corretor = $1,
+               outros_corretores = CASE
+                 WHEN corretor IS NOT NULL AND corretor <> '' AND corretor <> $1
+                      AND (outros_corretores IS NULL OR position(corretor IN outros_corretores) = 0)
+                 THEN COALESCE(outros_corretores || ', ', '') || corretor
+                 ELSE outros_corretores
+               END,
+               carteira_sdr = false,
+               status_corretor = 'Reaquecido',
+               status_corretor_alterado_em = now()
+           WHERE id = $2`,
+          [valorFinal, id]
+        );
+      } else {
+        await pool.query(
+          `UPDATE leads SET corretor = $1 WHERE id = $2`,
+          [valorFinal, id]
+        );
+      }
     } else {
       await pool.query(
         `UPDATE leads SET ${campo} = $1 WHERE id = $2`,
