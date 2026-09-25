@@ -431,7 +431,7 @@ const CORRETOR_HTML = `<!DOCTYPE html>
   <button class="add-contato-btn" id="btn-atualizar" style="background:#fff;color:var(--accent);border:1px solid var(--accent);box-shadow:none;">↻ Atualizar</button>
   <button class="add-contato-btn" id="btn-salvar-backup" style="background:#fff;color:#17a34a;border:1px solid #17a34a;box-shadow:none;">💾 Salvar backup</button>
   <button class="add-contato-btn" id="btn-baixar-csv" style="background:#fff;color:#3b6cf0;border:1px solid #3b6cf0;box-shadow:none;">⬇️ Baixar planilha</button>
-  <button class="add-contato-btn" id="btn-analytics" onclick="window.location.href='/analytics'" style="background:#fff;color:#7c5cff;border:1px solid #7c5cff;box-shadow:none;">📊 Meus números</button>
+  <button class="add-contato-btn" id="btn-analytics" onclick="window.location.href=comParamCorretor('/analytics')" style="background:#fff;color:#7c5cff;border:1px solid #7c5cff;box-shadow:none;">📊 Meus números</button>
 </div>
 
 <div class="board" id="board"></div>
