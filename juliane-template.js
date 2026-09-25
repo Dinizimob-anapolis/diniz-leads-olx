@@ -862,7 +862,7 @@ function cardHtml(lead, corBorda, mostrarOrigemTriagem, mostrarStatusSdr) {
   const seloReaquecido = lead.reaquecido_em
     ? \`<div style="color:#c96a12;font-weight:600;font-size:10.5px;margin-top:5px;">🔥 reaquecido</div>\`
     : '';
-  const seloCanal = (mostrarOrigemTriagem && !lead.reaquecido_em)
+  const seloCanal = (mostrarOrigemTriagem && !lead.reaquecido_em && lead.origem !== 'Juliane')
     ? \`<span class="badge" style="background:#eef0f6;color:var(--muted);border:1px solid var(--card-border);margin-top:6px;">📡 Canal</span>\`
     : '';
   // Histórico de corretores (quem já teve esse lead) fica escondido atrás
@@ -1120,6 +1120,12 @@ function abrirModalAdicionar() {
       \${ORIGENS.map(o => \`<option value="\${o}" \${o === 'Juliane' ? 'selected' : ''}>\${o}</option>\`).join('')}
     </select>
 
+    <label>Destinar direto pra um corretor (opcional)</label>
+    <select id="add-corretor">
+      <option value="">— Fica comigo por enquanto —</option>
+      \${ORDEM_CORRETORES_JULIANE.map(c => \`<option value="\${c}">\${c}</option>\`).join('')}
+    </select>
+
     <div id="add-aviso"></div>
 
     <div class="modal-actions">
@@ -1152,11 +1158,18 @@ async function confirmarAdicionar() {
 
   avisoEl.innerHTML = '<div class="aviso-modal">Conferindo...</div>';
 
+  const corretorEscolhido = document.getElementById('add-corretor').value;
+
   try {
     const res = await fetch('/api/leads/conferir', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ nome, whatsapp, origem: document.getElementById('add-origem').value }),
+      body: JSON.stringify({
+        nome,
+        whatsapp,
+        origem: document.getElementById('add-origem').value,
+        ...(corretorEscolhido ? { corretorAlvo: corretorEscolhido } : {}),
+      }),
     });
     const data = await res.json();
 
