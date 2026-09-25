@@ -1780,9 +1780,6 @@ app.get('/api/leads/todos-resumo', basicAuthAdminOuSdr, async (req, res) => {
 // (distribuido_em / criado_em), não pela última atualização.
 app.get('/api/analytics', basicAuthAdminOuSdr, async (req, res) => {
   res.set('Cache-Control', 'no-store');
-  if (req.authTipo === 'corretor') {
-    return res.status(403).json({ ok: false, erro: 'Sem acesso' });
-  }
   if (!process.env.DATABASE_URL) {
     return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
   }
@@ -1790,14 +1787,37 @@ app.get('/api/analytics', basicAuthAdminOuSdr, async (req, res) => {
   try {
     const { inicio, fim } = req.query;
     const temPeriodo = inicio && fim;
-    const paramsLeads = temPeriodo ? [inicio, fim] : [];
-    const whereLeads = temPeriodo
-      ? `WHERE distribuido_em >= $1::date AND distribuido_em < ($2::date + interval '1 day')`
-      : '';
-    const paramsNaoIdent = temPeriodo ? [inicio, fim] : [];
-    const whereNaoIdent = temPeriodo
-      ? `WHERE criado_em >= $1::date AND criado_em < ($2::date + interval '1 day')`
-      : '';
+
+    // Corretor só vê os próprios números — nunca aceita corretor vindo da
+    // URL, só o nome que já veio da autenticação (evita um corretor olhar
+    // o desempenho dos outros trocando o parâmetro na mão).
+    const escopoCorretor = req.authTipo === 'corretor' ? req.corretorNome : null;
+
+    const condLeads = [];
+    const paramsLeads = [];
+    if (temPeriodo) {
+      paramsLeads.push(inicio, fim);
+      condLeads.push(`distribuido_em >= $${paramsLeads.length - 1}::date`);
+      condLeads.push(`distribuido_em < ($${paramsLeads.length}::date + interval '1 day')`);
+    }
+    if (escopoCorretor) {
+      paramsLeads.push(escopoCorretor);
+      condLeads.push(`corretor = $${paramsLeads.length}`);
+    }
+    const whereLeads = condLeads.length ? `WHERE ${condLeads.join(' AND ')}` : '';
+
+    const condNaoIdent = [];
+    const paramsNaoIdent = [];
+    if (temPeriodo) {
+      paramsNaoIdent.push(inicio, fim);
+      condNaoIdent.push(`criado_em >= $${paramsNaoIdent.length - 1}::date`);
+      condNaoIdent.push(`criado_em < ($${paramsNaoIdent.length}::date + interval '1 day')`);
+    }
+    if (escopoCorretor) {
+      paramsNaoIdent.push(escopoCorretor);
+      condNaoIdent.push(`corretor = $${paramsNaoIdent.length}`);
+    }
+    const whereNaoIdent = condNaoIdent.length ? `WHERE ${condNaoIdent.join(' AND ')}` : '';
 
     const [funilQ, corretorQ, origemQ, statusQ, tendenciaQ, naoIdentQ] = await Promise.all([
       pool.query(`
@@ -3343,11 +3363,24 @@ app.get('/crm', basicAuthAdminOuSdr, (req, res) => {
 
 // ─── ROTA: ANALYTICS (resultados e desempenho de todos os leads) ─
 app.get('/analytics', basicAuthAdminOuSdr, (req, res) => {
-  if (req.authTipo === 'corretor') {
-    return res.status(403).send('Essa página é só pra admin, SDR ou Juliane.');
-  }
   res.set('Cache-Control', 'no-store');
-  res.send(ANALYTICS_HTML);
+  // Corretor vê só os números dele mesmo — muda o título/subtítulo e o link
+  // de "voltar" pro CRM dele. A restrição de dados de verdade acontece no
+  // /api/analytics (aqui é só texto da página).
+  if (req.authTipo === 'corretor') {
+    const html = ANALYTICS_HTML
+      .split('{{TITULO}}').join('📊 Meus números')
+      .split('{{SUBTITULO}}').join('Seus resultados e desempenho')
+      .split('{{VOLTAR_HREF}}').join('/meu-crm')
+      .split('{{VOLTAR_TEXTO}}').join('← Voltar pro meu CRM');
+    return res.send(html);
+  }
+  const html = ANALYTICS_HTML
+    .split('{{TITULO}}').join('📊 Analytics')
+    .split('{{SUBTITULO}}').join('Resultados e desempenho de todos os leads, corretores e canais')
+    .split('{{VOLTAR_HREF}}').join('/crm')
+    .split('{{VOLTAR_TEXTO}}').join('← Voltar pro CRM');
+  res.send(html);
 });
 
 // ─── ROTA: CRM DA JULIANE ─────────────────────────────────────
