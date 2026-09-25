@@ -1604,11 +1604,16 @@ app.post('/api/leads/conferir', basicAuthAdminOuSdr, async (req, res) => {
   // A origem agora é escolhida por quem adiciona (não é mais fixa).
   const origemNovo = (origem && String(origem).trim()) ? String(origem).trim() : (req.authTipo === 'juliane' ? 'Juliane' : 'SDR');
   const colunaCarteira = req.authTipo === 'juliane' ? 'carteira_juliane' : 'carteira_sdr';
+  // Quando a Juliane confere um contato que já existia (ex: já estava sendo
+  // trabalhado pela SDR), ela está assumindo esse atendimento — libera da
+  // carteira ativa da SDR, senão o lead fica marcado pras duas ao mesmo
+  // tempo e aparece nos dois CRMs.
+  const clausulaLiberaSdr = req.authTipo === 'juliane' ? ', carteira_sdr = false' : '';
   try {
     const existente = await pool.query('SELECT * FROM leads WHERE whatsapp = $1', [whatsappValido]);
     if (existente.rows.length > 0) {
       const atualizado = await pool.query(
-        `UPDATE leads SET ${colunaCarteira} = true, status_alterado_em = now(), origem = COALESCE(origem, $2) WHERE id = $1 RETURNING *`,
+        `UPDATE leads SET ${colunaCarteira} = true${clausulaLiberaSdr}, status_alterado_em = now(), origem = COALESCE(origem, $2) WHERE id = $1 RETURNING *`,
         [existente.rows[0].id, origemNovo]
       );
       return res.json({ ok: true, encontrado: true, criado: false, lead: atualizado.rows[0] });
@@ -1624,7 +1629,7 @@ app.post('/api/leads/conferir', basicAuthAdminOuSdr, async (req, res) => {
     if (err.code === '23505') {
       const existente = await pool.query('SELECT * FROM leads WHERE whatsapp = $1', [whatsappValido]);
       const atualizado = await pool.query(
-        `UPDATE leads SET ${colunaCarteira} = true, status_alterado_em = now(), origem = COALESCE(origem, $2) WHERE id = $1 RETURNING *`,
+        `UPDATE leads SET ${colunaCarteira} = true${clausulaLiberaSdr}, status_alterado_em = now(), origem = COALESCE(origem, $2) WHERE id = $1 RETURNING *`,
         [existente.rows[0].id, origemNovo]
       );
       return res.json({ ok: true, encontrado: true, criado: false, lead: atualizado.rows[0] });
@@ -3061,9 +3066,9 @@ app.get('/api/admin/diagnostico-lead/:whatsapp', basicAuth, async (req, res) => 
   try {
     const whatsappBusca = String(req.params.whatsapp).replace(/\D/g, '');
     const result = await pool.query(
-      `SELECT id, nome, whatsapp, corretor, status, status_alterado_em, carteira_sdr,
+      `SELECT id, nome, whatsapp, corretor, status, status_alterado_em, carteira_sdr, carteira_juliane,
               reaquecido_em, status_corretor, status_corretor_alterado_em, outros_corretores,
-              distribuido_em
+              distribuido_em, tarefa_sdr, tarefa_data
        FROM leads
        WHERE whatsapp LIKE $1
        ORDER BY distribuido_em DESC`,
