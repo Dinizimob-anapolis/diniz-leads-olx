@@ -225,6 +225,11 @@ async function carregarDados(inicio, fim) {
   const params = new URLSearchParams();
   if (inicio) params.set('inicio', inicio);
   if (fim) params.set('fim', fim);
+  // Se a página foi aberta como /analytics?corretor=Nome (admin/Juliane
+  // vendo o CRM de um corretor específico), repassa esse filtro pra API —
+  // senão ela ignora e mostra o total geral.
+  const corretorDaPagina = new URLSearchParams(location.search).get('corretor');
+  if (corretorDaPagina) params.set('corretor', corretorDaPagina);
 
   try {
     const res = await fetch('/api/analytics?' + params.toString());
