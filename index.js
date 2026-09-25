@@ -7,6 +7,7 @@ const { DASHBOARD_HTML } = require('./dashboard-template');
 const { CRM_HTML } = require('./crm-template');
 const { JULIANE_HTML } = require('./juliane-template');
 const { CORRETOR_HTML } = require('./corretor-template');
+const { ANALYTICS_HTML } = require('./analytics-template');
 const app = express();
 app.use(express.json());
 
@@ -36,6 +37,15 @@ const EVOLUTION_TOKEN = 'A0929C1CF6C5-4E04-9FFB-3A4B073EE943';
 
 const JULIANE_LL = '5562992166458';
 const CYDA       = '5562993652226';
+
+// Número de supervisão: pra onde vão os avisos de controle (resumo, distribuição,
+// lead identificado, etc). A ideia é apontar pro número NOVO conectado na
+// instância `diniz-leads-olx` (o que vai substituir o 556284277070) — assim
+// Juliane acompanha direto nesse WhatsApp, em vez de receber num número separado.
+// IMPORTANTE: defina NUMERO_SUPERVISAO no Railway com o número novo (formato
+// 55DDDNUMERO, só dígitos) assim que ele estiver conectado. Até lá, cai no
+// número pessoal da Juliane (JULIANE_LL) pra não ficar sem aviso nenhum.
+const NUMERO_SUPERVISAO = process.env.NUMERO_SUPERVISAO || JULIANE_LL;
 
 // A partir de 23/09/2026: só a Laís recebe leads da distribuição
 // automática (decisão do Bruno). Os outros ficam comentados aqui — é só
@@ -624,7 +634,7 @@ async function enviarResumo() {
     delete bufferMensagens[numero];
   }
 
-  await enviarWhatsApp(JULIANE_LL, texto);
+  await enviarWhatsApp(NUMERO_SUPERVISAO, texto);
   console.log('Resumo enviado para Juliane LL');
 }
 
@@ -987,7 +997,7 @@ async function identificarLead(whatsapp, mensagemTexto) {
         `WhatsApp: +${whatsapp}\n` +
         `Corretor: ${lead.corretor}\n` +
         `Imóvel: ${imovel}`;
-      await enviarWhatsApp(JULIANE_LL, texto);
+      await enviarWhatsApp(NUMERO_SUPERVISAO, texto);
       await pool.query('UPDATE leads SET avisado_em = now() WHERE whatsapp = $1', [whatsapp]);
       console.log(`Juliane avisada: ${lead.nome} → ${lead.corretor}`);
     }
@@ -1017,7 +1027,7 @@ async function identificarLead(whatsapp, mensagemTexto) {
       `⚠️ Lead SEM corretor identificado\n` +
       `WhatsApp: +${whatsapp}\n` +
       `Mensagem: "${mensagemTexto}"`;
-    await enviarWhatsApp(JULIANE_LL, texto);
+    await enviarWhatsApp(NUMERO_SUPERVISAO, texto);
     await pool.query('UPDATE leads_nao_identificados SET avisado_em = now() WHERE whatsapp = $1', [whatsapp]);
     console.log(`Juliane avisada: lead sem corretor (${whatsapp})`);
   }
@@ -1074,7 +1084,7 @@ app.post('/lead-canalpro', async (req, res) => {
       `${telefone}\n` +
       `Corretor: ${corretor.nome}`;
 
-    await enviarWhatsApp(JULIANE_LL, textoControle);
+    await enviarWhatsApp(NUMERO_SUPERVISAO, textoControle);
 
     // Registra no funil já com a origem conhecida
     if (process.env.DATABASE_URL) {
@@ -1124,8 +1134,8 @@ app.post('/webhook-mensagens', async (req, res) => {
           // parseDistribuicao (explícita, ou inferida por CRM/código de imóvel). Se não
           // tiver nenhuma evidência, fica sem origem — não força mais 'Patrocinado' aqui.
           await salvarDistribuicao(distribuicao, null);
-          await enviarWhatsApp(JULIANE_LL, `📋 Nova distribuição de lead:\n\n${conteudo}`);
-          console.log(`Distribuição espelhada pra Juliane: ${distribuicao.nome} → ${distribuicao.corretor}`);
+          await enviarWhatsApp(NUMERO_SUPERVISAO, `📋 Nova distribuição de lead:\n\n${conteudo}`);
+          console.log(`Distribuição espelhada: ${distribuicao.nome} → ${distribuicao.corretor}`);
         }
       }
       return res.status(200).json({ ok: true });
@@ -1174,7 +1184,7 @@ app.post('/webhook-mensagens-tiktok', async (req, res) => {
           // Se quiser diferenciar TikTok / Instagram / Comentário manualmente,
           // deixe origem = null aqui e ajuste depois pelo dashboard.
           await salvarDistribuicao(distribuicao, 'TikTok');
-          await enviarWhatsApp(JULIANE_LL, `📋 Nova distribuição de lead (TikTok):\n\n${conteudo}`);
+          await enviarWhatsApp(NUMERO_SUPERVISAO, `📋 Nova distribuição de lead (TikTok):\n\n${conteudo}`);
           console.log(`[TikTok] Distribuição espelhada pra Juliane: ${distribuicao.nome} → ${distribuicao.corretor}`);
         }
       }
@@ -1760,6 +1770,105 @@ app.get('/api/leads/todos-resumo', basicAuthAdminOuSdr, async (req, res) => {
     res.json({ ok: true, leads: result.rows });
   } catch (err) {
     console.error('Erro ao listar todos os leads (resumo):', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
+// ─── ROTA: API DE ANALYTICS (alimenta a página /analytics) ──────
+// Recebe ?inicio=YYYY-MM-DD&fim=YYYY-MM-DD (opcionais — sem eles, considera
+// a base toda). Filtra pela data em que o lead entrou no sistema
+// (distribuido_em / criado_em), não pela última atualização.
+app.get('/api/analytics', basicAuthAdminOuSdr, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (req.authTipo === 'corretor') {
+    return res.status(403).json({ ok: false, erro: 'Sem acesso' });
+  }
+  if (!process.env.DATABASE_URL) {
+    return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  }
+
+  try {
+    const { inicio, fim } = req.query;
+    const temPeriodo = inicio && fim;
+    const paramsLeads = temPeriodo ? [inicio, fim] : [];
+    const whereLeads = temPeriodo
+      ? `WHERE distribuido_em >= $1::date AND distribuido_em < ($2::date + interval '1 day')`
+      : '';
+    const paramsNaoIdent = temPeriodo ? [inicio, fim] : [];
+    const whereNaoIdent = temPeriodo
+      ? `WHERE criado_em >= $1::date AND criado_em < ($2::date + interval '1 day')`
+      : '';
+
+    const [funilQ, corretorQ, origemQ, statusQ, tendenciaQ, naoIdentQ] = await Promise.all([
+      pool.query(`
+        SELECT
+          COUNT(*)::int AS total,
+          COUNT(*) FILTER (WHERE contatou)::int AS contatou,
+          COUNT(*) FILTER (WHERE visita)::int AS visita,
+          COUNT(*) FILTER (WHERE proposta)::int AS proposta,
+          COUNT(*) FILTER (WHERE venda)::int AS venda,
+          COUNT(*) FILTER (WHERE sem_retorno)::int AS sem_retorno,
+          COUNT(*) FILTER (WHERE numero_invalido)::int AS numero_invalido,
+          COUNT(*) FILTER (WHERE cliente_ouro)::int AS cliente_ouro
+        FROM leads ${whereLeads}
+      `, paramsLeads),
+
+      pool.query(`
+        SELECT
+          COALESCE(NULLIF(corretor, ''), 'Sem corretor') AS corretor,
+          COUNT(*)::int AS total,
+          COUNT(*) FILTER (WHERE contatou)::int AS contatou,
+          COUNT(*) FILTER (WHERE venda)::int AS venda,
+          ROUND(
+            AVG(EXTRACT(EPOCH FROM (primeiro_contato_em - distribuido_em)) / 3600.0)
+              FILTER (WHERE primeiro_contato_em IS NOT NULL),
+            1
+          ) AS horas_media_resposta
+        FROM leads ${whereLeads}
+        GROUP BY 1
+        ORDER BY total DESC
+      `, paramsLeads),
+
+      pool.query(`
+        SELECT
+          COALESCE(NULLIF(origem, ''), 'Sem origem') AS origem,
+          COUNT(*)::int AS total,
+          COUNT(*) FILTER (WHERE venda)::int AS venda
+        FROM leads ${whereLeads}
+        GROUP BY 1
+        ORDER BY total DESC
+      `, paramsLeads),
+
+      pool.query(`
+        SELECT COALESCE(NULLIF(status, ''), 'Novo') AS status, COUNT(*)::int AS total
+        FROM leads ${whereLeads}
+        GROUP BY 1
+        ORDER BY total DESC
+      `, paramsLeads),
+
+      pool.query(`
+        SELECT to_char(date_trunc('day', distribuido_em), 'YYYY-MM-DD') AS dia, COUNT(*)::int AS total
+        FROM leads ${whereLeads}
+        GROUP BY 1
+        ORDER BY 1
+      `, paramsLeads),
+
+      pool.query(`
+        SELECT COUNT(*)::int AS total FROM leads_nao_identificados ${whereNaoIdent}
+      `, paramsNaoIdent),
+    ]);
+
+    res.json({
+      ok: true,
+      funil: funilQ.rows[0],
+      corretores: corretorQ.rows,
+      origens: origemQ.rows,
+      status: statusQ.rows,
+      tendencia: tendenciaQ.rows,
+      nao_identificados: naoIdentQ.rows[0].total,
+    });
+  } catch (err) {
+    console.error('Erro ao gerar analytics:', err);
     res.status(500).json({ ok: false, erro: err.message });
   }
 });
@@ -3230,6 +3339,15 @@ app.get('/crm', basicAuthAdminOuSdr, (req, res) => {
   // antiga da página depois de um deploy novo, mesmo recarregando.
   res.set('Cache-Control', 'no-store');
   res.send(CRM_HTML);
+});
+
+// ─── ROTA: ANALYTICS (resultados e desempenho de todos os leads) ─
+app.get('/analytics', basicAuthAdminOuSdr, (req, res) => {
+  if (req.authTipo === 'corretor') {
+    return res.status(403).send('Essa página é só pra admin, SDR ou Juliane.');
+  }
+  res.set('Cache-Control', 'no-store');
+  res.send(ANALYTICS_HTML);
 });
 
 // ─── ROTA: CRM DA JULIANE ─────────────────────────────────────
