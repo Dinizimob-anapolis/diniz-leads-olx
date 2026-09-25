@@ -146,10 +146,10 @@ const ANALYTICS_HTML = `<!DOCTYPE html>
 
 <div class="topo">
   <div>
-    <h1>📊 Analytics</h1>
-    <div class="sub">Resultados e desempenho de todos os leads, corretores e canais</div>
+    <h1>{{TITULO}}</h1>
+    <div class="sub">{{SUBTITULO}}</div>
   </div>
-  <a class="voltar-btn" href="/crm">← Voltar pro CRM</a>
+  <a class="voltar-btn" href="{{VOLTAR_HREF}}">{{VOLTAR_TEXTO}}</a>
 </div>
 
 <div class="filtros" id="filtros">
