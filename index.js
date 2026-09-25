@@ -2234,6 +2234,7 @@ app.patch('/api/leads/:id', basicAuthAdminOuSdr, async (req, res) => {
 
 // ─── ROTA: DASHBOARD ──────────────────────────────────────────
 app.get('/dashboard', basicAuth, (req, res) => {
+  res.set('Cache-Control', 'no-store');
   res.send(DASHBOARD_HTML);
 });
 
@@ -3225,16 +3226,21 @@ app.all('/api/admin/backups/:id/restaurar-carteira-sdr', basicAuth, async (req, 
 // (/api/leads e /api/leads/:id) do dashboard principal, só que com uma
 // visão focada em reaquecimento e histórico de corretores.
 app.get('/crm', basicAuthAdminOuSdr, (req, res) => {
+  // Sem cache — senão o navegador pode continuar mostrando uma versão
+  // antiga da página depois de um deploy novo, mesmo recarregando.
+  res.set('Cache-Control', 'no-store');
   res.send(CRM_HTML);
 });
 
 // ─── ROTA: CRM DA JULIANE ─────────────────────────────────────
 app.get('/crm-juliane', basicAuthAdminOuSdr, (req, res) => {
+  res.set('Cache-Control', 'no-store');
   res.send(JULIANE_HTML);
 });
 
 // ─── ROTA: CRM DO CORRETOR ────────────────────────────────────
 app.get('/meu-crm', basicAuthAdminOuSdr, (req, res) => {
+  res.set('Cache-Control', 'no-store');
   // Admin e Juliane podem "abrir" o CRM de qualquer corretor direto (sem
   // precisar da senha dele), passando ?corretor=Nome na URL — é o atalho
   // que a Juliane usa clicando no cabeçalho da coluna do corretor no
