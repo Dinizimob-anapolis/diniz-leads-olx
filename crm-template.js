@@ -331,6 +331,24 @@ const CRM_HTML = `<!DOCTYPE html>
   }
   .saved-flash { color: var(--ok); font-size: 11px; font-weight: 700; margin-left: 8px; opacity: 0; transition: opacity .3s; }
   .saved-flash.show { opacity: 1; }
+  .flash-salvo-grande {
+    position: fixed;
+    top: 22px;
+    left: 50%;
+    transform: translateX(-50%) translateY(-16px);
+    background: #17a34a;
+    color: #fff;
+    font-weight: 800;
+    font-size: 16px;
+    padding: 14px 28px;
+    border-radius: 12px;
+    box-shadow: 0 10px 28px rgba(23,163,74,0.4);
+    z-index: 200;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease, transform 0.2s ease;
+  }
+  .flash-salvo-grande.show { opacity: 1; transform: translateX(-50%) translateY(0); }
   .aviso-modal {
     font-size: 12px;
     border-radius: 8px;
@@ -529,7 +547,10 @@ function atualizarAlertaAtrasadas() {
   const el = document.getElementById('alerta-atrasadas');
   if (!el) return;
   const agora = new Date();
-  const atrasadas = TODOS_LEADS.filter(l => l.tarefa_data && new Date(l.tarefa_data) <= agora).length;
+  // Só conta tarefa atrasada de lead que ainda é ativamente da SDR — assim
+  // que ela repassa pro corretor (carteira_sdr vira false), a tarefa deixa
+  // de ser problema dela e não precisa mais aparecer nesse alerta.
+  const atrasadas = TODOS_LEADS.filter(l => l.carteira_sdr && l.tarefa_data && new Date(l.tarefa_data) <= agora).length;
   if (atrasadas > 0) {
     el.style.display = 'block';
     el.textContent = \`⏰ Você tem \${atrasadas} tarefa\${atrasadas > 1 ? 's' : ''} atrasada\${atrasadas > 1 ? 's' : ''}!\`;
@@ -770,6 +791,7 @@ function abrirModalLead(id) {
 
     <label>Prazo da tarefa</label>
     <input type="datetime-local" id="modal-tarefa-data" value="\${lead.tarefa_data ? new Date(lead.tarefa_data).toISOString().slice(0, 16) : ''}">
+    \${lead.tarefa_sdr || lead.tarefa_data ? '<button type="button" class="close-btn" id="modal-tarefa-concluida" style="width:100%;margin-top:6px;color:#17a34a;border-color:#a8ecca;">✓ Tarefa concluída</button>' : ''}
 
     <div style="display:flex;gap:8px;">
       <div style="flex:1;">
@@ -806,47 +828,43 @@ function abrirModalLead(id) {
     salvarCampo(id, 'carteira_sdr', false, () => { fecharModal(); carregar(); });
   });
   document.getElementById('modal-status').addEventListener('change', e => {
-    salvarCampo(id, 'status', e.target.value, () => { render(); abrirModalLead(id); });
+    const novoStatus = e.target.value;
+    // Salva primeiro o que estiver digitado (notas, tarefa etc.) antes de
+    // trocar o status — senão o texto digitado e não salvo se perdia.
+    salvarBlocoTexto(id, lead, () => {
+      salvarCampo(id, 'status', novoStatus, () => { render(); abrirModalLead(id); });
+    });
   });
   document.getElementById('modal-corretor').addEventListener('change', e => {
-    salvarCampo(id, 'corretor', e.target.value, () => { render(); abrirModalLead(id); });
+    const novoCorretor = e.target.value;
+    salvarBlocoTexto(id, lead, () => {
+      salvarCampo(id, 'corretor', novoCorretor, () => { render(); abrirModalLead(id); });
+    });
   });
+  const btnTarefaConcluida = document.getElementById('modal-tarefa-concluida');
+  if (btnTarefaConcluida) {
+    btnTarefaConcluida.addEventListener('click', () => {
+      document.getElementById('modal-tarefa').value = '';
+      document.getElementById('modal-tarefa-data').value = '';
+      lead.tarefa_sdr = '';
+      lead.tarefa_data = null;
+      Promise.all([
+        fetch(\`/api/leads/\${id}\`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ campo: 'tarefa_sdr', valor: '' }) }),
+        fetch(\`/api/leads/\${id}\`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ campo: 'tarefa_data', valor: null }) }),
+      ]).then(() => {
+        render();
+        mostrarFlashSalvoGrande();
+        abrirModalLead(id);
+      }).catch(() => {
+        alert('Não consegui salvar. Confere sua internet e tenta de novo.');
+      });
+    });
+  }
   document.getElementById('modal-salvar').addEventListener('click', () => {
-    const notas = document.getElementById('modal-notas').value;
-    const buscando = document.getElementById('modal-buscando').value;
-    const tarefa = document.getElementById('modal-tarefa').value;
-    const tarefaData = document.getElementById('modal-tarefa-data').value;
-    const dataAtualizacao = document.getElementById('modal-ultima-atualizacao').value;
-    const valorDigitado = document.getElementById('modal-valor-imovel').value;
-    const numero = parseValorImovel(valorDigitado);
-    const valorFormatado = numero > 0 ? formatarReais(numero) : '';
-    document.getElementById('modal-valor-imovel').value = valorFormatado;
-
-    lead.notas_sdr = notas;
-    lead.buscando_sdr = buscando;
-    lead.tarefa_sdr = tarefa;
-    lead.tarefa_data = tarefaData ? new Date(tarefaData).toISOString() : null;
-    lead.ultima_atualizacao_sdr = dataAtualizacao;
-    lead.valor_imovel_sdr = valorFormatado;
-
-    Promise.all([
-      fetch(\`/api/leads/\${id}\`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ campo: 'notas_sdr', valor: notas }) }),
-      fetch(\`/api/leads/\${id}\`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ campo: 'buscando_sdr', valor: buscando }) }),
-      fetch(\`/api/leads/\${id}\`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ campo: 'tarefa_sdr', valor: tarefa }) }),
-      fetch(\`/api/leads/\${id}\`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ campo: 'tarefa_data', valor: lead.tarefa_data }) }),
-      fetch(\`/api/leads/\${id}\`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ campo: 'ultima_atualizacao_sdr', valor: dataAtualizacao }) }),
-      fetch(\`/api/leads/\${id}\`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ campo: 'valor_imovel_sdr', valor: valorFormatado }) }),
-    ]).then(() => {
+    salvarBlocoTexto(id, lead, () => {
       render();
-      flashModal();
-      const badgeSpan = document.getElementById('badge-valor-imovel');
-      if (badgeSpan) {
-        badgeSpan.innerHTML = valorFormatado
-          ? \`<span class="badge" style="background:#eafcea;color:#17a34a;border:1px solid #a8ecca;white-space:nowrap;">💰 \${valorFormatado}</span>\`
-          : '';
-      }
-    }).catch(() => {
-      alert('Não consegui salvar. Confere sua internet e tenta de novo.');
+      mostrarFlashSalvoGrande();
+      setTimeout(fecharModal, 650);
     });
   });
 }
@@ -1004,6 +1022,60 @@ function flashModal() {
   setTimeout(() => flash.classList.remove('show'), 1200);
 }
 
+// Popup verde grande no topo da tela, confirmando o salvamento.
+function mostrarFlashSalvoGrande() {
+  let el = document.getElementById('flash-salvo-grande');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'flash-salvo-grande';
+    el.className = 'flash-salvo-grande';
+    el.textContent = '✅ Salvo!';
+    document.body.appendChild(el);
+  }
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 1100);
+}
+
+// Junta tudo que está digitado nos campos de texto do modal (notas, o que
+// buscando, tarefa, prazo, atualização, valor) e salva de uma vez. Usada
+// tanto pelo botão "Salvar" quanto antes de trocar Status/Corretor — assim,
+// se a pessoa digitou algo e mudou a coluna sem clicar em Salvar antes, o
+// que foi digitado não se perde mais.
+function salvarBlocoTexto(id, lead, aoTerminar) {
+  const notasEl = document.getElementById('modal-notas');
+  if (!notasEl) { if (aoTerminar) aoTerminar(); return; }
+  const notas = notasEl.value;
+  const buscando = document.getElementById('modal-buscando').value;
+  const tarefa = document.getElementById('modal-tarefa').value;
+  const tarefaData = document.getElementById('modal-tarefa-data').value;
+  const dataAtualizacao = document.getElementById('modal-ultima-atualizacao').value;
+  const valorDigitado = document.getElementById('modal-valor-imovel').value;
+  const numero = parseValorImovel(valorDigitado);
+  const valorFormatado = numero > 0 ? formatarReais(numero) : '';
+  const campoValorEl = document.getElementById('modal-valor-imovel');
+  if (campoValorEl) campoValorEl.value = valorFormatado;
+
+  lead.notas_sdr = notas;
+  lead.buscando_sdr = buscando;
+  lead.tarefa_sdr = tarefa;
+  lead.tarefa_data = tarefaData ? new Date(tarefaData).toISOString() : null;
+  lead.ultima_atualizacao_sdr = dataAtualizacao;
+  lead.valor_imovel_sdr = valorFormatado;
+
+  Promise.all([
+    fetch(\`/api/leads/\${id}\`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ campo: 'notas_sdr', valor: notas }) }),
+    fetch(\`/api/leads/\${id}\`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ campo: 'buscando_sdr', valor: buscando }) }),
+    fetch(\`/api/leads/\${id}\`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ campo: 'tarefa_sdr', valor: tarefa }) }),
+    fetch(\`/api/leads/\${id}\`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ campo: 'tarefa_data', valor: lead.tarefa_data }) }),
+    fetch(\`/api/leads/\${id}\`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ campo: 'ultima_atualizacao_sdr', valor: dataAtualizacao }) }),
+    fetch(\`/api/leads/\${id}\`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ campo: 'valor_imovel_sdr', valor: valorFormatado }) }),
+  ]).then(() => {
+    if (aoTerminar) aoTerminar(valorFormatado);
+  }).catch(() => {
+    alert('Não consegui salvar. Confere sua internet e tenta de novo.');
+  });
+}
+
 function alternarClienteOuro(id, novoValor) {
   salvarCampo(id, 'cliente_ouro', novoValor, () => {
     render();
@@ -1020,7 +1092,11 @@ document.getElementById('overlay').addEventListener('click', e => {
 });
 
 document.getElementById('btn-adicionar').addEventListener('click', abrirModalAdicionar);
-document.getElementById('btn-atualizar').addEventListener('click', () => carregar());
+// Recarrega a página de verdade (não só a lista de leads) — assim, depois
+// de um deploy novo, clicar aqui já pega a versão mais recente do CRM.
+document.getElementById('btn-atualizar').addEventListener('click', () => {
+  location.reload();
+});
 document.getElementById('btn-baixar-csv').addEventListener('click', exportarCSV);
 document.getElementById('btn-salvar-backup').addEventListener('click', () => {
   const btn = document.getElementById('btn-salvar-backup');
