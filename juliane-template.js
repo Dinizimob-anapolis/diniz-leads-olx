@@ -1230,18 +1230,49 @@ function salvarBlocoTexto(id, lead, aoTerminar) {
   lead.ultima_atualizacao_sdr = dataAtualizacao;
   lead.valor_imovel_sdr = valorFormatado;
 
-  Promise.all([
-    fetch(\`/api/leads/\${id}\`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ campo: 'notas_sdr', valor: notas }) }),
-    fetch(\`/api/leads/\${id}\`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ campo: 'buscando_sdr', valor: buscando }) }),
-    fetch(\`/api/leads/\${id}\`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ campo: 'tarefa_sdr', valor: tarefa }) }),
-    fetch(\`/api/leads/\${id}\`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ campo: 'tarefa_data', valor: lead.tarefa_data }) }),
-    fetch(\`/api/leads/\${id}\`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ campo: 'ultima_atualizacao_sdr', valor: dataAtualizacao }) }),
-    fetch(\`/api/leads/\${id}\`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ campo: 'valor_imovel_sdr', valor: valorFormatado }) }),
-  ]).then(() => {
+  const campos = [
+    ['notas_sdr', notas],
+    ['buscando_sdr', buscando],
+    ['tarefa_sdr', tarefa],
+    ['tarefa_data', lead.tarefa_data],
+    ['ultima_atualizacao_sdr', dataAtualizacao],
+    ['valor_imovel_sdr', valorFormatado],
+  ];
+
+  salvarCamposComRetry(id, campos).then(() => {
     if (aoTerminar) aoTerminar(valorFormatado);
   }).catch(() => {
-    alert('Não consegui salvar. Confere sua internet e tenta de novo.');
+    alert('⚠️ Não consegui confirmar que salvou (rede instável). NÃO troque de status/coluna agora — tenta de novo até aparecer "Salvo ✓".');
   });
+}
+
+// Salva um campo com até 3 tentativas (rede de tablet/celular costuma cair um
+// pouquinho) — só considera sucesso se o servidor realmente confirmar ok:true,
+// nunca assume que salvou só porque o fetch não deu erro de rede.
+async function salvarUmCampoComRetry(id, campo, valor, tentativas = 3) {
+  for (let i = 0; i < tentativas; i++) {
+    try {
+      const res = await fetch(\`/api/leads/\${id}\`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ campo, valor }),
+      });
+      const data = await res.json().catch(() => null);
+      if (res.ok && data && data.ok) return true;
+    } catch (err) {
+      // rede caiu no meio — tenta de novo
+    }
+    if (i < tentativas - 1) await new Promise(r => setTimeout(r, 1000));
+  }
+  return false;
+}
+
+// Roda todos os campos em paralelo (cada um com seu próprio retry) e só
+// resolve com sucesso se TODOS confirmaram — senão rejeita, e quem chamou
+// sabe que não pode seguir em frente (ex: trocar o status).
+async function salvarCamposComRetry(id, campos) {
+  const resultados = await Promise.all(campos.map(([campo, valor]) => salvarUmCampoComRetry(id, campo, valor)));
+  if (resultados.some(ok => !ok)) throw new Error('Falha ao salvar um ou mais campos');
 }
 
 function alternarClienteOuro(id, novoValor) {
