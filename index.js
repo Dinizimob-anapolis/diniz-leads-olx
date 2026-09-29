@@ -3400,6 +3400,17 @@ app.get('/analytics', basicAuthAdminOuSdr, (req, res) => {
     return res.send(html);
   }
 
+  // Login da Juliane (sem ?corretor=, ou seja, ela pediu o analytics geral
+  // mesmo) — volta pro CRM dela, não pro CRM da SDR.
+  if (req.authTipo === 'juliane') {
+    const html = ANALYTICS_HTML
+      .split('{{TITULO}}').join('📊 Analytics')
+      .split('{{SUBTITULO}}').join('Resultados e desempenho de todos os leads, corretores e canais')
+      .split('{{VOLTAR_HREF}}').join('/crm-juliane')
+      .split('{{VOLTAR_TEXTO}}').join('← Voltar pro CRM da Juliane');
+    return res.send(html);
+  }
+
   const html = ANALYTICS_HTML
     .split('{{TITULO}}').join('📊 Analytics')
     .split('{{SUBTITULO}}').join('Resultados e desempenho de todos os leads, corretores e canais')
