@@ -1906,6 +1906,7 @@ app.get('/api/analytics', basicAuthAdminOuSdr, async (req, res) => {
           COALESCE(NULLIF(corretor, ''), 'Sem corretor') AS corretor,
           COUNT(*)::int AS total,
           COUNT(*) FILTER (WHERE ${COND_CONTATOU})::int AS contatou,
+          COUNT(*) FILTER (WHERE ${COND_VISITA})::int AS visita,
           COUNT(*) FILTER (WHERE ${COND_VENDA})::int AS venda,
           ROUND(
             AVG(EXTRACT(EPOCH FROM (primeiro_contato_em - distribuido_em)) / 3600.0)
