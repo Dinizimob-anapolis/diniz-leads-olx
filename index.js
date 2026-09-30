@@ -63,6 +63,24 @@ const CORRETORES = [
 // — pra isso precisaria do telefone de cada um, cadastrado em CORRETORES acima.
 const CORRETORES_EXTRA_DASHBOARD = ['Amanda', 'Juliane', 'Bruno', 'Patricia', 'Michelle', 'Cyda'];
 
+// Critério de quem aparece no board da Juliane (/crm-juliane via
+// /api/leads/todos-resumo). Extraído como constante pra não duplicar essa
+// lógica: o /api/analytics usa exatamente o mesmo critério quando ela olha
+// o Analytics geral, senão os números dela nunca batem com o board dela.
+const COND_BOARD_JULIANE = `
+  COALESCE(status, '') NOT IN ('Sem retorno', 'Reaquecendo')
+  AND (
+    carteira_juliane = true
+    OR (status_corretor_alterado_em IS NOT NULL AND corretor IS NOT NULL AND corretor <> '')
+    OR status = 'Repassado ao corretor'
+    OR (
+      distribuido_em >= '2026-09-17'
+      AND (corretor IS NOT NULL AND corretor <> '')
+      AND carteira_sdr IS NOT TRUE
+    )
+  )
+`;
+
 // Unifica variações do mesmo nome (com/sem acento, maiúscula/minúscula) —
 // ex: "Lais" e "Laís" contam como a mesma pessoa. Sempre devolve a grafia
 // oficial (a que está em CORRETORES/CORRETORES_EXTRA_DASHBOARD); nomes que
@@ -1739,31 +1757,7 @@ app.get('/api/leads/todos-resumo', basicAuthAdminOuSdr, async (req, res) => {
               outros_corretores, notas_sdr, reaquecido_em, tarefa_sdr, corretores_repassados,
               status_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr, tarefa_data, aprovado, visita, proposta, documentacao, venda, carteira_sdr, carteira_juliane, cliente_ouro
        FROM leads
-       WHERE COALESCE(status, '') NOT IN ('Sem retorno', 'Reaquecendo')
-         AND (
-           -- Ela mesma adicionou esse contato pelo CRM dela — fica visível
-           -- pra ela na hora, não importa data nem status.
-           carteira_juliane = true
-           -- Foi atribuído manualmente pelo CRM (alguém escolheu o
-           -- corretor de propósito) — aparece sempre, não importa a data.
-           -- Só conta se realmente sobrou um corretor: se o campo foi
-           -- carimbado mas o corretor ficou vazio (ex: alguém limpou o
-           -- select), não é mais um "repasse" válido.
-           OR (status_corretor_alterado_em IS NOT NULL AND corretor IS NOT NULL AND corretor <> '')
-           -- A SDR já marcou explicitamente como repassado — aparece sempre,
-           -- não importa se a flag carteira_sdr ainda está true.
-           OR status = 'Repassado ao corretor'
-           OR (
-             distribuido_em >= '2026-09-17'
-             -- Tem corretor definido (mesmo que atribuído automaticamente
-             -- na distribuição) E a SDR já soltou o lead da carteira dela —
-             -- ou seja, não está mais em etapa ativa da SDR (Aguardando
-             -- retorno, Aguardando documentação, etc.). Enquanto
-             -- carteira_sdr = true, o lead ainda é dela, não da Juliane.
-             AND (corretor IS NOT NULL AND corretor <> '')
-             AND carteira_sdr IS NOT TRUE
-           )
-         )
+       WHERE ${COND_BOARD_JULIANE}
        ORDER BY COALESCE(status_alterado_em, distribuido_em) DESC
        LIMIT 2000`
     );
@@ -1802,13 +1796,17 @@ app.get('/api/analytics', basicAuthAdminOuSdr, async (req, res) => {
 
     // Pra bater exatamente com o que aparece nos boards (e não com a base
     // histórica inteira), aplica o MESMO critério de cada tela:
-    // - Geral (admin/SDR/Juliane sem corretor específico): mesmo filtro do
+    // - Geral, visto pela Juliane (?origem=juliane, o botão do crm-juliane
+    //   manda isso): mesmo filtro do board dela (COND_BOARD_JULIANE),
+    //   senão os números nunca batem com o que ela vê no /crm-juliane.
+    // - Geral, visto por admin/SDR (sem origem=juliane): mesmo filtro do
     //   board "CRM de todos" — carteira_sdr = true OU status = 'Repassado
     //   ao corretor' (/api/leads/carteira-sdr).
     // - Corretor específico (login de corretor, ou admin/Juliane vendo
     //   ?corretor=Nome): mesmo filtro do board "meu-crm"
     //   (/api/leads/meus) — leads desse corretor que já saíram da carteira
     //   da SDR ou já tiveram status_corretor alterado.
+    const vistoPelaJuliane = req.query.origem === 'juliane';
     const condLeads = [];
     const paramsLeads = [];
     if (temPeriodo) {
@@ -1820,6 +1818,8 @@ app.get('/api/analytics', basicAuthAdminOuSdr, async (req, res) => {
       paramsLeads.push(escopoCorretor);
       condLeads.push(`corretor = $${paramsLeads.length}`);
       condLeads.push(`(status_corretor_alterado_em IS NOT NULL OR carteira_sdr IS NOT TRUE)`);
+    } else if (vistoPelaJuliane) {
+      condLeads.push(`(${COND_BOARD_JULIANE})`);
     } else {
       condLeads.push(`(carteira_sdr = true OR status = 'Repassado ao corretor')`);
     }
