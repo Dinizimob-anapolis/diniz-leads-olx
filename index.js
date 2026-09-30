@@ -356,6 +356,23 @@ async function initDb() {
   } catch (err) {
     console.error('Erro no backfill de etapas da venda:', err);
   }
+
+  // ─── Limpeza pontual: "Rubens" nunca foi corretor de verdade (nem tá nas
+  // listas CORRETORES/CORRETORES_EXTRA_DASHBOARD) — apareceu só por engano
+  // em algum lead. Tira ele do campo corretor (o lead volta a ficar sem
+  // corretor, pra Juliane organizar). Roda uma vez só.
+  try {
+    const jaLimpouRubens = await lerConfig('limpeza_corretor_rubens_aplicada');
+    if (!jaLimpouRubens) {
+      const limpos = await pool.query(`UPDATE leads SET corretor = NULL WHERE corretor = 'Rubens' RETURNING id`);
+      if (limpos.rowCount > 0) {
+        console.log(`✅ Removido corretor "Rubens" (indevido) de ${limpos.rowCount} lead(s) — voltaram a ficar sem corretor.`);
+      }
+      await salvarConfig('limpeza_corretor_rubens_aplicada', 'true');
+    }
+  } catch (err) {
+    console.error('Erro ao limpar corretor "Rubens":', err);
+  }
 }
 
 // ─── IMPORTAÇÃO EM LOTE (reutilizada pelo upload manual e pela sincronização com Google Sheets) ─
@@ -1869,20 +1886,18 @@ app.get('/api/analytics', basicAuthAdminOuSdr, async (req, res) => {
     }
     const whereNaoIdent = condNaoIdent.length ? `WHERE ${condNaoIdent.join(' AND ')}` : '';
 
-    // Fonte única: a coluna que o corretor colocou (status_corretor) já
-    // atualiza contatou/documentacao/aprovado/visita/proposta/venda/
-    // sem_retorno sozinha a cada mudança (ver PATCH /api/leads/:id) e foi
-    // sincronizada com o histórico no início (backfill em initDb) — então o
-    // Analytics só lê esses campos direto, sem misturar com nada.
+    // Aprovado/Visita/Em negociação/Venda contam só quem está NA coluna
+    // certa agora — igual o "Em negociação" — e só depois de 12h parado lá,
+    // pra um arrasta-e-solta sem querer (que volta pro lugar em seguida)
+    // não contar como se fosse de verdade. contatou/sem_retorno continuam
+    // pelo campo direto (não são etapa de coluna que se arrasta por engano).
+    const DWELL = `status_corretor_alterado_em <= now() - interval '12 hours'`;
     const COND_CONTATOU = `contatou`;
-    const COND_APROVADO = `aprovado`;
-    const COND_VISITA = `visita`;
-    // "Em negociação" é a única métrica que não usa o campo (marco
-    // alcançado) — é pra mostrar só quem está NA coluna "Em negociação"
-    // agora, não quem já passou por ela.
-    const COND_EM_NEGOCIACAO = `status_corretor = 'Em negociação'`;
+    const COND_APROVADO = `(status_corretor = 'Aprovado' AND ${DWELL})`;
+    const COND_VISITA = `(status_corretor = 'Visita' AND ${DWELL})`;
+    const COND_EM_NEGOCIACAO = `(status_corretor = 'Em negociação' AND ${DWELL})`;
     const COND_PROPOSTA = `proposta`;
-    const COND_VENDA = `venda`;
+    const COND_VENDA = `(status_corretor = 'Venda' AND ${DWELL})`;
     const COND_SEM_RETORNO = `sem_retorno`;
 
     const [funilQ, corretorQ, origemQ, statusQ, tendenciaQ, naoIdentQ] = await Promise.all([
