@@ -1838,15 +1838,26 @@ app.get('/api/analytics', basicAuthAdminOuSdr, async (req, res) => {
     }
     const whereNaoIdent = condNaoIdent.length ? `WHERE ${condNaoIdent.join(' AND ')}` : '';
 
+    // O corretor não tem campo pra marcar visita/proposta/venda/contatou no
+    // board dele (só a coluna status_corretor) — só a SDR/Juliane marcam
+    // esses booleanos manualmente. Sem isso, um lead que a Laís arrastou até
+    // "Venda" no board dela contava 0 aqui. Por isso cada métrica considera
+    // o booleano manual OU a etapa correspondente em status_corretor.
+    const COND_CONTATOU = `(contatou OR (status_corretor IS NOT NULL AND status_corretor <> 'Novo'))`;
+    const COND_VISITA = `(visita OR status_corretor IN ('Visita', 'Em negociação', 'Venda'))`;
+    const COND_PROPOSTA = `(proposta OR status_corretor IN ('Em negociação', 'Venda'))`;
+    const COND_VENDA = `(venda OR status_corretor = 'Venda')`;
+    const COND_SEM_RETORNO = `(sem_retorno OR status_corretor = 'Sem retorno')`;
+
     const [funilQ, corretorQ, origemQ, statusQ, tendenciaQ, naoIdentQ] = await Promise.all([
       pool.query(`
         SELECT
           COUNT(*)::int AS total,
-          COUNT(*) FILTER (WHERE contatou)::int AS contatou,
-          COUNT(*) FILTER (WHERE visita)::int AS visita,
-          COUNT(*) FILTER (WHERE proposta)::int AS proposta,
-          COUNT(*) FILTER (WHERE venda)::int AS venda,
-          COUNT(*) FILTER (WHERE sem_retorno)::int AS sem_retorno,
+          COUNT(*) FILTER (WHERE ${COND_CONTATOU})::int AS contatou,
+          COUNT(*) FILTER (WHERE ${COND_VISITA})::int AS visita,
+          COUNT(*) FILTER (WHERE ${COND_PROPOSTA})::int AS proposta,
+          COUNT(*) FILTER (WHERE ${COND_VENDA})::int AS venda,
+          COUNT(*) FILTER (WHERE ${COND_SEM_RETORNO})::int AS sem_retorno,
           COUNT(*) FILTER (WHERE numero_invalido)::int AS numero_invalido,
           COUNT(*) FILTER (WHERE cliente_ouro)::int AS cliente_ouro
         FROM leads ${whereLeads}
@@ -1856,8 +1867,8 @@ app.get('/api/analytics', basicAuthAdminOuSdr, async (req, res) => {
         SELECT
           COALESCE(NULLIF(corretor, ''), 'Sem corretor') AS corretor,
           COUNT(*)::int AS total,
-          COUNT(*) FILTER (WHERE contatou)::int AS contatou,
-          COUNT(*) FILTER (WHERE venda)::int AS venda,
+          COUNT(*) FILTER (WHERE ${COND_CONTATOU})::int AS contatou,
+          COUNT(*) FILTER (WHERE ${COND_VENDA})::int AS venda,
           ROUND(
             AVG(EXTRACT(EPOCH FROM (primeiro_contato_em - distribuido_em)) / 3600.0)
               FILTER (WHERE primeiro_contato_em IS NOT NULL),
@@ -2331,9 +2342,47 @@ app.patch('/api/leads/:id', basicAuthAdminOuSdr, async (req, res) => {
         );
       }
     } else if (campo === 'status_corretor') {
+      // Mantém em sincronia com a "Etapa da venda" que a Juliane vê no card
+      // (Aprovado / Visita / Documentação / Proposta / Venda) e com
+      // contatou/sem_retorno — o corretor só mexe na coluna dele
+      // (status_corretor), então sem isso esses campos ficavam sempre
+      // falsos mesmo com o lead já avançado no board dele. Usa a ordem das
+      // colunas do corretor pra saber até onde o lead já chegou (cada etapa
+      // continua marcada nas seguintes, tipo um funil):
+      //   Aguardando documentação(2) < Aguardando aprovação(3) < Aprovado(4)
+      //   < Visita(5) < Em negociação/Proposta(6) < Venda(7)
+      // "Aprovado"/"Documentação"/"Visita"/"Proposta"/"Venda" são marco
+      // alcançado (não desmarca sozinho se o corretor arrastar pra trás por
+      // engano); sem_retorno reflete a coluna atual (some se ele sair dali).
+      const RANK_STATUS_CORRETOR = {
+        'Aguardando documentação': 2,
+        'Aguardando aprovação': 3,
+        'Aprovado': 4,
+        'Visita': 5,
+        'Em negociação': 6,
+        'Venda': 7,
+      };
+      const rank = RANK_STATUS_CORRETOR[valorFinal] || 0;
+      const contatouFlag = valorFinal !== 'Novo';
+      const documentacaoFlag = rank >= 2;
+      const aprovadoFlag = rank >= 4;
+      const visitaFlag = rank >= 5;
+      const propostaFlag = rank >= 6;
+      const vendaFlag = rank >= 7;
+      const semRetornoFlag = valorFinal === 'Sem retorno';
       await pool.query(
-        `UPDATE leads SET status_corretor = $1, status_corretor_alterado_em = now() WHERE id = $2`,
-        [valorFinal, id]
+        `UPDATE leads
+         SET status_corretor = $1,
+             status_corretor_alterado_em = now(),
+             contatou = contatou OR $3,
+             documentacao = documentacao OR $4,
+             aprovado = aprovado OR $5,
+             visita = visita OR $6,
+             proposta = proposta OR $7,
+             venda = venda OR $8,
+             sem_retorno = $9
+         WHERE id = $2`,
+        [valorFinal, id, contatouFlag, documentacaoFlag, aprovadoFlag, visitaFlag, propostaFlag, vendaFlag, semRetornoFlag]
       );
     } else if (campo === 'corretor') {
       // Ao atribuir/trocar o corretor manualmente (essa rota só é usada
@@ -3395,7 +3444,7 @@ app.get('/analytics', basicAuthAdminOuSdr, (req, res) => {
 
   if (req.authTipo === 'corretor') {
     const html = ANALYTICS_HTML
-      .split('{{TITULO}}').join('📊 Meus números')
+      .split('{{TITULO}}').join('📊 Analytics ' + req.corretorNome)
       .split('{{SUBTITULO}}').join('Seus resultados e desempenho')
       .split('{{VOLTAR_HREF}}').join('/meu-crm')
       .split('{{VOLTAR_TEXTO}}').join('← Voltar pro meu CRM');
@@ -3405,7 +3454,7 @@ app.get('/analytics', basicAuthAdminOuSdr, (req, res) => {
   if ((req.authTipo === 'admin' || req.authTipo === 'juliane') && corretorDaQuery) {
     const voltarHref = '/meu-crm?corretor=' + encodeURIComponent(corretorDaQuery);
     const html = ANALYTICS_HTML
-      .split('{{TITULO}}').join('📊 Números de ' + corretorDaQuery)
+      .split('{{TITULO}}').join('📊 Analytics ' + corretorDaQuery)
       .split('{{SUBTITULO}}').join('Resultados e desempenho desse corretor')
       .split('{{VOLTAR_HREF}}').join(voltarHref)
       .split('{{VOLTAR_TEXTO}}').join('← Voltar pro CRM de ' + corretorDaQuery);
