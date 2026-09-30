@@ -1055,17 +1055,12 @@ async function identificarLead(whatsapp, mensagemTexto) {
       [whatsapp]
     );
 
+    // Aviso de "lead identificado" pro número de supervisão foi desligado —
+    // Bruno só quer o aviso de distribuição da OLX/Canal Pro por lá (ver
+    // /lead-canalpro). Continua marcando avisado_em pra não perder o
+    // histórico/throttle, só não manda mensagem nenhuma.
     if (precisaAvisar(lead.avisado_em)) {
-      const imovel = [lead.imovel_codigo, lead.imovel_desc].filter(Boolean).join(' - ') || 'não informado';
-      const texto =
-        `✅ Lead identificado\n` +
-        `Nome: ${lead.nome}\n` +
-        `WhatsApp: +${whatsapp}\n` +
-        `Corretor: ${lead.corretor}\n` +
-        `Imóvel: ${imovel}`;
-      await enviarWhatsApp(NUMERO_SUPERVISAO, texto);
       await pool.query('UPDATE leads SET avisado_em = now() WHERE whatsapp = $1', [whatsapp]);
-      console.log(`Juliane avisada: ${lead.nome} → ${lead.corretor}`);
     }
     return;
   }
@@ -1088,14 +1083,10 @@ async function identificarLead(whatsapp, mensagemTexto) {
     );
   }
 
+  // Idem: aviso de "lead sem corretor" desligado do número de supervisão —
+  // só o aviso de distribuição da OLX/Canal Pro continua indo pra lá.
   if (precisaAvisar(existente?.avisado_em)) {
-    const texto =
-      `⚠️ Lead SEM corretor identificado\n` +
-      `WhatsApp: +${whatsapp}\n` +
-      `Mensagem: "${mensagemTexto}"`;
-    await enviarWhatsApp(NUMERO_SUPERVISAO, texto);
     await pool.query('UPDATE leads_nao_identificados SET avisado_em = now() WHERE whatsapp = $1', [whatsapp]);
-    console.log(`Juliane avisada: lead sem corretor (${whatsapp})`);
   }
 }
 
@@ -1199,16 +1190,22 @@ app.post('/webhook-mensagens', async (req, res) => {
           // Distribuição feita pelo WhatsApp da Juliane. A origem já vem de dentro de
           // parseDistribuicao (explícita, ou inferida por CRM/código de imóvel). Se não
           // tiver nenhuma evidência, fica sem origem — não força mais 'Patrocinado' aqui.
+          // OBS: não manda mais o espelho "📋 Nova distribuição de lead" pro número de
+          // supervisão — como esse número agora É o próprio WhatsApp conectado, mandar
+          // de volta pra ele mesmo criava um eco (a mensagem que ele manda volta pra
+          // ele mesmo). Bruno só quer o aviso de distribuição da OLX/Canal Pro (que
+          // vem de webhook externo, não desse número), então esse aqui fica só no log.
           await salvarDistribuicao(distribuicao, null);
-          await enviarWhatsApp(NUMERO_SUPERVISAO, `📋 Nova distribuição de lead:\n\n${conteudo}`);
-          console.log(`Distribuição espelhada: ${distribuicao.nome} → ${distribuicao.corretor}`);
+          console.log(`Distribuição registrada (sem espelho): ${distribuicao.nome} → ${distribuicao.corretor}`);
         }
       }
       return res.status(200).json({ ok: true });
     }
 
-    adicionarAoBuffer(de, conteudo);
-    console.log(`Mensagem de ${de} adicionada ao buffer`);
+    // Buffer/resumo periódico desligado — o número de supervisão agora É o
+    // WhatsApp conectado, então as mensagens já aparecem nele direto; mandar
+    // um resumo delas de volta era só reenviar o que já estava lá.
+    console.log(`Mensagem de ${de} recebida`);
 
     if (process.env.DATABASE_URL) {
       await identificarLead(de, conteudo);
@@ -1249,9 +1246,10 @@ app.post('/webhook-mensagens-tiktok', async (req, res) => {
           // Origem já conhecida: veio pelo número do TikTok.
           // Se quiser diferenciar TikTok / Instagram / Comentário manualmente,
           // deixe origem = null aqui e ajuste depois pelo dashboard.
+          // Sem espelho pro número de supervisão — Bruno só quer aviso de
+          // leads distribuídos da OLX/Canal Pro por lá, não do TikTok.
           await salvarDistribuicao(distribuicao, 'TikTok');
-          await enviarWhatsApp(NUMERO_SUPERVISAO, `📋 Nova distribuição de lead (TikTok):\n\n${conteudo}`);
-          console.log(`[TikTok] Distribuição espelhada pra Juliane: ${distribuicao.nome} → ${distribuicao.corretor}`);
+          console.log(`[TikTok] Distribuição registrada (sem espelho): ${distribuicao.nome} → ${distribuicao.corretor}`);
         }
       }
       return res.status(200).json({ ok: true });
