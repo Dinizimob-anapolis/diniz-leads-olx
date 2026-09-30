@@ -3412,9 +3412,12 @@ app.get('/analytics', basicAuthAdminOuSdr, (req, res) => {
     return res.send(html);
   }
 
-  // Login da Juliane (sem ?corretor=, ou seja, ela pediu o analytics geral
-  // mesmo) — volta pro CRM dela, não pro CRM da SDR.
-  if (req.authTipo === 'juliane') {
+  // Veio do botão "Analytics" do CRM da Juliane — não confia no tipo de
+  // login (authTipo), porque ela pode estar entrando com a senha de admin
+  // em vez da própria (JULIANE_CRM_PASS pode nem estar configurada). O
+  // botão do crm-juliane manda ?origem=juliane na própria URL, então isso
+  // funciona não importa qual senha foi usada pra logar.
+  if (req.query.origem === 'juliane') {
     const html = ANALYTICS_HTML
       .split('{{TITULO}}').join('📊 Analytics')
       .split('{{SUBTITULO}}').join('Resultados e desempenho de todos os leads, corretores e canais')
