@@ -256,12 +256,11 @@ function renderizar(data) {
     <div class="kpis">
       <div class="kpi" style="--barra:\${CORES.accent}"><div class="rotulo">Total de leads</div><div class="valor">\${fmtNum(f.total)}</div></div>
       <div class="kpi" style="--barra:\${CORES.info}"><div class="rotulo">Contatados</div><div class="valor">\${fmtNum(f.contatou)}</div></div>
+      <div class="kpi" style="--barra:\${CORES.accent2}"><div class="rotulo">Aprovados</div><div class="valor">\${fmtNum(f.aprovado)}</div></div>
       <div class="kpi" style="--barra:\${CORES.accent2}"><div class="rotulo">Visitas</div><div class="valor">\${fmtNum(f.visita)}</div></div>
-      <div class="kpi" style="--barra:\${CORES.warn}"><div class="rotulo">Propostas</div><div class="valor">\${fmtNum(f.proposta)}</div></div>
+      <div class="kpi" style="--barra:\${CORES.warn}"><div class="rotulo">Em negociação</div><div class="valor">\${fmtNum(f.em_negociacao)}</div></div>
       <div class="kpi" style="--barra:\${CORES.ok}"><div class="rotulo">Vendas</div><div class="valor">\${fmtNum(f.venda)}</div></div>
       <div class="kpi" style="--barra:\${CORES.danger}"><div class="rotulo">Sem retorno</div><div class="valor">\${fmtNum(f.sem_retorno)}</div></div>
-      <div class="kpi" style="--barra:\${CORES.muted}"><div class="rotulo">Número inválido</div><div class="valor">\${fmtNum(f.numero_invalido)}</div></div>
-      <div class="kpi" style="--barra:\${CORES.accent}"><div class="rotulo">Não identificados</div><div class="valor">\${fmtNum(data.nao_identificados)}</div><div class="extra">sem corretor/match</div></div>
     </div>
 
     <div class="grade">
@@ -334,8 +333,9 @@ function desenharFunil(f) {
   const etapas = [
     { rotulo: 'Total', valor: f.total, cor: CORES.accent },
     { rotulo: 'Contatado', valor: f.contatou, cor: CORES.info },
+    { rotulo: 'Aprovado', valor: f.aprovado, cor: CORES.accent2 },
     { rotulo: 'Visita', valor: f.visita, cor: CORES.accent2 },
-    { rotulo: 'Proposta', valor: f.proposta, cor: CORES.warn },
+    { rotulo: 'Em negociação', valor: f.em_negociacao, cor: CORES.warn },
     { rotulo: 'Venda', valor: f.venda, cor: CORES.ok },
   ];
   const ctx = document.getElementById('chart-funil');
