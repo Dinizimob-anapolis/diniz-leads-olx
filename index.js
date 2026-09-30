@@ -1800,6 +1800,15 @@ app.get('/api/analytics', basicAuthAdminOuSdr, async (req, res) => {
       ? req.corretorNome
       : ((req.authTipo === 'admin' || req.authTipo === 'juliane') ? corretorDaQuery : null);
 
+    // Pra bater exatamente com o que aparece nos boards (e não com a base
+    // histórica inteira), aplica o MESMO critério de cada tela:
+    // - Geral (admin/SDR/Juliane sem corretor específico): mesmo filtro do
+    //   board "CRM de todos" — carteira_sdr = true OU status = 'Repassado
+    //   ao corretor' (/api/leads/carteira-sdr).
+    // - Corretor específico (login de corretor, ou admin/Juliane vendo
+    //   ?corretor=Nome): mesmo filtro do board "meu-crm"
+    //   (/api/leads/meus) — leads desse corretor que já saíram da carteira
+    //   da SDR ou já tiveram status_corretor alterado.
     const condLeads = [];
     const paramsLeads = [];
     if (temPeriodo) {
@@ -1810,6 +1819,9 @@ app.get('/api/analytics', basicAuthAdminOuSdr, async (req, res) => {
     if (escopoCorretor) {
       paramsLeads.push(escopoCorretor);
       condLeads.push(`corretor = $${paramsLeads.length}`);
+      condLeads.push(`(status_corretor_alterado_em IS NOT NULL OR carteira_sdr IS NOT TRUE)`);
+    } else {
+      condLeads.push(`(carteira_sdr = true OR status = 'Repassado ao corretor')`);
     }
     const whereLeads = condLeads.length ? `WHERE ${condLeads.join(' AND ')}` : '';
 
