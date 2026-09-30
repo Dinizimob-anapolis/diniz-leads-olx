@@ -325,6 +325,37 @@ async function initDb() {
   } catch (err) {
     console.error('Erro ao inferir origem de leads em branco:', err);
   }
+
+  // ─── Backfill único: sincroniza a "Etapa da venda" (aprovado, documentacao,
+  // visita, proposta, venda, contatou, sem_retorno) com a coluna em que o
+  // corretor já tinha colocado cada lead ANTES desses campos passarem a
+  // atualizar sozinhos a cada troca de status_corretor. Sem isso, leads
+  // movidos antes dessa mudança ficavam com a etapa desatualizada tanto no
+  // card da Juliane quanto no Analytics. Roda uma vez só (não some se o
+  // corretor arrastar um lead de volta por engano depois).
+  try {
+    const jaAplicadoEtapas = await lerConfig('backfill_etapas_venda_status_corretor_aplicado');
+    if (!jaAplicadoEtapas) {
+      const atualizados = await pool.query(`
+        UPDATE leads SET
+          contatou = contatou OR (status_corretor IS NOT NULL AND status_corretor <> 'Novo'),
+          documentacao = documentacao OR status_corretor IN ('Aguardando documentação', 'Aguardando aprovação', 'Aprovado', 'Visita', 'Em negociação', 'Venda'),
+          aprovado = aprovado OR status_corretor IN ('Aprovado', 'Visita', 'Em negociação', 'Venda'),
+          visita = visita OR status_corretor IN ('Visita', 'Em negociação', 'Venda'),
+          proposta = proposta OR status_corretor IN ('Em negociação', 'Venda'),
+          venda = venda OR status_corretor = 'Venda',
+          sem_retorno = CASE WHEN status_corretor = 'Sem retorno' THEN true ELSE sem_retorno END
+        WHERE status_corretor IS NOT NULL
+        RETURNING id
+      `);
+      if (atualizados.rowCount > 0) {
+        console.log(`✅ Backfill de etapa da venda: ${atualizados.rowCount} lead(s) sincronizados com a coluna do corretor.`);
+      }
+      await salvarConfig('backfill_etapas_venda_status_corretor_aplicado', 'true');
+    }
+  } catch (err) {
+    console.error('Erro no backfill de etapas da venda:', err);
+  }
 }
 
 // ─── IMPORTAÇÃO EM LOTE (reutilizada pelo upload manual e pela sincronização com Google Sheets) ─
@@ -1838,23 +1869,30 @@ app.get('/api/analytics', basicAuthAdminOuSdr, async (req, res) => {
     }
     const whereNaoIdent = condNaoIdent.length ? `WHERE ${condNaoIdent.join(' AND ')}` : '';
 
-    // O corretor não tem campo pra marcar visita/proposta/venda/contatou no
-    // board dele (só a coluna status_corretor) — só a SDR/Juliane marcam
-    // esses booleanos manualmente. Sem isso, um lead que a Laís arrastou até
-    // "Venda" no board dela contava 0 aqui. Por isso cada métrica considera
-    // o booleano manual OU a etapa correspondente em status_corretor.
-    const COND_CONTATOU = `(contatou OR (status_corretor IS NOT NULL AND status_corretor <> 'Novo'))`;
-    const COND_VISITA = `(visita OR status_corretor IN ('Visita', 'Em negociação', 'Venda'))`;
-    const COND_PROPOSTA = `(proposta OR status_corretor IN ('Em negociação', 'Venda'))`;
-    const COND_VENDA = `(venda OR status_corretor = 'Venda')`;
-    const COND_SEM_RETORNO = `(sem_retorno OR status_corretor = 'Sem retorno')`;
+    // Fonte única: a coluna que o corretor colocou (status_corretor) já
+    // atualiza contatou/documentacao/aprovado/visita/proposta/venda/
+    // sem_retorno sozinha a cada mudança (ver PATCH /api/leads/:id) e foi
+    // sincronizada com o histórico no início (backfill em initDb) — então o
+    // Analytics só lê esses campos direto, sem misturar com nada.
+    const COND_CONTATOU = `contatou`;
+    const COND_APROVADO = `aprovado`;
+    const COND_VISITA = `visita`;
+    // "Em negociação" é a única métrica que não usa o campo (marco
+    // alcançado) — é pra mostrar só quem está NA coluna "Em negociação"
+    // agora, não quem já passou por ela.
+    const COND_EM_NEGOCIACAO = `status_corretor = 'Em negociação'`;
+    const COND_PROPOSTA = `proposta`;
+    const COND_VENDA = `venda`;
+    const COND_SEM_RETORNO = `sem_retorno`;
 
     const [funilQ, corretorQ, origemQ, statusQ, tendenciaQ, naoIdentQ] = await Promise.all([
       pool.query(`
         SELECT
           COUNT(*)::int AS total,
           COUNT(*) FILTER (WHERE ${COND_CONTATOU})::int AS contatou,
+          COUNT(*) FILTER (WHERE ${COND_APROVADO})::int AS aprovado,
           COUNT(*) FILTER (WHERE ${COND_VISITA})::int AS visita,
+          COUNT(*) FILTER (WHERE ${COND_EM_NEGOCIACAO})::int AS em_negociacao,
           COUNT(*) FILTER (WHERE ${COND_PROPOSTA})::int AS proposta,
           COUNT(*) FILTER (WHERE ${COND_VENDA})::int AS venda,
           COUNT(*) FILTER (WHERE ${COND_SEM_RETORNO})::int AS sem_retorno,
