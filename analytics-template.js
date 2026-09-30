@@ -255,11 +255,11 @@ function renderizar(data) {
   document.getElementById('conteudo').innerHTML = \`
     <div class="kpis">
       <div class="kpi" style="--barra:\${CORES.accent}"><div class="rotulo">Total de leads</div><div class="valor">\${fmtNum(f.total)}</div></div>
-      <div class="kpi" style="--barra:\${CORES.info}"><div class="rotulo">Contatados</div><div class="valor">\${fmtPct(f.contatou, f.total)}</div><div class="extra">\${fmtNum(f.contatou)} de \${fmtNum(f.total)}</div></div>
-      <div class="kpi" style="--barra:\${CORES.accent2}"><div class="rotulo">Visitas</div><div class="valor">\${fmtPct(f.visita, f.total)}</div><div class="extra">\${fmtNum(f.visita)} lead(s)</div></div>
-      <div class="kpi" style="--barra:\${CORES.warn}"><div class="rotulo">Propostas</div><div class="valor">\${fmtPct(f.proposta, f.total)}</div><div class="extra">\${fmtNum(f.proposta)} lead(s)</div></div>
-      <div class="kpi" style="--barra:\${CORES.ok}"><div class="rotulo">Vendas</div><div class="valor">\${fmtPct(f.venda, f.total)}</div><div class="extra">\${fmtNum(f.venda)} venda(s)</div></div>
-      <div class="kpi" style="--barra:\${CORES.danger}"><div class="rotulo">Sem retorno</div><div class="valor">\${fmtPct(f.sem_retorno, f.total)}</div><div class="extra">\${fmtNum(f.sem_retorno)} lead(s)</div></div>
+      <div class="kpi" style="--barra:\${CORES.info}"><div class="rotulo">Contatados</div><div class="valor">\${fmtNum(f.contatou)}</div></div>
+      <div class="kpi" style="--barra:\${CORES.accent2}"><div class="rotulo">Visitas</div><div class="valor">\${fmtNum(f.visita)}</div></div>
+      <div class="kpi" style="--barra:\${CORES.warn}"><div class="rotulo">Propostas</div><div class="valor">\${fmtNum(f.proposta)}</div></div>
+      <div class="kpi" style="--barra:\${CORES.ok}"><div class="rotulo">Vendas</div><div class="valor">\${fmtNum(f.venda)}</div></div>
+      <div class="kpi" style="--barra:\${CORES.danger}"><div class="rotulo">Sem retorno</div><div class="valor">\${fmtNum(f.sem_retorno)}</div></div>
       <div class="kpi" style="--barra:\${CORES.muted}"><div class="rotulo">Número inválido</div><div class="valor">\${fmtNum(f.numero_invalido)}</div></div>
       <div class="kpi" style="--barra:\${CORES.accent}"><div class="rotulo">Não identificados</div><div class="valor">\${fmtNum(data.nao_identificados)}</div><div class="extra">sem corretor/match</div></div>
     </div>
