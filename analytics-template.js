@@ -230,6 +230,8 @@ async function carregarDados(inicio, fim) {
   // senão ela ignora e mostra o total geral.
   const corretorDaPagina = new URLSearchParams(location.search).get('corretor');
   if (corretorDaPagina) params.set('corretor', corretorDaPagina);
+  const origemDaPagina = new URLSearchParams(location.search).get('origem');
+  if (origemDaPagina) params.set('origem', origemDaPagina);
 
   try {
     const res = await fetch('/api/analytics?' + params.toString());
