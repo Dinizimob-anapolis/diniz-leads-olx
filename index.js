@@ -68,8 +68,7 @@ const CORRETORES_EXTRA_DASHBOARD = ['Amanda', 'Juliane', 'Bruno', 'Patricia', 'M
 // lógica: o /api/analytics usa exatamente o mesmo critério quando ela olha
 // o Analytics geral, senão os números dela nunca batem com o board dela.
 const COND_BOARD_JULIANE = `
-  COALESCE(status, '') NOT IN ('Sem retorno', 'Reaquecendo')
-  AND (
+  (
     carteira_juliane = true
     OR (status_corretor_alterado_em IS NOT NULL AND corretor IS NOT NULL AND corretor <> '')
     OR status = 'Repassado ao corretor'
@@ -78,6 +77,16 @@ const COND_BOARD_JULIANE = `
       AND (corretor IS NOT NULL AND corretor <> '')
       AND carteira_sdr IS NOT TRUE
     )
+  )
+  AND (
+    -- "Sem retorno"/"Reaquecendo" aqui é do funil da SDR (campo status), não
+    -- da coluna do corretor (status_corretor) — são campos diferentes com
+    -- valores parecidos. Essa exclusão é só pra esconder lead "morto" que
+    -- ainda está só com a SDR; um lead que já tem corretor cuidando dele
+    -- (status_corretor_alterado_em preenchido) nunca deve sumir do board/
+    -- Analytics da Juliane só por causa desse campo antigo da SDR.
+    COALESCE(status, '') NOT IN ('Sem retorno', 'Reaquecendo')
+    OR (status_corretor_alterado_em IS NOT NULL AND corretor IS NOT NULL AND corretor <> '')
   )
 `;
 
