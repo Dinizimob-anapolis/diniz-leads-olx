@@ -326,35 +326,30 @@ async function initDb() {
     console.error('Erro ao inferir origem de leads em branco:', err);
   }
 
-  // ─── Backfill único: sincroniza a "Etapa da venda" (aprovado, documentacao,
-  // visita, proposta, venda, contatou, sem_retorno) com a coluna em que o
-  // corretor já tinha colocado cada lead ANTES desses campos passarem a
-  // atualizar sozinhos a cada troca de status_corretor. Sem isso, leads
-  // movidos antes dessa mudança ficavam com a etapa desatualizada tanto no
-  // card da Juliane quanto no Analytics. Roda uma vez só (não some se o
-  // corretor arrastar um lead de volta por engano depois).
+  // ─── Sincroniza a "Etapa da venda" (aprovado, documentacao, visita,
+  // proposta, venda, contatou, sem_retorno) com a coluna em que o corretor
+  // já colocou cada lead. Cobre leads movidos antes desses campos passarem
+  // a atualizar sozinhos a cada troca de status_corretor E leads inseridos
+  // direto no banco com status_corretor já preenchido (ex: importação da
+  // Michelle) — que nunca passam pelo PATCH que sincroniza isso. Roda em
+  // todo boot, mas é seguro repetir: só adiciona marco (nunca desmarca um
+  // que já estava true), então não apaga nada que o corretor já confirmou.
   try {
-    const jaAplicadoEtapas = await lerConfig('backfill_etapas_venda_status_corretor_aplicado');
-    if (!jaAplicadoEtapas) {
-      const atualizados = await pool.query(`
-        UPDATE leads SET
-          contatou = contatou OR (status_corretor IS NOT NULL AND status_corretor <> 'Novo'),
-          documentacao = documentacao OR status_corretor IN ('Aguardando documentação', 'Aguardando aprovação', 'Aprovado', 'Visita', 'Em negociação', 'Venda'),
-          aprovado = aprovado OR status_corretor IN ('Aprovado', 'Visita', 'Em negociação', 'Venda'),
-          visita = visita OR status_corretor IN ('Visita', 'Em negociação', 'Venda'),
-          proposta = proposta OR status_corretor IN ('Em negociação', 'Venda'),
-          venda = venda OR status_corretor = 'Venda',
-          sem_retorno = CASE WHEN status_corretor = 'Sem retorno' THEN true ELSE sem_retorno END
-        WHERE status_corretor IS NOT NULL
-        RETURNING id
-      `);
-      if (atualizados.rowCount > 0) {
-        console.log(`✅ Backfill de etapa da venda: ${atualizados.rowCount} lead(s) sincronizados com a coluna do corretor.`);
-      }
-      await salvarConfig('backfill_etapas_venda_status_corretor_aplicado', 'true');
-    }
+    const atualizados = await pool.query(`
+      UPDATE leads SET
+        contatou = contatou OR (status_corretor IS NOT NULL AND status_corretor <> 'Novo'),
+        documentacao = documentacao OR status_corretor IN ('Aguardando documentação', 'Aguardando aprovação', 'Aprovado', 'Visita', 'Em negociação', 'Venda'),
+        aprovado = aprovado OR status_corretor IN ('Aprovado', 'Visita', 'Em negociação', 'Venda'),
+        visita = visita OR status_corretor IN ('Visita', 'Em negociação', 'Venda'),
+        proposta = proposta OR status_corretor IN ('Em negociação', 'Venda'),
+        venda = venda OR status_corretor = 'Venda',
+        sem_retorno = CASE WHEN status_corretor = 'Sem retorno' THEN true ELSE sem_retorno END
+      WHERE status_corretor IS NOT NULL
+      RETURNING id
+    `);
+    console.log(`✅ Sincronização de etapa da venda: ${atualizados.rowCount} lead(s) com corretor verificados.`);
   } catch (err) {
-    console.error('Erro no backfill de etapas da venda:', err);
+    console.error('Erro na sincronização de etapas da venda:', err);
   }
 
   // ─── Limpeza pontual: "Rubens" nunca foi corretor de verdade (nem tá nas
