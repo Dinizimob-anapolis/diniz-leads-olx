@@ -1865,7 +1865,12 @@ app.get('/api/analytics', basicAuthAdminOuSdr, async (req, res) => {
       condLeads.push(`corretor = $${paramsLeads.length}`);
       condLeads.push(`(status_corretor_alterado_em IS NOT NULL OR carteira_sdr IS NOT TRUE)`);
     } else if (vistoPelaJuliane) {
+      // O board dela (/crm-juliane) mostra também a coluna "Novo Lead" —
+      // lead sem corretor ainda, esperando ela distribuir. O Analytics geral
+      // da Juliane não deve contar esse pedaço (que ainda é território da
+      // SDR/triagem): só métrica de lead que já tem corretor responsável.
       condLeads.push(`(${COND_BOARD_JULIANE})`);
+      condLeads.push(`corretor IS NOT NULL AND corretor <> ''`);
     } else {
       condLeads.push(`(carteira_sdr = true OR status = 'Repassado ao corretor')`);
     }
