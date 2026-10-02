@@ -255,7 +255,6 @@ function renderizar(data) {
   document.getElementById('conteudo').innerHTML = \`
     <div class="kpis">
       <div class="kpi" style="--barra:\${CORES.accent}"><div class="rotulo">Total de leads</div><div class="valor">\${fmtNum(f.total)}</div></div>
-      <div class="kpi" style="--barra:\${CORES.info}"><div class="rotulo">Contatados</div><div class="valor">\${fmtNum(f.contatou)}</div></div>
       <div class="kpi" style="--barra:\${CORES.accent2}"><div class="rotulo">Aprovados</div><div class="valor">\${fmtNum(f.aprovado)}</div></div>
       <div class="kpi" style="--barra:\${CORES.accent2}"><div class="rotulo">Visitas</div><div class="valor">\${fmtNum(f.visita)}</div></div>
       <div class="kpi" style="--barra:\${CORES.warn}"><div class="rotulo">Em negociação</div><div class="valor">\${fmtNum(f.em_negociacao)}</div></div>
@@ -311,7 +310,7 @@ function tabelaCorretores(corretores, totalGeral) {
     return \`<tr>
       <td>\${c.corretor}</td>
       <td class="num">\${fmtNum(c.total)}</td>
-      <td class="num">\${fmtPct(c.contatou, c.total)}</td>
+      <td class="num">\${fmtNum(c.visita)}</td>
       <td class="num">\${fmtNum(c.venda)}</td>
       <td class="num badge-pct">\${pctConv}</td>
       <td class="num">\${resposta}</td>
@@ -319,8 +318,8 @@ function tabelaCorretores(corretores, totalGeral) {
   }).join('');
   return \`<table>
     <thead><tr>
-      <th>Corretor</th><th class="num">Leads</th><th class="num">Contatou</th>
-      <th class="num">Vendas</th><th class="num">Conversão</th><th class="num">Tempo médio 1º contato</th>
+      <th>Corretor</th><th class="num">Leads</th>
+      <th class="num">Visitas</th><th class="num">Vendas</th><th class="num">Conversão</th><th class="num">Tempo médio 1º contato</th>
     </tr></thead>
     <tbody>\${linhas}</tbody>
   </table>\`;
@@ -332,7 +331,6 @@ function desenharFunil(f) {
   destruir('funil');
   const etapas = [
     { rotulo: 'Total', valor: f.total, cor: CORES.accent },
-    { rotulo: 'Contatado', valor: f.contatou, cor: CORES.info },
     { rotulo: 'Aprovado', valor: f.aprovado, cor: CORES.accent2 },
     { rotulo: 'Visita', valor: f.visita, cor: CORES.accent2 },
     { rotulo: 'Em negociação', valor: f.em_negociacao, cor: CORES.warn },
