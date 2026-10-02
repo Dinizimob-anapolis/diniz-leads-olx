@@ -1928,8 +1928,11 @@ app.get('/api/analytics', basicAuthAdminOuSdr, async (req, res) => {
           COALESCE(NULLIF(corretor, ''), 'Sem corretor') AS corretor,
           COUNT(*)::int AS total,
           COUNT(*) FILTER (WHERE ${COND_CONTATOU})::int AS contatou,
+          COUNT(*) FILTER (WHERE ${COND_APROVADO})::int AS aprovado,
           COUNT(*) FILTER (WHERE ${COND_VISITA})::int AS visita,
+          COUNT(*) FILTER (WHERE ${COND_EM_NEGOCIACAO})::int AS em_negociacao,
           COUNT(*) FILTER (WHERE ${COND_VENDA})::int AS venda,
+          COUNT(*) FILTER (WHERE ${COND_SEM_RETORNO})::int AS sem_retorno,
           ROUND(
             AVG(EXTRACT(EPOCH FROM (primeiro_contato_em - distribuido_em)) / 3600.0)
               FILTER (WHERE primeiro_contato_em IS NOT NULL),
