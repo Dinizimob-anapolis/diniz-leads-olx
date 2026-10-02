@@ -113,6 +113,47 @@ const ANALYTICS_HTML = `<!DOCTYPE html>
   .kpi .rotulo { font-size: 12px; color: var(--muted); font-weight: 600; margin-bottom: 6px; }
   .kpi .valor { font-size: 26px; font-weight: 800; line-height: 1; }
   .kpi .extra { font-size: 12px; color: var(--muted); margin-top: 5px; }
+  .kpi-clicavel { cursor: pointer; transition: box-shadow .15s, transform .15s; }
+  .kpi-clicavel:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.08); transform: translateY(-1px); }
+
+  .modal-overlay {
+    display: none;
+    position: fixed; inset: 0;
+    background: rgba(20,22,30,0.45);
+    align-items: center; justify-content: center;
+    z-index: 100;
+    padding: 20px;
+  }
+  .modal-overlay.aberto { display: flex; }
+  .modal-caixa {
+    background: var(--card);
+    border-radius: var(--radius);
+    max-width: 420px;
+    width: 100%;
+    max-height: 80vh;
+    overflow-y: auto;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.25);
+  }
+  .modal-cabecalho {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 18px;
+    border-bottom: 1px solid var(--card-border);
+    position: sticky; top: 0;
+    background: var(--card);
+  }
+  .modal-cabecalho h3 { margin: 0; font-size: 15px; }
+  .modal-fechar {
+    cursor: pointer; border: none; background: none;
+    font-size: 20px; color: var(--muted); line-height: 1;
+    padding: 2px 6px;
+  }
+  .modal-fechar:hover { color: var(--text); }
+  .modal-corpo { padding: 14px 18px 18px; }
+  .tabela-modal { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .tabela-modal th { text-align: left; color: var(--muted); font-weight: 600; font-size: 11px; padding: 6px 0; border-bottom: 1px solid var(--card-border); }
+  .tabela-modal td { padding: 8px 0; border-bottom: 1px solid var(--card-border); }
+  .tabela-modal tr:last-child td { border-bottom: none; }
+  .tabela-modal .num { text-align: right; font-weight: 700; }
 
   .grade {
     display: grid;
@@ -169,6 +210,16 @@ const ANALYTICS_HTML = `<!DOCTYPE html>
 
 <div id="conteudo">
   <div class="carregando">Carregando dados...</div>
+</div>
+
+<div class="modal-overlay" id="modal-detalhe-overlay" onclick="if(event.target===this) fecharModalDetalhe()">
+  <div class="modal-caixa">
+    <div class="modal-cabecalho">
+      <h3 id="modal-detalhe-titulo">Detalhe</h3>
+      <button class="modal-fechar" onclick="fecharModalDetalhe()">&times;</button>
+    </div>
+    <div class="modal-corpo" id="modal-detalhe-corpo"></div>
+  </div>
 </div>
 
 <script>
@@ -254,12 +305,12 @@ function renderizar(data) {
 
   document.getElementById('conteudo').innerHTML = \`
     <div class="kpis">
-      <div class="kpi" style="--barra:\${CORES.accent}"><div class="rotulo">Total de leads</div><div class="valor">\${fmtNum(f.total)}</div></div>
-      <div class="kpi" style="--barra:\${CORES.accent2}"><div class="rotulo">Aprovados</div><div class="valor">\${fmtNum(f.aprovado)}</div></div>
-      <div class="kpi" style="--barra:\${CORES.accent2}"><div class="rotulo">Visitas</div><div class="valor">\${fmtNum(f.visita)}</div></div>
-      <div class="kpi" style="--barra:\${CORES.warn}"><div class="rotulo">Em negociação</div><div class="valor">\${fmtNum(f.em_negociacao)}</div></div>
-      <div class="kpi" style="--barra:\${CORES.ok}"><div class="rotulo">Vendas</div><div class="valor">\${fmtNum(f.venda)}</div></div>
-      <div class="kpi" style="--barra:\${CORES.danger}"><div class="rotulo">Sem retorno</div><div class="valor">\${fmtNum(f.sem_retorno)}</div></div>
+      <div class="kpi kpi-clicavel" data-metrica="total" data-titulo="Total de leads" style="--barra:\${CORES.accent}"><div class="rotulo">Total de leads</div><div class="valor">\${fmtNum(f.total)}</div></div>
+      <div class="kpi kpi-clicavel" data-metrica="aprovado" data-titulo="Aprovados" style="--barra:\${CORES.accent2}"><div class="rotulo">Aprovados</div><div class="valor">\${fmtNum(f.aprovado)}</div></div>
+      <div class="kpi kpi-clicavel" data-metrica="visita" data-titulo="Visitas" style="--barra:\${CORES.accent2}"><div class="rotulo">Visitas</div><div class="valor">\${fmtNum(f.visita)}</div></div>
+      <div class="kpi kpi-clicavel" data-metrica="em_negociacao" data-titulo="Em negociação" style="--barra:\${CORES.warn}"><div class="rotulo">Em negociação</div><div class="valor">\${fmtNum(f.em_negociacao)}</div></div>
+      <div class="kpi kpi-clicavel" data-metrica="venda" data-titulo="Vendas" style="--barra:\${CORES.ok}"><div class="rotulo">Vendas</div><div class="valor">\${fmtNum(f.venda)}</div></div>
+      <div class="kpi kpi-clicavel" data-metrica="sem_retorno" data-titulo="Sem retorno" style="--barra:\${CORES.danger}"><div class="rotulo">Sem retorno</div><div class="valor">\${fmtNum(f.sem_retorno)}</div></div>
     </div>
 
     <div class="grade">
@@ -300,6 +351,37 @@ function renderizar(data) {
   desenharOrigem(data.origens);
   desenharStatus(data.status);
   desenharCorretor(data.corretores);
+
+  DADOS_CORRETORES = data.corretores || [];
+  document.querySelectorAll('.kpi-clicavel').forEach(el => {
+    el.addEventListener('click', () => mostrarDetalheMetrica(el.dataset.metrica, el.dataset.titulo));
+  });
+}
+
+let DADOS_CORRETORES = [];
+
+function mostrarDetalheMetrica(metrica, titulo) {
+  const linhas = (DADOS_CORRETORES || [])
+    .map(c => ({ corretor: c.corretor, valor: c[metrica] || 0 }))
+    .filter(l => l.valor > 0)
+    .sort((a, b) => b.valor - a.valor);
+
+  const totalMetrica = linhas.reduce((soma, l) => soma + l.valor, 0);
+
+  const corpo = linhas.length === 0
+    ? '<div class="vazio">Nenhum corretor com esse número no período</div>'
+    : \`<table class="tabela-modal">
+        <thead><tr><th>Corretor</th><th class="num">\${titulo}</th></tr></thead>
+        <tbody>\${linhas.map(l => \`<tr><td>\${l.corretor}</td><td class="num">\${fmtNum(l.valor)}</td></tr>\`).join('')}</tbody>
+      </table>\`;
+
+  document.getElementById('modal-detalhe-titulo').textContent = titulo + ' — por corretor';
+  document.getElementById('modal-detalhe-corpo').innerHTML = corpo;
+  document.getElementById('modal-detalhe-overlay').classList.add('aberto');
+}
+
+function fecharModalDetalhe() {
+  document.getElementById('modal-detalhe-overlay').classList.remove('aberto');
 }
 
 function tabelaCorretores(corretores, totalGeral) {
