@@ -1200,14 +1200,8 @@ app.post('/webhook-mensagens', async (req, res) => {
           console.log(`Distribuição registrada: ${distribuicao.nome} → ${distribuicao.corretor}`);
           if (NUMERO_SUPERVISAO) {
             try {
-              await enviarWhatsApp(
-                NUMERO_SUPERVISAO,
-                `📋 Lead distribuído\n\n` +
-                `Nome: ${distribuicao.nome}\n` +
-                `WhatsApp: ${distribuicao.whatsapp}\n` +
-                (distribuicao.imovelCodigo ? `Imóvel: ${distribuicao.imovelCodigo}\n` : '') +
-                `Corretor: ${distribuicao.corretor}`
-              );
+              // Manda a mensagem original do jeito que foi enviada pro corretor.
+              await enviarWhatsApp(NUMERO_SUPERVISAO, conteudo);
             } catch (e) {
               console.error('Erro ao avisar supervisão da distribuição:', e);
             }
