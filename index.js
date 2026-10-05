@@ -1685,13 +1685,17 @@ app.post('/api/leads/conferir', basicAuthAdminOuSdr, async (req, res) => {
   // Juliane marca carteira_juliane. Assim, o que a Juliane adiciona não
   // desaparece do quadro dela (que agora esconde tudo que tem carteira_sdr).
   // A origem agora é escolhida por quem adiciona (não é mais fixa).
-  const origemNovo = (origem && String(origem).trim()) ? String(origem).trim() : (req.authTipo === 'juliane' ? 'Juliane' : 'SDR');
-  const colunaCarteira = req.authTipo === 'juliane' ? 'carteira_juliane' : 'carteira_sdr';
+  // Se quem adicionou entrou como admin mas está usando o painel da Juliane
+  // (/crm-juliane manda painel: 'juliane'), conta como Juliane — senão o lead
+  // cai na carteira da SDR em vez da coluna "Novo" dela.
+  const comoJuliane = req.authTipo === 'juliane' || (req.authTipo === 'admin' && req.body.painel === 'juliane');
+  const origemNovo = (origem && String(origem).trim()) ? String(origem).trim() : (comoJuliane ? 'Juliane' : 'SDR');
+  const colunaCarteira = comoJuliane ? 'carteira_juliane' : 'carteira_sdr';
   // Quando a Juliane confere um contato que já existia (ex: já estava sendo
   // trabalhado pela SDR), ela está assumindo esse atendimento — libera da
   // carteira ativa da SDR, senão o lead fica marcado pras duas ao mesmo
   // tempo e aparece nos dois CRMs.
-  const clausulaLiberaSdr = req.authTipo === 'juliane' ? ', carteira_sdr = false' : '';
+  const clausulaLiberaSdr = comoJuliane ? ', carteira_sdr = false' : '';
   try {
     const existente = await pool.query('SELECT * FROM leads WHERE whatsapp = $1', [whatsappValido]);
     if (existente.rows.length > 0) {
