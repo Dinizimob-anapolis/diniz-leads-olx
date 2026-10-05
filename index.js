@@ -1194,13 +1194,24 @@ app.post('/webhook-mensagens', async (req, res) => {
           // Distribuição feita pelo WhatsApp da Juliane. A origem já vem de dentro de
           // parseDistribuicao (explícita, ou inferida por CRM/código de imóvel). Se não
           // tiver nenhuma evidência, fica sem origem — não força mais 'Patrocinado' aqui.
-          // OBS: não manda mais o espelho "📋 Nova distribuição de lead" pro número de
-          // supervisão — como esse número agora É o próprio WhatsApp conectado, mandar
-          // de volta pra ele mesmo criava um eco (a mensagem que ele manda volta pra
-          // ele mesmo). Bruno só quer o aviso de distribuição da OLX/Canal Pro (que
-          // vem de webhook externo, não desse número), então esse aqui fica só no log.
+          // Avisa a Juliane (NUMERO_SUPERVISAO = número pessoal dela, diferente do
+          // WhatsApp conectado na instância, então não gera eco) pra quem o lead foi.
           await salvarDistribuicao(distribuicao, null);
-          console.log(`Distribuição registrada (sem espelho): ${distribuicao.nome} → ${distribuicao.corretor}`);
+          console.log(`Distribuição registrada: ${distribuicao.nome} → ${distribuicao.corretor}`);
+          if (NUMERO_SUPERVISAO) {
+            try {
+              await enviarWhatsApp(
+                NUMERO_SUPERVISAO,
+                `📋 Lead distribuído\n\n` +
+                `Nome: ${distribuicao.nome}\n` +
+                `WhatsApp: ${distribuicao.whatsapp}\n` +
+                (distribuicao.imovelCodigo ? `Imóvel: ${distribuicao.imovelCodigo}\n` : '') +
+                `Corretor: ${distribuicao.corretor}`
+              );
+            } catch (e) {
+              console.error('Erro ao avisar supervisão da distribuição:', e);
+            }
+          }
         }
       }
       return res.status(200).json({ ok: true });
