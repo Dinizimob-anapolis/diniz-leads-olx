@@ -1166,6 +1166,7 @@ async function confirmarAdicionar() {
         nome,
         whatsapp,
         origem: document.getElementById('add-origem').value,
+        painel: 'juliane',
         ...(corretorEscolhido ? { corretorAlvo: corretorEscolhido } : {}),
       }),
     });
