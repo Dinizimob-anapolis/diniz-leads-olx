@@ -59,6 +59,15 @@ const CORRETORES = [
   // { nome: 'Thayná', fone: '5562991749547' },
 ];
 
+// Rodízio dos leads do META (Lead Ads) — lista PRÓPRIA, separada da OLX/Canal Pro
+// acima (a Laís fica só na OLX). Pra incluir alguém no Meta, é só descomentar.
+const CORRETORES_META = [
+  { nome: 'Junior', fone: '5562981625610' },
+  // { nome: 'Nalcio', fone: '5562982077466' },
+  // { nome: 'Renata', fone: '5562992670935' },
+  // { nome: 'Thayná', fone: '5562991749547' },
+];
+
 // Nomes extras que aparecem como opção no dropdown de corretor do dashboard,
 // mas NÃO entram na fila de distribuição automática (round-robin) do Canal Pro
 // — pra isso precisaria do telefone de cada um, cadastrado em CORRETORES acima.
@@ -1267,8 +1276,8 @@ async function processarLeadMeta(leadgenId) {
   // Rodízio próprio do Meta (separado do Canal Pro).
   const chaveIndice = 'indice_rodizio_meta';
   const idx = parseInt(await lerConfig(chaveIndice), 10) || 0;
-  const corretor = CORRETORES[idx % CORRETORES.length];
-  await salvarConfig(chaveIndice, String((idx + 1) % CORRETORES.length));
+  const corretor = CORRETORES_META[idx % CORRETORES_META.length];
+  await salvarConfig(chaveIndice, String((idx + 1) % CORRETORES_META.length));
 
   const texto =
     `Segue um novo lead interessado ${imovelDesc || 'Meta Ads'}\n` +
