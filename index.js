@@ -69,13 +69,16 @@ const TELEFONES_CORRETORES = {
   'junior': { nome: 'Junior', fone: '5562981625610' },
   'thayna': { nome: 'Thayná', fone: '5562991749547' },
   'cyda': { nome: 'Cyda', fone: '5562993652226' },
-  'michelle': { nome: 'Michelle', fone: null }, // preencher o telefone (55 + DDD + número) pra ela receber
+  'michelle': { nome: 'Michelle', fone: '5562994494723' },
+  'patricia': { nome: 'Patricia', fone: '5562984888731' },
 };
 
 // Rodízio dos leads do META (Lead Ads) — lista PRÓPRIA, separada da OLX/Canal Pro
 // acima (a Laís fica só na OLX). Pra incluir alguém no Meta, é só descomentar.
 const CORRETORES_META = [
   { nome: 'Junior', fone: '5562981625610' },
+  { nome: 'Michelle', fone: '5562994494723' },
+  { nome: 'Patricia', fone: '5562984888731' },
   // { nome: 'Nalcio', fone: '5562982077466' },
   // { nome: 'Renata', fone: '5562992670935' },
   // { nome: 'Thayná', fone: '5562991749547' },
