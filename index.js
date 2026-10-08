@@ -1171,6 +1171,43 @@ app.post('/lead-canalpro', async (req, res) => {
   }
 });
 
+// ─── PÁGINAS PÚBLICAS (exigidas pela Meta pra publicar o app) ─
+// E-mail de contato mostrado nas páginas públicas: defina EMAIL_PRIVACIDADE no Railway.
+function contatoPrivacidade() {
+  const email = process.env.EMAIL_PRIVACIDADE;
+  return email ? `<a href="mailto:${email}">${email}</a>` : 'o WhatsApp da Diniz Imóveis que entrou em contato com você';
+}
+
+function paginaPublica(titulo, corpoHtml) {
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${titulo} — Diniz Imóveis</title>
+<style>body{font-family:system-ui,sans-serif;max-width:720px;margin:40px auto;padding:0 16px;line-height:1.6;color:#222}h1{font-size:24px}h2{font-size:18px;margin-top:28px}</style>
+</head><body><h1>${titulo}</h1>${corpoHtml}<p style="margin-top:36px;color:#666;font-size:14px">Diniz Imóveis — Goiás, Brasil. Última atualização: outubro de 2026.</p></body></html>`;
+}
+
+app.get('/politica-de-privacidade', (req, res) => {
+  res.type('html').send(paginaPublica('Política de Privacidade', `
+<p>Esta política explica como a Diniz Imóveis ("nós") trata os dados pessoais de quem preenche formulários de anúncios nossos no Facebook e no Instagram, em conformidade com a Lei Geral de Proteção de Dados (LGPD, Lei 13.709/2018).</p>
+<h2>Quais dados coletamos</h2>
+<p>Os dados que você informa no formulário do anúncio: nome, telefone (WhatsApp), e-mail e as respostas às perguntas do formulário.</p>
+<h2>Para que usamos</h2>
+<p>Para entrar em contato com você sobre o imóvel de seu interesse, por WhatsApp, telefone ou e-mail, e repassar seu contato a um corretor da nossa equipe que fará o atendimento.</p>
+<h2>Com quem compartilhamos</h2>
+<p>Apenas com os corretores e a equipe da Diniz Imóveis responsáveis pelo seu atendimento. Não vendemos nem cedemos seus dados a terceiros para fins de publicidade.</p>
+<h2>Por quanto tempo guardamos</h2>
+<p>Pelo tempo necessário para o atendimento e para cumprir obrigações legais. Você pode pedir a exclusão a qualquer momento.</p>
+<h2>Seus direitos</h2>
+<p>Você pode solicitar acesso, correção ou exclusão dos seus dados, ou revogar o consentimento, conforme a página <a href="/exclusao-de-dados">Exclusão de dados</a>.</p>
+<h2>Contato</h2>
+<p>Para qualquer solicitação sobre seus dados, escreva para ${contatoPrivacidade()}.</p>`));
+});
+
+app.get('/exclusao-de-dados', (req, res) => {
+  res.type('html').send(paginaPublica('Exclusão de dados', `
+<p>Para solicitar a exclusão dos seus dados pessoais que recebemos por meio de formulários de anúncios, envie um e-mail para ${contatoPrivacidade()} com o assunto "Exclusão de dados", informando seu nome e o telefone ou e-mail usado no formulário.</p>
+<p>Após a confirmação da sua identidade, removeremos seus dados da nossa base em até 15 dias e avisaremos você por e-mail.</p>`));
+});
+
 // ─── ROTA: LEADS DO META (Lead Ads) → CRM + RODÍZIO ──────────
 // Variáveis no Railway:
 //   META_VERIFY_TOKEN  — texto qualquer que você inventa; o mesmo vai no campo "Verify token" do webhook no app da Meta
