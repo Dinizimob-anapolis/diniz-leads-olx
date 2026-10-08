@@ -59,6 +59,19 @@ const CORRETORES = [
   // { nome: 'Thayná', fone: '5562991749547' },
 ];
 
+// Telefones de todos os corretores que podem receber lead do Meta de forma FIXA
+// (campanha específica pra um corretor só). Usado quando o nome do formulário ou
+// do anúncio traz o corretor entre colchetes, ex: "VD03 - Gran Veneza [Junior]".
+const TELEFONES_CORRETORES = {
+  'lais': { nome: 'Laís', fone: '5562992754858' },
+  'nalcio': { nome: 'Nalcio', fone: '5562982077466' },
+  'renata': { nome: 'Renata', fone: '5562992670935' },
+  'junior': { nome: 'Junior', fone: '5562981625610' },
+  'thayna': { nome: 'Thayná', fone: '5562991749547' },
+  'cyda': { nome: 'Cyda', fone: '5562993652226' },
+  'michelle': { nome: 'Michelle', fone: null }, // preencher o telefone (55 + DDD + número) pra ela receber
+};
+
 // Rodízio dos leads do META (Lead Ads) — lista PRÓPRIA, separada da OLX/Canal Pro
 // acima (a Laís fica só na OLX). Pra incluir alguém no Meta, é só descomentar.
 const CORRETORES_META = [
@@ -1235,8 +1248,8 @@ app.get('/webhook-meta-leads', (req, res) => {
   res.sendStatus(403);
 });
 
-async function graphMeta(caminho, campos) {
-  const url = `${META_GRAPH}/${caminho}?${campos ? `fields=${encodeURIComponent(campos)}&` : ''}access_token=${encodeURIComponent(process.env.META_PAGE_TOKEN || '')}`;
+async function graphMeta(caminho, campos, token) {
+  const url = `${META_GRAPH}/${caminho}?${campos ? `fields=${encodeURIComponent(campos)}&` : ''}access_token=${encodeURIComponent(token || process.env.META_PAGE_TOKEN || '')}`;
   const r = await fetch(url);
   const json = await r.json();
   if (!r.ok || json.error) throw new Error(`Graph ${caminho}: ${json.error?.message || r.status}`);
@@ -1265,19 +1278,59 @@ async function processarLeadMeta(leadgenId) {
   const whatsapp = canonicalizarWhatsapp(telefoneBruto);
 
   // Nome do anúncio/formulário: é daí que sai o código do imóvel (ex: VD03) que agrupa a campanha.
-  let nomeAnuncio = '', nomeForm = '';
-  try { if (lead.ad_id) { const ad = await graphMeta(lead.ad_id, 'name'); nomeAnuncio = ad.name || ''; } } catch (e) { console.error('[Meta] anúncio:', e.message); }
+  // Nomes do anúncio, do CONJUNTO de anúncios e da campanha: é onde o gestor de tráfego
+  // coloca o código do imóvel e o(s) corretor(es) entre colchetes. Ler anúncio/conjunto
+  // exige permissão de anúncios: usa META_ADS_TOKEN (token de usuário com ads_read) se
+  // existir; senão tenta com o token da página.
+  let nomeAnuncio = '', nomeConjunto = '', nomeCampanhaMeta = '', nomeForm = '';
+  try {
+    if (lead.ad_id) {
+      const ad = await graphMeta(lead.ad_id, 'name,adset{name},campaign{name}', process.env.META_ADS_TOKEN);
+      nomeAnuncio = ad.name || '';
+      nomeConjunto = ad.adset?.name || '';
+      nomeCampanhaMeta = ad.campaign?.name || '';
+    }
+  } catch (e) { console.error('[Meta] anúncio/conjunto/campanha:', e.message); }
   try { if (lead.form_id) { const fm = await graphMeta(lead.form_id, 'name'); nomeForm = fm.name || ''; } } catch (e) { console.error('[Meta] formulário:', e.message); }
-  const textoCampanha = `${nomeForm} ${nomeAnuncio}`.toUpperCase();
+  const todosNomes = [nomeConjunto, nomeCampanhaMeta, nomeAnuncio, nomeForm].filter(Boolean).join(' ');
+  const textoCampanha = todosNomes.toUpperCase();
   const codigoMatch = textoCampanha.match(/[A-Z]{2}\d{2,}/);
   const imovelCodigo = codigoMatch ? codigoMatch[0] : '';
-  const imovelDesc = (nomeForm || nomeAnuncio || '').trim();
+  const imovelDesc = (nomeConjunto || nomeCampanhaMeta || nomeForm || nomeAnuncio || '')
+    .replace(/\s*\[([^\]]+)\]\s*/g, (todo, nomeTag) => (TELEFONES_CORRETORES[normalizarTexto(nomeTag)] ? ' ' : todo))
+    .trim();
 
-  // Rodízio próprio do Meta (separado do Canal Pro).
-  const chaveIndice = 'indice_rodizio_meta';
-  const idx = parseInt(await lerConfig(chaveIndice), 10) || 0;
-  const corretor = CORRETORES_META[idx % CORRETORES_META.length];
-  await salvarConfig(chaveIndice, String((idx + 1) % CORRETORES_META.length));
+  // Campanha fixa: se o nome do formulário/anúncio trouxer corretor(es) entre
+  // colchetes, ex: "VD03 - Gran Veneza [Junior]" ou "... [junior] [michelle]",
+  // o lead vai SÓ pra eles (1 = sempre ele; 2+ = rodízio só entre eles) e NÃO
+  // mexe no rodízio geral. Colchetes que não são nome de corretor (ex: [GRAN VENEZA],
+  // [18 A 55]) são ignorados.
+  const textoNomes = todosNomes;
+  const fixos = [];
+  for (const m of textoNomes.matchAll(/\[([^\]]+)\]/g)) {
+    const entrada = TELEFONES_CORRETORES[normalizarTexto(m[1])];
+    if (!entrada) continue;
+    if (!entrada.fone) { console.error(`[Meta] Corretor "${entrada.nome}" está na campanha, mas sem telefone cadastrado — ignorado.`); continue; }
+    if (!fixos.some(c => c.nome === entrada.nome)) fixos.push(entrada);
+  }
+
+  let corretor = null;
+  if (fixos.length === 1) {
+    corretor = fixos[0];
+  } else if (fixos.length > 1) {
+    const chaveFixa = 'indice_rodizio_meta_campanha_' + fixos.map(c => normalizarTexto(c.nome)).sort().join('_');
+    const idxFixo = parseInt(await lerConfig(chaveFixa), 10) || 0;
+    corretor = fixos[idxFixo % fixos.length];
+    await salvarConfig(chaveFixa, String((idxFixo + 1) % fixos.length));
+  }
+
+  // Sem corretor fixo: rodízio geral do Meta (separado do Canal Pro).
+  if (!corretor) {
+    const chaveIndice = 'indice_rodizio_meta';
+    const idx = parseInt(await lerConfig(chaveIndice), 10) || 0;
+    corretor = CORRETORES_META[idx % CORRETORES_META.length];
+    await salvarConfig(chaveIndice, String((idx + 1) % CORRETORES_META.length));
+  }
 
   const texto =
     `Segue um novo lead interessado ${imovelDesc || 'Meta Ads'}\n` +
