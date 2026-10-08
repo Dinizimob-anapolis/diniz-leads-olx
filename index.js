@@ -8,8 +8,9 @@ const { CRM_HTML } = require('./crm-template');
 const { JULIANE_HTML } = require('./juliane-template');
 const { CORRETOR_HTML } = require('./corretor-template');
 const { ANALYTICS_HTML } = require('./analytics-template');
+const crypto = require('crypto');
 const app = express();
-app.use(express.json());
+app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
 
 // ─── OAUTH DO GOOGLE DRIVE (conta pessoal, não a de serviço) ─
 // Contas de serviço não têm espaço de armazenamento no Drive pessoal — por
@@ -1167,6 +1168,119 @@ app.post('/lead-canalpro', async (req, res) => {
   } catch (err) {
     console.error('Erro ao processar lead:', err);
     res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
+// ─── ROTA: LEADS DO META (Lead Ads) → CRM + RODÍZIO ──────────
+// Variáveis no Railway:
+//   META_VERIFY_TOKEN  — texto qualquer que você inventa; o mesmo vai no campo "Verify token" do webhook no app da Meta
+//   META_PAGE_TOKEN    — token de acesso da página (permissão leads_retrieval)
+//   META_APP_SECRET    — (opcional, recomendado) segredo do app, valida que a chamada veio mesmo da Meta
+// No app da Meta: Webhooks → objeto "Page" → URL https://SEU-DOMINIO/webhook-meta-leads → assinar o campo "leadgen".
+// Depois, assinar o app na página: POST /{page-id}/subscribed_apps?subscribed_fields=leadgen
+const META_GRAPH = 'https://graph.facebook.com/v21.0';
+let filaMetaLeads = Promise.resolve(); // processa um lead por vez, pro rodízio não repetir corretor
+
+app.get('/webhook-meta-leads', (req, res) => {
+  const token = process.env.META_VERIFY_TOKEN;
+  if (token && req.query['hub.mode'] === 'subscribe' && req.query['hub.verify_token'] === token) {
+    return res.status(200).send(req.query['hub.challenge']);
+  }
+  res.sendStatus(403);
+});
+
+async function graphMeta(caminho, campos) {
+  const url = `${META_GRAPH}/${caminho}?${campos ? `fields=${encodeURIComponent(campos)}&` : ''}access_token=${encodeURIComponent(process.env.META_PAGE_TOKEN || '')}`;
+  const r = await fetch(url);
+  const json = await r.json();
+  if (!r.ok || json.error) throw new Error(`Graph ${caminho}: ${json.error?.message || r.status}`);
+  return json;
+}
+
+async function processarLeadMeta(leadgenId) {
+  // Meta reenvia o mesmo aviso se demorar: só processa cada lead uma vez.
+  const novo = await pool.query(
+    `INSERT INTO config_sistema (chave, valor) VALUES ($1, '1') ON CONFLICT (chave) DO NOTHING RETURNING chave`,
+    [`meta_lead_${leadgenId}`]
+  );
+  if (novo.rowCount === 0) {
+    console.log(`[Meta] Lead ${leadgenId} já processado, ignorado.`);
+    return;
+  }
+
+  const lead = await graphMeta(leadgenId);
+  const campos = {};
+  for (const f of lead.field_data || []) campos[String(f.name).toLowerCase()] = (f.values || [])[0] || '';
+
+  const nome = campos.full_name || campos.nome || campos.name ||
+    [campos.first_name, campos.last_name].filter(Boolean).join(' ') || 'Sem nome';
+  const telefoneBruto = campos.phone_number || campos.telefone || campos.whatsapp || campos.phone || '';
+  const email = campos.email || null;
+  const whatsapp = canonicalizarWhatsapp(telefoneBruto);
+
+  // Nome do anúncio/formulário: é daí que sai o código do imóvel (ex: VD03) que agrupa a campanha.
+  let nomeAnuncio = '', nomeForm = '';
+  try { if (lead.ad_id) { const ad = await graphMeta(lead.ad_id, 'name'); nomeAnuncio = ad.name || ''; } } catch (e) { console.error('[Meta] anúncio:', e.message); }
+  try { if (lead.form_id) { const fm = await graphMeta(lead.form_id, 'name'); nomeForm = fm.name || ''; } } catch (e) { console.error('[Meta] formulário:', e.message); }
+  const textoCampanha = `${nomeForm} ${nomeAnuncio}`.toUpperCase();
+  const codigoMatch = textoCampanha.match(/[A-Z]{2}\d{2,}/);
+  const imovelCodigo = codigoMatch ? codigoMatch[0] : '';
+  const imovelDesc = (nomeForm || nomeAnuncio || '').trim();
+
+  // Rodízio próprio do Meta (separado do Canal Pro).
+  const chaveIndice = 'indice_rodizio_meta';
+  const idx = parseInt(await lerConfig(chaveIndice), 10) || 0;
+  const corretor = CORRETORES[idx % CORRETORES.length];
+  await salvarConfig(chaveIndice, String((idx + 1) % CORRETORES.length));
+
+  const texto =
+    `Segue um novo lead interessado ${imovelDesc || 'Meta Ads'}\n` +
+    `nome: ${nome}\n` +
+    `whatsapp: ${whatsapp ? '+' + whatsapp : telefoneBruto || 'sem número'}\n` +
+    (email ? `email: ${email}\n` : '') +
+    `\ncorretor: ${corretor.nome}`;
+
+  await enviarWhatsApp(corretor.fone, texto);
+  if (NUMERO_SUPERVISAO) {
+    try { await enviarWhatsApp(NUMERO_SUPERVISAO, texto); } catch (e) { console.error('[Meta] aviso supervisão:', e.message); }
+  }
+
+  await salvarDistribuicao({
+    nome, email, whatsapp, whatsappBruto: telefoneBruto,
+    corretor: corretor.nome, imovelCodigo, imovelDesc,
+  }, 'Meta Ads');
+
+  console.log(`[Meta] Lead ${nome} (${whatsapp || telefoneBruto}) → ${corretor.nome} [${imovelCodigo || 'sem código'}]`);
+}
+
+app.post('/webhook-meta-leads', (req, res) => {
+  // Valida assinatura quando META_APP_SECRET está definido.
+  const segredo = process.env.META_APP_SECRET;
+  if (segredo) {
+    const recebida = req.headers['x-hub-signature-256'] || '';
+    const esperada = 'sha256=' + crypto.createHmac('sha256', segredo).update(req.rawBody || Buffer.alloc(0)).digest('hex');
+    const a = Buffer.from(recebida), b = Buffer.from(esperada);
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return res.sendStatus(403);
+  }
+
+  res.sendStatus(200); // responde já; a Meta reenvia se demorar
+
+  if (!process.env.DATABASE_URL || !process.env.META_PAGE_TOKEN) {
+    console.error('[Meta] DATABASE_URL ou META_PAGE_TOKEN não configurados — lead ignorado.');
+    return;
+  }
+  for (const entry of req.body?.entry || []) {
+    for (const change of entry.changes || []) {
+      if (change.field !== 'leadgen' || !change.value?.leadgen_id) continue;
+      const id = String(change.value.leadgen_id);
+      filaMetaLeads = filaMetaLeads
+        .then(() => processarLeadMeta(id))
+        .catch(async err => {
+          console.error(`[Meta] Erro ao processar lead ${id}:`, err);
+          // libera a marca de "já processado" pra poder reprocessar depois
+          try { await pool.query('DELETE FROM config_sistema WHERE chave = $1', [`meta_lead_${id}`]); } catch (e) {}
+        });
+    }
   }
 });
 
