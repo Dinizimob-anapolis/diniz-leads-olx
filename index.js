@@ -1259,6 +1259,17 @@ async function graphMeta(caminho, campos, token) {
   return json;
 }
 
+// Tira do nome da campanha tudo que é interno (colchetes de segmentação/corretor e
+// nomes de corretores soltos), pra mensagem que o corretor recebe mostrar só o imóvel.
+// Ex: "[GRAN VENEZA][TODOS] [18 A 55] - GRAN VENEZA GERAL [junior] [michelle]" → "GRAN VENEZA GERAL"
+function limparNomeCampanha(texto) {
+  let t = String(texto || '').replace(/\[[^\]]*\]/g, ' ');
+  t = t.split(/\s+/)
+    .filter(w => !TELEFONES_CORRETORES[normalizarTexto(w.replace(/[^\p{L}\p{N}]/gu, ''))])
+    .join(' ');
+  return t.replace(/^[\s\-–—|,\/]+|[\s\-–—|,\/]+$/g, '').replace(/\s{2,}/g, ' ').trim();
+}
+
 async function processarLeadMeta(leadgenId) {
   // Meta reenvia o mesmo aviso se demorar: só processa cada lead uma vez.
   const novo = await pool.query(
@@ -1299,9 +1310,7 @@ async function processarLeadMeta(leadgenId) {
   const textoCampanha = todosNomes.toUpperCase();
   const codigoMatch = textoCampanha.match(/[A-Z]{2}\d{2,}/);
   const imovelCodigo = codigoMatch ? codigoMatch[0] : '';
-  const imovelDesc = (nomeConjunto || nomeCampanhaMeta || nomeForm || nomeAnuncio || '')
-    .replace(/\s*\[([^\]]+)\]\s*/g, (todo, nomeTag) => (TELEFONES_CORRETORES[normalizarTexto(nomeTag)] ? ' ' : todo))
-    .trim();
+  const imovelDesc = limparNomeCampanha(nomeConjunto || nomeCampanhaMeta || nomeForm || nomeAnuncio || '');
 
   // Campanha fixa: se o nome do formulário/anúncio trouxer corretor(es) entre
   // colchetes, ex: "VD03 - Gran Veneza [Junior]" ou "... [junior] [michelle]",
