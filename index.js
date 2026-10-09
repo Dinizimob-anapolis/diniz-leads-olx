@@ -32,7 +32,7 @@ function getOAuthClient() {
 
 // ─── CONFIGURAÇÕES ───────────────────────────────────────────
 const EVOLUTION_URL = 'https://evolution-api-production-5e4f.up.railway.app';
-const EVOLUTION_INSTANCE = 'diniz-leads-olx';
+const EVOLUTION_INSTANCE = process.env.EVOLUTION_INSTANCE || 'diniz-leads-olx';
 const EVOLUTION_INSTANCE_TIKTOK = 'diniz-tiktok';
 const EVOLUTION_TOKEN = 'A0929C1CF6C5-4E04-9FFB-3A4B073EE943';
 
@@ -128,6 +128,8 @@ function normalizarNomeCorretor(nomeDigitado) {
   if (!chave) return chave;
   const semAcento = s => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
   const alvo = semAcento(chave);
+  const apelidos = { michele: 'Michelle', michelle: 'Michelle', michelli: 'Michelle', patricia: 'Patricia', patrícia: 'Patricia' };
+  if (apelidos[alvo]) return apelidos[alvo];
   const oficial = NOMES_OFICIAIS_CORRETORES.find(nome => semAcento(nome) === alvo);
   return oficial || chave;
 }
@@ -402,6 +404,14 @@ async function initDb() {
     }
   } catch (err) {
     console.error('Erro ao limpar corretor "Rubens":', err);
+  }
+
+  // Grafias antigas ("Michele") viram "Michelle" pra aparecer no CRM dela.
+  try {
+    const fix = await pool.query(`UPDATE leads SET corretor = 'Michelle' WHERE lower(trim(corretor)) IN ('michele','michelli') RETURNING id`);
+    if (fix.rowCount > 0) console.log(`✅ ${fix.rowCount} lead(s) com grafia "Michele" corrigidos para "Michelle".`);
+  } catch (err) {
+    console.error('Erro ao corrigir grafia Michele:', err);
   }
 }
 
@@ -1021,6 +1031,7 @@ async function salvarDistribuicao(dados, origemPadrao = null) {
   const whatsappFinal = dados.whatsapp || gerarChaveSemNumero(dados.nome, dados.email);
   const whatsappBruto = numeroInvalido ? (dados.whatsappBruto || null) : null;
   const interesse = dados.mensagemOriginal || null;
+  dados = { ...dados, corretor: normalizarNomeCorretor(dados.corretor) };
 
   await pool.query(
     `INSERT INTO leads (whatsapp, nome, email, corretor, imovel_codigo, imovel_desc, origem, numero_invalido, whatsapp_bruto, interesse)
