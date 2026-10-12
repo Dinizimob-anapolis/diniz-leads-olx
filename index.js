@@ -747,7 +747,7 @@ async function enviarResumo() {
 // ─── FUNÇÃO: ENVIAR MENSAGEM WHATSAPP ────────────────────────
 // instancia opcional — usa a instância principal por padrão
 async function enviarWhatsApp(fone, mensagem, instancia = EVOLUTION_INSTANCE) {
-  const res = await fetch(`${EVOLUTION_URL}/message/sendText/${instancia}`, {
+  const res = await fetch(`${EVOLUTION_URL}/message/sendText/${encodeURIComponent(instancia)}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -1281,9 +1281,11 @@ function limparNomeCampanha(texto) {
   return t.replace(/^[\s\-–—|,\/]+|[\s\-–—|,\/]+$/g, '').replace(/\s{2,}/g, ' ').trim();
 }
 
-async function processarLeadMeta(leadgenId) {
+// `simulado` (opcional): usado só pela rota de teste. { lead, nomeConjunto, real }
+//  - sem `real`: a mensagem vai SÓ pro NUMERO_SUPERVISAO e o rodízio não avança.
+async function processarLeadMeta(leadgenId, simulado = null) {
   // Meta reenvia o mesmo aviso se demorar: só processa cada lead uma vez.
-  const novo = await pool.query(
+  const novo = simulado ? { rowCount: 1 } : await pool.query(
     `INSERT INTO config_sistema (chave, valor) VALUES ($1, '1') ON CONFLICT (chave) DO NOTHING RETURNING chave`,
     [`meta_lead_${leadgenId}`]
   );
@@ -1292,7 +1294,7 @@ async function processarLeadMeta(leadgenId) {
     return;
   }
 
-  const lead = await graphMeta(leadgenId);
+  const lead = simulado ? simulado.lead : await graphMeta(leadgenId);
   const campos = {};
   for (const f of lead.field_data || []) campos[String(f.name).toLowerCase()] = (f.values || [])[0] || '';
 
@@ -1308,15 +1310,16 @@ async function processarLeadMeta(leadgenId) {
   // exige permissão de anúncios: usa META_ADS_TOKEN (token de usuário com ads_read) se
   // existir; senão tenta com o token da página.
   let nomeAnuncio = '', nomeConjunto = '', nomeCampanhaMeta = '', nomeForm = '';
+  if (simulado) nomeConjunto = simulado.nomeConjunto || '';
   try {
-    if (lead.ad_id) {
+    if (!simulado && lead.ad_id) {
       const ad = await graphMeta(lead.ad_id, 'name,adset{name},campaign{name}', process.env.META_ADS_TOKEN);
       nomeAnuncio = ad.name || '';
       nomeConjunto = ad.adset?.name || '';
       nomeCampanhaMeta = ad.campaign?.name || '';
     }
   } catch (e) { console.error('[Meta] anúncio/conjunto/campanha:', e.message); }
-  try { if (lead.form_id) { const fm = await graphMeta(lead.form_id, 'name'); nomeForm = fm.name || ''; } } catch (e) { console.error('[Meta] formulário:', e.message); }
+  try { if (!simulado && lead.form_id) { const fm = await graphMeta(lead.form_id, 'name'); nomeForm = fm.name || ''; } } catch (e) { console.error('[Meta] formulário:', e.message); }
   const todosNomes = [nomeConjunto, nomeCampanhaMeta, nomeAnuncio, nomeForm].filter(Boolean).join(' ');
   const textoCampanha = todosNomes.toUpperCase();
   const codigoMatch = textoCampanha.match(/[A-Z]{2}\d{2,}/);
@@ -1352,7 +1355,7 @@ async function processarLeadMeta(leadgenId) {
     const chaveIndice = 'indice_rodizio_meta';
     const idx = parseInt(await lerConfig(chaveIndice), 10) || 0;
     corretor = CORRETORES_META[idx % CORRETORES_META.length];
-    await salvarConfig(chaveIndice, String((idx + 1) % CORRETORES_META.length));
+    if (!simulado || simulado.real) await salvarConfig(chaveIndice, String((idx + 1) % CORRETORES_META.length));
   }
 
   const texto =
@@ -1362,9 +1365,9 @@ async function processarLeadMeta(leadgenId) {
     (email ? `email: ${email}\n` : '') +
     `\ncorretor: ${corretor.nome}`;
 
-  await enviarWhatsApp(corretor.fone, texto);
+  if (!simulado || simulado.real) await enviarWhatsApp(corretor.fone, texto);
   if (NUMERO_SUPERVISAO) {
-    try { await enviarWhatsApp(NUMERO_SUPERVISAO, texto); } catch (e) { console.error('[Meta] aviso supervisão:', e.message); }
+    try { await enviarWhatsApp(NUMERO_SUPERVISAO, (simulado && !simulado.real ? '🧪 TESTE (não foi enviado ao corretor)\n' : '') + texto); } catch (e) { console.error('[Meta] aviso supervisão:', e.message); }
   }
 
   await salvarDistribuicao({
@@ -1374,6 +1377,32 @@ async function processarLeadMeta(leadgenId) {
 
   console.log(`[Meta] Lead ${nome} (${whatsapp || telefoneBruto}) → ${corretor.nome} [${imovelCodigo || 'sem código'}]`);
 }
+
+
+// ─── ROTA DE TESTE: simula a chegada de um lead do Meta ──────
+// Passa por todo o caminho (campanha → corretor → WhatsApp → CRM) sem depender do Meta.
+// Uso (logado como admin):  /api/admin/testar-meta-lead?nome=Teste&fone=62999999999
+//   &campanha=GRAN%20VENEZA%20VD01%20[junior]   (opcional: simula o nome do conjunto de anúncios)
+//   &real=1                                      (opcional: manda também pro corretor; sem isso vai só pro NUMERO_SUPERVISAO)
+app.all('/api/admin/testar-meta-lead', basicAuth, async (req, res) => {
+  try {
+    const q = { ...req.query, ...(req.body || {}) };
+    const nome = String(q.nome || 'Teste Sistema');
+    const fone = String(q.fone || '62900000000');
+    const lead = { field_data: [
+      { name: 'full_name', values: [nome] },
+      { name: 'phone_number', values: [fone] },
+      { name: 'email', values: [String(q.email || 'teste@teste.com')] },
+    ] };
+    await processarLeadMeta('teste-' + Date.now(), {
+      lead, nomeConjunto: String(q.campanha || ''), real: q.real === '1' || q.real === 'true',
+    });
+    res.json({ ok: true, aviso: 'Lead de teste processado. Veja o WhatsApp de supervisão e o CRM (origem Meta Ads).' });
+  } catch (err) {
+    console.error('[Meta] Erro no teste:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
 
 app.post('/webhook-meta-leads', (req, res) => {
   // Valida assinatura quando META_APP_SECRET está definido.
