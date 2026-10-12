@@ -1355,7 +1355,7 @@ async function processarLeadMeta(leadgenId, simulado = null) {
     const chaveIndice = 'indice_rodizio_meta';
     const idx = parseInt(await lerConfig(chaveIndice), 10) || 0;
     corretor = CORRETORES_META[idx % CORRETORES_META.length];
-    if (!simulado || simulado.real) await salvarConfig(chaveIndice, String((idx + 1) % CORRETORES_META.length));
+    await salvarConfig(chaveIndice, String((idx + 1) % CORRETORES_META.length));
   }
 
   const texto =
@@ -1376,6 +1376,7 @@ async function processarLeadMeta(leadgenId, simulado = null) {
   }, 'Meta Ads');
 
   console.log(`[Meta] Lead ${nome} (${whatsapp || telefoneBruto}) → ${corretor.nome} [${imovelCodigo || 'sem código'}]`);
+  return corretor.nome;
 }
 
 
@@ -1383,21 +1384,32 @@ async function processarLeadMeta(leadgenId, simulado = null) {
 // Passa por todo o caminho (campanha → corretor → WhatsApp → CRM) sem depender do Meta.
 // Uso (logado como admin):  /api/admin/testar-meta-lead?nome=Teste&fone=62999999999
 //   &campanha=GRAN%20VENEZA%20VD01%20[junior]   (opcional: simula o nome do conjunto de anúncios)
+//   &n=5                                         (opcional: quantos leads de teste em sequência, máx 10)
 //   &real=1                                      (opcional: manda também pro corretor; sem isso vai só pro NUMERO_SUPERVISAO)
 app.all('/api/admin/testar-meta-lead', basicAuth, async (req, res) => {
   try {
     const q = { ...req.query, ...(req.body || {}) };
-    const nome = String(q.nome || 'Teste Sistema');
-    const fone = String(q.fone || '62900000000');
-    const lead = { field_data: [
-      { name: 'full_name', values: [nome] },
-      { name: 'phone_number', values: [fone] },
-      { name: 'email', values: [String(q.email || 'teste@teste.com')] },
-    ] };
-    await processarLeadMeta('teste-' + Date.now(), {
-      lead, nomeConjunto: String(q.campanha || ''), real: q.real === '1' || q.real === 'true',
-    });
-    res.json({ ok: true, aviso: 'Lead de teste processado. Veja o WhatsApp de supervisão e o CRM (origem Meta Ads).' });
+    const n = Math.min(Math.max(parseInt(q.n, 10) || 1, 1), 10);
+    const real = q.real === '1' || q.real === 'true';
+    const chaveIndice = 'indice_rodizio_meta';
+    const indiceOriginal = await lerConfig(chaveIndice); // restaurado no fim, se não for real
+    const sequencia = [];
+    for (let i = 1; i <= n; i++) {
+      const nome = String(q.nome || 'Teste Sistema') + (n > 1 ? ' ' + i : '');
+      const fone = String(q.fone || '6290000000') + String(i).padStart(2, '0');
+      const lead = { field_data: [
+        { name: 'full_name', values: [nome] },
+        { name: 'phone_number', values: [fone] },
+        { name: 'email', values: [String(q.email || 'teste@teste.com')] },
+      ] };
+      const quem = await processarLeadMeta('teste-' + Date.now() + '-' + i, {
+        lead, nomeConjunto: String(q.campanha || ''), real,
+      });
+      sequencia.push(`${nome} → ${quem}`);
+    }
+    if (!real) await salvarConfig(chaveIndice, indiceOriginal == null ? '0' : String(indiceOriginal));
+    res.json({ ok: true, sequencia, rodizio_preservado: !real,
+      aviso: 'Veja o WhatsApp de supervisão e o CRM (origem Meta Ads). Apague os leads de teste depois.' });
   } catch (err) {
     console.error('[Meta] Erro no teste:', err);
     res.status(500).json({ ok: false, erro: err.message });
