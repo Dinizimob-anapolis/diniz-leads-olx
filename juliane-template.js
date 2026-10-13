@@ -460,6 +460,7 @@ const JULIANE_HTML = `<!DOCTYPE html>
   <button class="add-contato-btn" id="btn-salvar-backup" style="background:#fff;color:#17a34a;border:1px solid #17a34a;box-shadow:none;">💾 Salvar backup</button>
   <button class="add-contato-btn" id="btn-baixar-csv" style="background:#fff;color:#3b6cf0;border:1px solid #3b6cf0;box-shadow:none;">⬇️ Baixar planilha</button>
   <button class="add-contato-btn" id="btn-analytics" onclick="window.location.href='/analytics?origem=juliane'" style="background:#fff;color:#7c5cff;border:1px solid #7c5cff;box-shadow:none;">📊 Analytics</button>
+  <button class="add-contato-btn" id="btn-novo-corretor" style="background:#fff;color:#12b76a;border:1px solid #12b76a;box-shadow:none;">👤 Adicionar corretor</button>
   <button class="add-contato-btn" id="btn-adicionar">+ Adicionar contato</button>
 </div>
 
@@ -647,6 +648,7 @@ async function carregar() {
     const dataSdr = await resSdr.json();
     LEADS_JULIANE = dataTodos.leads || dataTodos || [];
     LEADS_SDR = dataSdr.leads || dataSdr || [];
+    await carregarCorretoresExtra();
     render();
   } catch (err) {
     document.getElementById('board').innerHTML = '<div style="color:var(--muted);padding:20px;">Erro ao carregar leads. Recarregue a página.</div>';
@@ -1304,6 +1306,124 @@ document.getElementById('overlay').addEventListener('click', e => {
 });
 
 document.getElementById('btn-adicionar').addEventListener('click', abrirModalAdicionar);
+
+// ─── Corretores adicionados pelo painel ─────────────────────
+let CORRETORES_EXTRA = [];
+async function carregarCorretoresExtra() {
+  try {
+    const res = await fetch('/api/corretores-extra', { cache: 'no-store' });
+    const data = await res.json();
+    if (!data.ok) return;
+    CORRETORES_EXTRA = data.corretores || [];
+    CORRETORES_EXTRA.forEach(c => {
+      if (!ORDEM_CORRETORES_JULIANE.includes(c.nome)) ORDEM_CORRETORES_JULIANE.push(c.nome);
+      if (!NOMES_OFICIAIS_CORRETORES.includes(c.nome)) NOMES_OFICIAIS_CORRETORES.push(c.nome);
+    });
+  } catch (e) { /* segue sem os extras */ }
+}
+
+function abrirModalNovoCorretor() {
+  const lista = CORRETORES_EXTRA.length
+    ? '<label>Adicionados pelo painel</label>' + CORRETORES_EXTRA.map(c =>
+        '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line, #eee);font-size:13px;">' +
+        '<span><b>' + c.nome + '</b> · login: ' + c.usuario + (c.rodizio_meta ? ' · rodízio Meta' : '') + '</span>' +
+        '<button type="button" class="close-btn" data-remover-corretor="' + c.id + '" style="padding:2px 8px;">Remover</button></div>').join('')
+    : '';
+  document.getElementById('modal').innerHTML = \`
+    <h2>Adicionar corretor</h2>
+    <div class="lead-meta">Cria o CRM dele (login e senha) e libera ele pra receber leads</div>
+
+    <label>Nome do corretor</label>
+    <input type="text" id="nc-nome" placeholder="Ex: Carlos">
+
+    <label>WhatsApp (recebe os leads)</label>
+    <input type="text" id="nc-whatsapp" placeholder="Com DDD, ex: 62999998888">
+
+    <label>Usuário do CRM</label>
+    <input type="text" id="nc-usuario" placeholder="Ex: carlos" autocapitalize="none">
+
+    <label>Senha do CRM (mín. 6 caracteres)</label>
+    <input type="text" id="nc-senha" placeholder="Crie uma senha">
+
+    <label style="display:flex;align-items:center;gap:8px;">
+      <input type="checkbox" id="nc-rodizio" style="width:auto;margin:0;"> Entra no rodízio dos leads do Meta
+    </label>
+
+    <div id="nc-aviso"></div>
+    \${lista}
+    <div class="modal-actions">
+      <button class="close-btn" id="modal-fechar">Fechar</button>
+      <button class="primary-btn" id="nc-confirmar">Criar corretor</button>
+    </div>
+  \`;
+  document.getElementById('overlay').classList.add('show');
+  document.getElementById('modal-fechar').addEventListener('click', fecharModal);
+  document.getElementById('nc-confirmar').addEventListener('click', confirmarNovoCorretor);
+  document.querySelectorAll('[data-remover-corretor]').forEach(btn => {
+    btn.addEventListener('click', () => removerCorretorExtra(btn.getAttribute('data-remover-corretor')));
+  });
+  setTimeout(() => document.getElementById('nc-nome').focus(), 50);
+}
+
+async function confirmarNovoCorretor() {
+  const avisoEl = document.getElementById('nc-aviso');
+  const corpo = {
+    nome: document.getElementById('nc-nome').value.trim(),
+    whatsapp: document.getElementById('nc-whatsapp').value.trim(),
+    usuario: document.getElementById('nc-usuario').value.trim(),
+    senha: document.getElementById('nc-senha').value,
+    rodizio_meta: document.getElementById('nc-rodizio').checked,
+  };
+  if (!corpo.nome || !corpo.whatsapp || !corpo.usuario || !corpo.senha) {
+    avisoEl.innerHTML = '<div class="aviso-modal warn">Preencha nome, WhatsApp, usuário e senha.</div>';
+    return;
+  }
+  try {
+    const res = await fetch('/api/corretores-extra', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo),
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      avisoEl.innerHTML = '<div class="aviso-modal warn">⚠️ ' + (data.erro || 'Não consegui criar.') + '</div>';
+      return;
+    }
+    await carregarCorretoresExtra();
+    render();
+    const link = window.location.origin + '/crm';
+    document.getElementById('modal').innerHTML = \`
+      <h2>✅ Corretor criado</h2>
+      <div class="lead-meta">Mande estes dados pro \${data.corretor.nome}. A senha não aparece de novo.</div>
+      <div class="aviso-modal ok" style="user-select:all;white-space:pre-line;">Link: \${link}
+Usuário: \${data.corretor.usuario}
+Senha: \${corpo.senha}</div>
+      <div class="lead-meta" style="margin-top:8px;">\${data.corretor.rodizio_meta ? 'Ele já entra no rodízio dos leads do Meta.' : 'Ele não entra no rodízio. Você pode destinar leads a ele manualmente.'} Uma coluna dele já aparece no seu quadro.</div>
+      <div class="modal-actions"><button class="primary-btn" id="modal-fechar">Fechar</button></div>
+    \`;
+    document.getElementById('modal-fechar').addEventListener('click', fecharModal);
+  } catch (e) {
+    avisoEl.innerHTML = '<div class="aviso-modal warn">⚠️ Erro de conexão. Tenta de novo.</div>';
+  }
+}
+
+async function removerCorretorExtra(id) {
+  if (!confirm('Remover esse corretor? Ele perde o acesso e sai do rodízio. Os leads dele continuam salvos.')) return;
+  try {
+    const res = await fetch('/api/corretores-extra/' + encodeURIComponent(id), { method: 'DELETE' });
+    const data = await res.json();
+    if (!data.ok) { alert(data.erro || 'Não consegui remover.'); return; }
+    const removido = CORRETORES_EXTRA.find(c => String(c.id) === String(id));
+    if (removido) {
+      const i = ORDEM_CORRETORES_JULIANE.indexOf(removido.nome);
+      if (i >= 0) ORDEM_CORRETORES_JULIANE.splice(i, 1);
+    }
+    await carregarCorretoresExtra();
+    render();
+    abrirModalNovoCorretor();
+  } catch (e) { alert('Erro de conexão. Tenta de novo.'); }
+}
+
+document.getElementById('btn-novo-corretor').addEventListener('click', abrirModalNovoCorretor);
+
 // Recarrega a página de verdade (não só a lista de leads) — assim, depois
 // de um deploy novo, clicar aqui já pega a versão mais recente do CRM.
 document.getElementById('btn-atualizar').addEventListener('click', () => {
