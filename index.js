@@ -142,6 +142,52 @@ const pool = new Pool({
     : false,
 });
 
+
+// ─── CORRETORES ADICIONADOS PELO PAINEL (Juliane) ─────────────
+// Além dos corretores fixos acima, a Juliane pode cadastrar novos no painel:
+// nome, WhatsApp, login/senha do CRM dele e se entra no rodízio do Meta.
+// Ficam na tabela corretores_extra e são carregados em memória (a autenticação
+// é síncrona). Os nomes entram nas mesmas listas dos fixos.
+let LOGINS_DINAMICOS = []; // { user, salt, hash, nome }
+const NOMES_DINAMICOS = new Set();
+const NOMES_FIXOS_INICIAIS = new Set();
+
+function hashSenha(senha, salt) {
+  return crypto.scryptSync(String(senha), salt, 32).toString('hex');
+}
+function senhaConfere(senha, salt, hashEsperado) {
+  try {
+    const a = Buffer.from(hashSenha(senha, salt), 'hex');
+    const b = Buffer.from(hashEsperado, 'hex');
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
+  } catch (e) { return false; }
+}
+function removerDaLista(lista, fnIgual) {
+  for (let i = lista.length - 1; i >= 0; i--) if (fnIgual(lista[i])) lista.splice(i, 1);
+}
+
+async function carregarCorretoresExtra() {
+  if (!process.env.DATABASE_URL) return;
+  const r = await pool.query(`SELECT nome, usuario, senha_salt, senha_hash, fone, rodizio_meta FROM corretores_extra WHERE ativo = true ORDER BY id`);
+  // limpa o que veio da carga anterior
+  for (const nome of NOMES_DINAMICOS) {
+    delete TELEFONES_CORRETORES[normalizarTexto(nome)];
+    removerDaLista(NOMES_OFICIAIS_CORRETORES, n => n === nome);
+    removerDaLista(CORRETORES_EXTRA_DASHBOARD, n => n === nome);
+    removerDaLista(CORRETORES_META, c => c.nome === nome);
+  }
+  NOMES_DINAMICOS.clear();
+  LOGINS_DINAMICOS = [];
+  for (const row of r.rows) {
+    NOMES_DINAMICOS.add(row.nome);
+    TELEFONES_CORRETORES[normalizarTexto(row.nome)] = { nome: row.nome, fone: row.fone };
+    if (!NOMES_OFICIAIS_CORRETORES.includes(row.nome)) NOMES_OFICIAIS_CORRETORES.push(row.nome);
+    if (!CORRETORES_EXTRA_DASHBOARD.includes(row.nome)) CORRETORES_EXTRA_DASHBOARD.push(row.nome);
+    if (row.rodizio_meta && !CORRETORES_META.some(c => c.nome === row.nome)) CORRETORES_META.push({ nome: row.nome, fone: row.fone });
+    LOGINS_DINAMICOS.push({ user: row.usuario, salt: row.senha_salt, hash: row.senha_hash, nome: row.nome });
+  }
+}
+
 const THROTTLE_AVISO_MS = 6 * 60 * 60 * 1000; // 6 horas
 
 // Campos do funil que podem ser editados manualmente pelo dashboard
@@ -404,6 +450,25 @@ async function initDb() {
     }
   } catch (err) {
     console.error('Erro ao limpar corretor "Rubens":', err);
+  }
+
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS corretores_extra (
+        id SERIAL PRIMARY KEY,
+        nome TEXT NOT NULL,
+        usuario TEXT UNIQUE NOT NULL,
+        senha_salt TEXT NOT NULL,
+        senha_hash TEXT NOT NULL,
+        fone TEXT NOT NULL,
+        rodizio_meta BOOLEAN DEFAULT false,
+        ativo BOOLEAN DEFAULT true,
+        criado_em TIMESTAMP DEFAULT now()
+      )`);
+    await carregarCorretoresExtra();
+    console.log(`✅ Corretores adicionados pelo painel carregados: ${LOGINS_DINAMICOS.length}`);
+  } catch (err) {
+    console.error('Erro ao carregar corretores adicionados pelo painel:', err);
   }
 
   // Grafias antigas ("Michele") viram "Michelle" pra aparecer no CRM dela.
@@ -1649,6 +1714,14 @@ function basicAuthAdminOuSdr(req, res, next) {
     }
   }
 
+  for (const login of LOGINS_DINAMICOS) {
+    if (u === login.user && p && senhaConfere(p, login.salt, login.hash)) {
+      req.authTipo = 'corretor';
+      req.corretorNome = login.nome;
+      return next();
+    }
+  }
+
   res.set('WWW-Authenticate', 'Basic realm="Painel de Leads"');
   return res.status(401).send('Credenciais inválidas');
 }
@@ -1661,6 +1734,71 @@ const CAMPOS_EDITAVEIS_CORRETOR = ['status_corretor', 'notas_sdr', 'tarefa_sdr',
 // venda, corretor, origem etc.) continua só pra quem loga como admin.
 const CAMPOS_EDITAVEIS_SDR = ['status', 'notas_sdr', 'carteira_sdr', 'tarefa_sdr', 'tarefa_data', 'corretores_repassados', 'ultima_atualizacao_sdr', 'valor_imovel_sdr', 'buscando_sdr', 'aprovado', 'visita', 'proposta', 'documentacao', 'venda', 'corretor', 'cliente_ouro'];
 const CAMPOS_EDITAVEIS_JULIANE = ['status', 'notas_sdr', 'carteira_juliane', 'tarefa_sdr', 'tarefa_data', 'corretores_repassados', 'ultima_atualizacao_sdr', 'valor_imovel_sdr', 'buscando_sdr', 'corretor', 'aprovado', 'visita', 'proposta', 'documentacao', 'venda', 'origem', 'status_corretor', 'cliente_ouro'];
+
+// ─── ROTAS: CORRETORES ADICIONADOS PELO PAINEL ───────────────
+// Listar: admin/SDR/Juliane. Criar e remover: só Juliane ou admin.
+app.get('/api/corretores-extra', basicAuthAdminOuSdr, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (req.authTipo === 'corretor') return res.status(403).json({ ok: false, erro: 'Sem permissão' });
+  try {
+    const r = await pool.query(`SELECT id, nome, usuario, fone, rodizio_meta FROM corretores_extra WHERE ativo = true ORDER BY id`);
+    res.json({ ok: true, corretores: r.rows });
+  } catch (err) {
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
+app.post('/api/corretores-extra', basicAuthAdminOuSdr, async (req, res) => {
+  if (req.authTipo !== 'juliane' && req.authTipo !== 'admin') return res.status(403).json({ ok: false, erro: 'Só a Juliane pode adicionar corretor.' });
+  try {
+    const nome = String(req.body.nome || '').trim().replace(/\s+/g, ' ');
+    const usuario = String(req.body.usuario || '').trim().toLowerCase();
+    const senha = String(req.body.senha || '');
+    const fone = canonicalizarWhatsapp(String(req.body.whatsapp || ''));
+    const rodizioMeta = req.body.rodizio_meta === true || req.body.rodizio_meta === 'true';
+
+    if (!/^[\p{L}][\p{L} ]{1,29}$/u.test(nome)) return res.status(400).json({ ok: false, erro: 'Nome inválido (só letras, 2 a 30 caracteres).' });
+    if (!/^[a-z0-9._-]{3,30}$/.test(usuario)) return res.status(400).json({ ok: false, erro: 'Usuário inválido (3 a 30 letras minúsculas, números, ponto ou hífen).' });
+    if (senha.length < 6) return res.status(400).json({ ok: false, erro: 'A senha precisa ter pelo menos 6 caracteres.' });
+    if (!fone) return res.status(400).json({ ok: false, erro: 'WhatsApp inválido. Use DDD + número, ex: 62999998888.' });
+
+    const semAcento = t => normalizarTexto(t);
+    if (NOMES_OFICIAIS_CORRETORES.some(n => semAcento(n) === semAcento(nome))) return res.status(409).json({ ok: false, erro: `Já existe um corretor chamado ${nome}.` });
+    const reservados = [process.env.DASHBOARD_USER || 'diniz', process.env.CRM_USER || 'sdr', process.env.JULIANE_CRM_USER || 'juliane',
+      'junior', 'michelle', 'lais', 'patricia', 'nalcio', 'renata', 'bruno.corretor', 'juliane.corretor', 'amanda', 'cyda'];
+    if (reservados.includes(usuario)) return res.status(409).json({ ok: false, erro: 'Esse usuário já está em uso. Escolha outro.' });
+
+    const salt = crypto.randomBytes(16).toString('hex');
+    try {
+      await pool.query(
+        `INSERT INTO corretores_extra (nome, usuario, senha_salt, senha_hash, fone, rodizio_meta) VALUES ($1,$2,$3,$4,$5,$6)`,
+        [nome, usuario, salt, hashSenha(senha, salt), fone, rodizioMeta]
+      );
+    } catch (e) {
+      if (String(e.code) === '23505') return res.status(409).json({ ok: false, erro: 'Esse usuário já está em uso. Escolha outro.' });
+      throw e;
+    }
+    await carregarCorretoresExtra();
+    console.log(`[Corretores] Adicionado pelo painel: ${nome} (${usuario}) — rodízio Meta: ${rodizioMeta ? 'sim' : 'não'}`);
+    res.json({ ok: true, corretor: { nome, usuario, fone, rodizio_meta: rodizioMeta } });
+  } catch (err) {
+    console.error('Erro ao adicionar corretor:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
+app.delete('/api/corretores-extra/:id', basicAuthAdminOuSdr, async (req, res) => {
+  if (req.authTipo !== 'juliane' && req.authTipo !== 'admin') return res.status(403).json({ ok: false, erro: 'Só a Juliane pode remover corretor.' });
+  try {
+    const r = await pool.query(`UPDATE corretores_extra SET ativo = false WHERE id = $1 AND ativo = true RETURNING nome`, [parseInt(req.params.id, 10)]);
+    if (r.rowCount === 0) return res.status(404).json({ ok: false, erro: 'Corretor não encontrado.' });
+    await carregarCorretoresExtra();
+    console.log(`[Corretores] Removido pelo painel: ${r.rows[0].nome}`);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
 
 // ─── ROTA: API DE LEADS (alimenta o dashboard) ───────────────
 app.get('/api/leads', basicAuthAdminOuSdr, async (req, res) => {
