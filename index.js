@@ -1364,13 +1364,20 @@ async function processarLeadMeta(leadgenId, simulado = null) {
     return;
   }
 
-  const lead = simulado ? simulado.lead : await graphMeta(leadgenId);
+  const CAMPOS_LEAD = 'field_data,created_time,ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,form_id,platform';
+  let lead;
+  if (simulado) lead = simulado.lead;
+  else { try { lead = await graphMeta(leadgenId, CAMPOS_LEAD); } catch (e) { console.error('[Meta] lead com campos de anúncio falhou, tentando sem:', e.message); lead = await graphMeta(leadgenId); } }
   const campos = {};
   for (const f of lead.field_data || []) campos[String(f.name).toLowerCase()] = (f.values || [])[0] || '';
 
   const nome = campos.full_name || campos.nome || campos.name ||
     [campos.first_name, campos.last_name].filter(Boolean).join(' ') || 'Sem nome';
-  const telefoneBruto = campos.phone_number || campos.telefone || campos.whatsapp || campos.phone || '';
+  let telefoneBruto = campos.phone_number || campos.whatsapp_number || campos.telefone || campos.whatsapp || campos.phone || '';
+  if (!telefoneBruto) {
+    const k = Object.keys(campos).find(k => /phone|whats|fone|tel|cel|number|numero/.test(k) && campos[k]);
+    if (k) telefoneBruto = campos[k];
+  }
   const email = campos.email || null;
   const whatsapp = canonicalizarWhatsapp(telefoneBruto);
 
@@ -1381,8 +1388,9 @@ async function processarLeadMeta(leadgenId, simulado = null) {
   // existir; senão tenta com o token da página.
   let nomeAnuncio = '', nomeConjunto = '', nomeCampanhaMeta = '', nomeForm = '';
   if (simulado) nomeConjunto = simulado.nomeConjunto || '';
+  else { nomeAnuncio = lead.ad_name || ''; nomeConjunto = lead.adset_name || ''; nomeCampanhaMeta = lead.campaign_name || ''; }
   try {
-    if (!simulado && lead.ad_id) {
+    if (!simulado && lead.ad_id && !nomeConjunto) {
       const ad = await graphMeta(lead.ad_id, 'name,adset{name},campaign{name}', process.env.META_ADS_TOKEN);
       nomeAnuncio = ad.name || '';
       nomeConjunto = ad.adset?.name || '';
@@ -1496,7 +1504,8 @@ app.all('/api/admin/testar-meta-lead', basicAuth, async (req, res) => {
 });
 
 // ─── ROTA ADMIN: REPROCESSAR LEADS DO META QUE NÃO CHEGARAM ─────
-// Uso (logado como admin): /api/admin/reprocessar-meta-leads?ids=ID1,ID2,...
+// Uso (logado como admin): /api/admin/reprocessar-meta-leads?ids=ID1,ID2,...[&forcar=1]
+// forcar=1: reenvia mesmo os já processados (apaga a linha sem número do CRM antes).
 // Aceita o ID do CSV do Meta ("l:123...") ou só o número. Lead que já tinha sido
 // processado é ignorado (não duplica); os demais são lidos no Meta e distribuídos
 // de verdade (corretor recebe no WhatsApp, entra no CRM).
@@ -1507,8 +1516,19 @@ app.all('/api/admin/reprocessar-meta-leads', basicAuth, async (req, res) => {
     if (!ids.length) return res.status(400).json({ ok: false, erro: 'Informe ?ids=ID1,ID2' });
     if (!process.env.META_PAGE_TOKEN) return res.status(500).json({ ok: false, erro: 'META_PAGE_TOKEN não configurado' });
     const resultados = [];
+    const forcar = String(req.query.forcar || '') === '1';
     for (const id of ids) {
       try {
+        if (forcar) {
+          // Reenvio forçado: apaga a marca de "já processado" e a linha antiga sem número do CRM.
+          try {
+            const l0 = await graphMeta(id);
+            const c0 = {}; for (const f of l0.field_data || []) c0[String(f.name).toLowerCase()] = (f.values || [])[0] || '';
+            const nome0 = c0.full_name || c0.nome || c0.name || [c0.first_name, c0.last_name].filter(Boolean).join(' ') || '';
+            if (nome0) await pool.query(`DELETE FROM leads WHERE whatsapp = $1 AND numero_invalido = true`, [gerarChaveSemNumero(nome0, c0.email || null)]);
+          } catch (e) { console.error('[Meta] limpeza antes do reenvio:', e.message); }
+          await pool.query('DELETE FROM config_sistema WHERE chave = $1', [`meta_lead_${id}`]);
+        }
         const corretor = await (filaMetaLeads = filaMetaLeads.catch(() => {}).then(() => processarLeadMeta(id)));
         resultados.push({ id, status: corretor ? 'distribuído' : 'já estava processado (ignorado)', corretor: corretor || null });
       } catch (err) {
