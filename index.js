@@ -1543,13 +1543,17 @@ app.all('/api/admin/reprocessar-meta-leads', basicAuth, async (req, res) => {
 });
 
 app.post('/webhook-meta-leads', (req, res) => {
+  console.log('[Meta] Webhook recebido:', JSON.stringify(req.body || {}).slice(0, 400));
   // Valida assinatura quando META_APP_SECRET está definido.
   const segredo = process.env.META_APP_SECRET;
   if (segredo) {
     const recebida = req.headers['x-hub-signature-256'] || '';
     const esperada = 'sha256=' + crypto.createHmac('sha256', segredo).update(req.rawBody || Buffer.alloc(0)).digest('hex');
     const a = Buffer.from(recebida), b = Buffer.from(esperada);
-    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return res.sendStatus(403);
+    if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+      console.error('[Meta] Webhook REJEITADO: assinatura inválida. O META_APP_SECRET do Railway está diferente da Chave Secreta do app (ou foi trocada). Corrija ou apague a variável.');
+      return res.sendStatus(403);
+    }
   }
 
   res.sendStatus(200); // responde já; a Meta reenvia se demorar
