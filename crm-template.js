@@ -426,7 +426,7 @@ const CRM_HTML = `<!DOCTYPE html>
 let TODOS_LEADS = [];
 
 // Opções de canal/origem pra quando alguém adiciona um contato manualmente.
-const ORIGENS = ['OLX/Canal Pro', 'Patrocinado', 'TikTok', 'Instagram', 'Comentário', 'Indicação', 'SDR', 'Outro'];
+const ORIGENS = ['OLX/Canal Pro', 'Meta Ads', 'Patrocinado', 'TikTok', 'Instagram', 'Comentário', 'Indicação', 'SDR', 'Outro'];
 let BUSCA = '';
 let LEAD_ARRASTADO = null;
 let ULTIMO_ADICIONADO_ID = null;
@@ -501,7 +501,7 @@ function corretoresEnvolvidos(lead) {
 }
 
 const PALETA_CORES = ['#3b6cf0', '#e0453f', '#f2941c', '#12b76a', '#9b4de0', '#e8479e', '#0aa5c2', '#c9a20a'];
-const NOMES_OFICIAIS_CORRETORES = ['Junior', 'Laís', 'Patricia', 'Michelle', 'Nalcio', 'Renata', 'Bruno', 'Juliane', 'Amanda', 'Cyda'];
+const NOMES_OFICIAIS_CORRETORES = ['Junior', 'Laís', 'Patricia', 'Michelle', 'Renata', 'Bruno', 'Juliane', 'Amanda', 'Cyda'];
 function normalizarNomeCorretor(nomeDigitado) {
   const chave = (nomeDigitado || '').trim();
   if (!chave) return chave;
