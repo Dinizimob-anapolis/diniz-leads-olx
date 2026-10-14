@@ -820,7 +820,10 @@ async function enviarWhatsApp(fone, mensagem, instancia = EVOLUTION_INSTANCE) {
     },
     body: JSON.stringify({ number: fone, text: mensagem }),
   });
-  return res.json();
+  let corpo = null;
+  try { corpo = await res.json(); } catch (e) { corpo = { erro: 'resposta não-JSON', status: res.status }; }
+  if (!res.ok) console.error(`[WhatsApp] Falha ao enviar pra ${String(fone).slice(-4).padStart(String(fone).length, '*')} pela instância "${instancia}" (HTTP ${res.status}):`, JSON.stringify(corpo).slice(0, 400));
+  return { ...(corpo || {}), _httpStatus: res.status, _ok: res.ok };
 }
 
 // ─── FUNÇÃO: FORMATAR TELEFONE ───────────────────────────────
@@ -1430,9 +1433,15 @@ async function processarLeadMeta(leadgenId, simulado = null) {
     (email ? `email: ${email}\n` : '') +
     `\ncorretor: ${corretor.nome}`;
 
-  if (!simulado || simulado.real) await enviarWhatsApp(corretor.fone, texto);
+  if (!simulado || simulado.real) {
+    const rc = await enviarWhatsApp(corretor.fone, texto);
+    if (simulado && simulado.debug) simulado.debug.push({ para: 'corretor ' + corretor.nome, http: rc._httpStatus, ok: rc._ok, resposta: rc._ok ? undefined : rc });
+  }
   if (NUMERO_SUPERVISAO) {
-    try { await enviarWhatsApp(NUMERO_SUPERVISAO, (simulado && !simulado.real ? '🧪 TESTE (não foi enviado ao corretor)\n' : '') + texto); } catch (e) { console.error('[Meta] aviso supervisão:', e.message); }
+    try {
+      const rs = await enviarWhatsApp(NUMERO_SUPERVISAO, (simulado && !simulado.real ? '🧪 TESTE (não foi enviado ao corretor)\n' : '') + texto);
+      if (simulado && simulado.debug) simulado.debug.push({ para: 'supervisão (final ' + String(NUMERO_SUPERVISAO).slice(-4) + ')', http: rs._httpStatus, ok: rs._ok, resposta: rs._ok ? undefined : rs });
+    } catch (e) { console.error('[Meta] aviso supervisão:', e.message); }
   }
 
   await salvarDistribuicao({
@@ -1459,6 +1468,7 @@ app.all('/api/admin/testar-meta-lead', basicAuth, async (req, res) => {
     const chaveIndice = 'indice_rodizio_meta';
     const indiceOriginal = await lerConfig(chaveIndice); // restaurado no fim, se não for real
     const sequencia = [];
+    const debug = [];
     for (let i = 1; i <= n; i++) {
       const nome = String(q.nome || 'Teste Sistema') + (n > 1 ? ' ' + i : '');
       const fone = String(q.fone || '6290000000') + String(i).padStart(2, '0');
@@ -1468,12 +1478,14 @@ app.all('/api/admin/testar-meta-lead', basicAuth, async (req, res) => {
         { name: 'email', values: [String(q.email || 'teste@teste.com')] },
       ] };
       const quem = await processarLeadMeta('teste-' + Date.now() + '-' + i, {
-        lead, nomeConjunto: String(q.campanha || ''), real,
+        lead, nomeConjunto: String(q.campanha || ''), real, debug,
       });
       sequencia.push(`${nome} → ${quem}`);
     }
     if (!real) await salvarConfig(chaveIndice, indiceOriginal == null ? '0' : String(indiceOriginal));
     res.json({ ok: true, sequencia, rodizio_preservado: !real,
+      instancia_usada: EVOLUTION_INSTANCE,
+      envio_whatsapp: debug,
       aviso: 'Veja o WhatsApp de supervisão e o CRM (origem Meta Ads). Apague os leads de teste depois.' });
   } catch (err) {
     console.error('[Meta] Erro no teste:', err);
