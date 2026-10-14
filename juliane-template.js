@@ -252,6 +252,7 @@ const JULIANE_HTML = `<!DOCTYPE html>
   }
   .badge.warn { background: var(--warn-bg); color: var(--warn-text); border: 1px solid var(--warn-border); }
   .badge.origem { background: #eef0f6; color: var(--muted); border: 1px solid var(--card-border); }
+  .badge.origem-meta { background: #e7efff; color: #2a5bd7; border: 1px solid #b9ccf7; font-weight: 700; }
   .badge-select {
     display: inline-block;
     font-size: 11.5px;
@@ -455,7 +456,15 @@ const JULIANE_HTML = `<!DOCTYPE html>
 <div class="stats" id="stats"></div>
 
 <div class="toolbar">
-  <input type="text" id="busca" placeholder="Buscar por nome ou WhatsApp...">
+  <input type="text" id="busca" placeholder="Buscar por nome, WhatsApp ou origem...">
+  <select id="filtro-origem" title="Filtrar por origem" style="padding:8px 10px;border-radius:8px;border:1px solid var(--card-border);background:var(--card, #fff);color:inherit;font-size:13px;">
+    <option value="">Todas as origens</option>
+    <option value="Meta Ads">📣 Só Meta Ads</option>
+    <option value="OLX/Canal Pro">OLX/Canal Pro</option>
+    <option value="TikTok">TikTok</option>
+    <option value="Patrocinado">Patrocinado</option>
+    <option value="Instagram">Instagram</option>
+  </select>
   <button class="add-contato-btn" id="btn-atualizar" style="background:#fff;color:var(--accent);border:1px solid var(--accent);box-shadow:none;">↻ Atualizar</button>
   <button class="add-contato-btn" id="btn-salvar-backup" style="background:#fff;color:#17a34a;border:1px solid #17a34a;box-shadow:none;">💾 Salvar backup</button>
   <button class="add-contato-btn" id="btn-baixar-csv" style="background:#fff;color:#3b6cf0;border:1px solid #3b6cf0;box-shadow:none;">⬇️ Baixar planilha</button>
@@ -475,6 +484,7 @@ let LEADS_JULIANE = [];
 let LEADS_SDR = [];
 let ABA_CRM = 'juliane'; // 'juliane' ou 'sdr'
 let BUSCA = '';
+let FILTRO_ORIGEM = '';
 let LEAD_ARRASTADO = null;
 let ULTIMO_ADICIONADO_ID = null;
 let FILTROS_DATA_COLUNA = {}; // { [coluna]: { de, ate } } — filtro de período por coluna
@@ -536,13 +546,13 @@ const CORES_COLUNA_FUNIL = {
 const COLUNA_TRIAGEM = 'Novo Lead';
 
 // Opções de canal/origem — mesmas do /dashboard, pra bater com o que já existe.
-const ORIGENS = ['OLX/Canal Pro', 'Patrocinado', 'TikTok', 'Instagram', 'Comentário', 'SDR', 'Juliane', 'Outro'];
+const ORIGENS = ['OLX/Canal Pro', 'Meta Ads', 'Patrocinado', 'TikTok', 'Instagram', 'Comentário', 'SDR', 'Juliane', 'Outro'];
 
 // Quadro por corretor — usado na aba principal da Juliane. As colunas são
 // montadas na hora, com base em quem realmente tem lead no sistema.
 // Ordem e conjunto fixos de corretores no quadro da Juliane — não muda
 // sozinho conforme os dados; só muda quando alguém pedir pra ajustar aqui.
-const ORDEM_CORRETORES_JULIANE = ['Junior', 'Laís', 'Patricia', 'Michelle', 'Nalcio', 'Renata', 'Bruno', 'Juliane', 'Amanda', 'Cyda'];
+const ORDEM_CORRETORES_JULIANE = ['Junior', 'Laís', 'Patricia', 'Michelle', 'Renata', 'Bruno', 'Juliane', 'Amanda', 'Cyda'];
 
 // Uma cor fixa e diferente pra cada um (não é por hash, pra ficar sempre
 // igual e fácil de reconhecer de relance).
@@ -551,7 +561,6 @@ const CORES_CORRETORES_JULIANE = {
   'Laís':      '#e8479e',
   'Patricia':  '#12b76a',
   'Michelle':  '#9b4de0',
-  'Nalcio':    '#0aa5c2',
   'Renata':    '#c9a20a',
   'Bruno':     '#e0453f',
   'Juliane':   '#5b6bf5',
@@ -597,7 +606,7 @@ function corretoresEnvolvidos(lead) {
 }
 
 const PALETA_CORES = ['#3b6cf0', '#e0453f', '#f2941c', '#12b76a', '#9b4de0', '#e8479e', '#0aa5c2', '#c9a20a'];
-const NOMES_OFICIAIS_CORRETORES = ['Junior', 'Laís', 'Patricia', 'Michelle', 'Nalcio', 'Renata', 'Bruno', 'Juliane', 'Amanda', 'Cyda'];
+const NOMES_OFICIAIS_CORRETORES = ['Junior', 'Laís', 'Patricia', 'Michelle', 'Renata', 'Bruno', 'Juliane', 'Amanda', 'Cyda'];
 function normalizarNomeCorretor(nomeDigitado) {
   const chave = (nomeDigitado || '').trim();
   if (!chave) return chave;
@@ -666,9 +675,11 @@ function trocarAba(aba) {
 
 function leadsFiltrados() {
   const todos = leadsAtivos();
-  if (!BUSCA) return todos;
+  const porOrigem = FILTRO_ORIGEM ? todos.filter(l => (l.origem || '') === FILTRO_ORIGEM) : todos;
+  if (!BUSCA) return porOrigem;
   const b = BUSCA.toLowerCase();
-  return todos.filter(l => (l.nome || '').toLowerCase().includes(b) || (l.whatsapp || '').includes(b));
+  return porOrigem.filter(l => (l.nome || '').toLowerCase().includes(b) || (l.whatsapp || '').includes(b) ||
+    (l.origem || '').toLowerCase().includes(b) || (l.imovel_desc || '').toLowerCase().includes(b));
 }
 
 // Monta o CSV só com o que está realmente visível na tela agora (aba
@@ -885,7 +896,8 @@ function cardHtml(lead, corBorda, mostrarOrigemTriagem, mostrarStatusSdr) {
       <div class="lead-meta">\${lead.whatsapp || 'sem WhatsApp'}</div>
       \${seloReaquecido}\${seloCanal}
       \${dataEtapa ? \`<div class="lead-meta">Nessa etapa desde \${dataEtapa}</div>\` : ''}
-      \${lead.origem ? \`<span class="badge origem">\${lead.origem}</span>\` : ''}
+      \${lead.origem ? \`<span class="badge origem\${lead.origem === 'Meta Ads' ? '-meta' : ''}">\${lead.origem === 'Meta Ads' ? '📣 ' : ''}\${lead.origem}</span>\` : ''}
+      \${lead.origem === 'Meta Ads' && lead.distribuido_em ? \`<div class="lead-meta" style="color:#2a5bd7;">📥 chegou \${new Date(lead.distribuido_em).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</div>\` : ''}
       \${badgeImovel(lead)}
       \${lead.corretor ? \`<div><span class="chip-corretor" style="border-color:\${corDoCorretor(lead.corretor)};color:\${corDoCorretor(lead.corretor)};background:\${corDoCorretor(lead.corretor)}1a">\${lead.corretor}</span></div>\` : ''}
       \${lead.tarefa_sdr ? \`<div class="tarefa-preview" style="\${tarefaAtrasada ? 'color:#e0453f;' : ''}">\${tarefaAtrasada ? '⏰ ATRASADO — ' : '📌 '}\${lead.tarefa_sdr}\${lead.tarefa_data ? \` (\${new Date(lead.tarefa_data).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })})\` : ''}</div>\` : ''}
@@ -1464,6 +1476,7 @@ async function salvarCampo(id, campo, valor, aoTerminar) {
 }
 
 document.getElementById('busca').addEventListener('input', e => { BUSCA = e.target.value; render(); });
+document.getElementById('filtro-origem').addEventListener('change', e => { FILTRO_ORIGEM = e.target.value; render(); });
 
 carregar();
 setInterval(carregar, 60000); // atualiza sozinho a cada 1 min
