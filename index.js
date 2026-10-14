@@ -1368,6 +1368,7 @@ async function processarLeadMeta(leadgenId, simulado = null) {
   let lead;
   if (simulado) lead = simulado.lead;
   else { try { lead = await graphMeta(leadgenId, CAMPOS_LEAD); } catch (e) { console.error('[Meta] lead com campos de anúncio falhou, tentando sem:', e.message); lead = await graphMeta(leadgenId); } }
+  if (!simulado) lembrarFormMeta(lead.form_id);
   const campos = {};
   for (const f of lead.field_data || []) campos[String(f.name).toLowerCase()] = (f.values || [])[0] || '';
 
@@ -1504,7 +1505,7 @@ app.all('/api/admin/testar-meta-lead', basicAuth, async (req, res) => {
 });
 
 // ─── REDE DE SEGURANÇA: VARREDURA DOS LEADS DO META ─────────────
-// Se o aviso automático (webhook) falhar, a cada 5 minutos o sistema consulta o Meta,
+// Se o aviso automático (webhook) falhar, a cada 3 minutos (META_VARREDURA_MIN) o sistema consulta o Meta,
 // pega os leads das últimas 48h de todos os formulários da página e processa os que
 // ainda não foram processados (a marca meta_lead_<id> evita duplicar com o webhook).
 async function graphMetaTodos(caminho, campos, maxPaginas = 2) {
@@ -1520,6 +1521,17 @@ async function graphMetaTodos(caminho, campos, maxPaginas = 2) {
   return out;
 }
 
+// Formulários que já conhecemos (GRAN VENEZA BRUNO e PATRICIA). Os demais são aprendidos
+// sozinhos quando chega um lead deles, ou entram pela variável META_FORM_IDS (IDs separados por vírgula).
+const FORMS_META_CONHECIDOS = ['1792713281903925', '1534413464673184'];
+async function lembrarFormMeta(id) {
+  if (!id) return;
+  try {
+    const atual = JSON.parse((await lerConfig('meta_form_ids')) || '[]');
+    if (!atual.includes(String(id))) { atual.push(String(id)); await salvarConfig('meta_form_ids', JSON.stringify(atual)); }
+  } catch (e) {}
+}
+
 let varreduraMetaRodando = false;
 async function varrerLeadsMeta() {
   if (varreduraMetaRodando) return { ok: false, erro: 'já em andamento' };
@@ -1529,12 +1541,30 @@ async function varrerLeadsMeta() {
   try {
     const pageId = process.env.META_PAGE_ID || '105945097502541';
     const desde = Date.now() - 48 * 3600 * 1000;
-    const forms = await graphMetaTodos(`${pageId}/leadgen_forms`, 'id,name');
-    resumo.formularios = forms.length;
+    // Lista os formulários a cada varredura (1-2 chamadas) e só consulta os leads dos que
+    // mudaram de contagem (leads_count) desde a última vez: poupa o limite de chamadas do Meta.
+    varrerLeadsMeta.contagens = varrerLeadsMeta.contagens || {};
+    let forms, listou = true;
+    try {
+      const todos = await graphMetaTodos(`${pageId}/leadgen_forms`, 'id,name,status,leads_count', 4);
+      forms = todos.filter(f => !f.status || String(f.status).toUpperCase() === 'ACTIVE');
+      resumo.formulariosAtivos = forms.length;
+      forms = forms.filter(f => f.leads_count === undefined || varrerLeadsMeta.contagens[f.id] !== f.leads_count);
+    } catch (e) {
+      // Sem permissão pra listar formulários (pede pages_manage_ads): usa a lista conhecida.
+      listou = false;
+      let aprendidos = [];
+      try { aprendidos = JSON.parse((await lerConfig('meta_form_ids')) || '[]'); } catch (e2) {}
+      const ids = new Set([...FORMS_META_CONHECIDOS, ...String(process.env.META_FORM_IDS || '').split(/[,\s;]+/).map(x => x.replace(/^f:/i, '').trim()).filter(Boolean), ...aprendidos.map(String)]);
+      forms = [...ids].map(id => ({ id, name: id }));
+      resumo.aviso = `Não consegui listar os formulários (${e.message}). Varrendo só os conhecidos: ${[...ids].join(', ')}.`;
+    }
+    resumo.formularios = forms.length; // formulários consultados nesta rodada
     for (const f of forms) {
       let leads = [];
       try { leads = await graphMetaTodos(`${f.id}/leads`, 'id,created_time'); }
       catch (e) { console.error(`[Meta] Varredura: formulário ${f.name || f.id}:`, e.message); continue; }
+      if (listou && f.leads_count !== undefined) varrerLeadsMeta.contagens[f.id] = f.leads_count;
       for (const l of leads) {
         const t = Date.parse(String(l.created_time || '').replace(/([+-]\d{2})(\d{2})$/, '$1:$2'));
         if (!t || t < desde) continue;
@@ -1557,7 +1587,8 @@ async function varrerLeadsMeta() {
   } finally { varreduraMetaRodando = false; }
   return resumo;
 }
-setTimeout(() => { varrerLeadsMeta().catch(() => {}); setInterval(() => varrerLeadsMeta().catch(() => {}), 5 * 60 * 1000); }, 90 * 1000);
+const VARREDURA_META_MIN = Math.max(1, parseInt(process.env.META_VARREDURA_MIN, 10) || 3); // minutos entre varreduras (padrão 3)
+setTimeout(() => { varrerLeadsMeta().catch(() => {}); setInterval(() => varrerLeadsMeta().catch(() => {}), VARREDURA_META_MIN * 60 * 1000); }, 90 * 1000);
 
 // Uso (logado como admin): /api/admin/varrer-meta-leads — roda a varredura agora e mostra o resultado.
 app.all('/api/admin/varrer-meta-leads', basicAuth, async (req, res) => {
