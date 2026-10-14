@@ -1503,6 +1503,67 @@ app.all('/api/admin/testar-meta-lead', basicAuth, async (req, res) => {
   }
 });
 
+// ─── REDE DE SEGURANÇA: VARREDURA DOS LEADS DO META ─────────────
+// Se o aviso automático (webhook) falhar, a cada 5 minutos o sistema consulta o Meta,
+// pega os leads das últimas 48h de todos os formulários da página e processa os que
+// ainda não foram processados (a marca meta_lead_<id> evita duplicar com o webhook).
+async function graphMetaTodos(caminho, campos, maxPaginas = 2) {
+  let url = `${META_GRAPH}/${caminho}?fields=${encodeURIComponent(campos)}&limit=50&access_token=${encodeURIComponent(process.env.META_PAGE_TOKEN || '')}`;
+  const out = [];
+  for (let i = 0; i < maxPaginas && url; i++) {
+    const r = await fetch(url);
+    const j = await r.json();
+    if (!r.ok || j.error) throw new Error(`Graph ${caminho}: ${j.error?.message || r.status}`);
+    out.push(...(j.data || []));
+    url = j.paging?.next || null;
+  }
+  return out;
+}
+
+let varreduraMetaRodando = false;
+async function varrerLeadsMeta() {
+  if (varreduraMetaRodando) return { ok: false, erro: 'já em andamento' };
+  if (!process.env.DATABASE_URL || !process.env.META_PAGE_TOKEN) return { ok: false, erro: 'DATABASE_URL ou META_PAGE_TOKEN não configurados' };
+  varreduraMetaRodando = true;
+  const resumo = { ok: true, formularios: 0, leadsVistos: 0, recuperados: [] };
+  try {
+    const pageId = process.env.META_PAGE_ID || '105945097502541';
+    const desde = Date.now() - 48 * 3600 * 1000;
+    const forms = await graphMetaTodos(`${pageId}/leadgen_forms`, 'id,name');
+    resumo.formularios = forms.length;
+    for (const f of forms) {
+      let leads = [];
+      try { leads = await graphMetaTodos(`${f.id}/leads`, 'id,created_time'); }
+      catch (e) { console.error(`[Meta] Varredura: formulário ${f.name || f.id}:`, e.message); continue; }
+      for (const l of leads) {
+        const t = Date.parse(String(l.created_time || '').replace(/([+-]\d{2})(\d{2})$/, '$1:$2'));
+        if (!t || t < desde) continue;
+        resumo.leadsVistos++;
+        const ja = await pool.query('SELECT 1 FROM config_sistema WHERE chave = $1', [`meta_lead_${l.id}`]);
+        if (ja.rowCount > 0) continue;
+        try {
+          const corretor = await (filaMetaLeads = filaMetaLeads.catch(() => {}).then(() => processarLeadMeta(String(l.id))));
+          if (corretor) resumo.recuperados.push({ id: l.id, form: f.name, corretor });
+        } catch (err) {
+          console.error(`[Meta] Varredura: erro no lead ${l.id}:`, err.message);
+          try { await pool.query('DELETE FROM config_sistema WHERE chave = $1', [`meta_lead_${l.id}`]); } catch (e) {}
+        }
+      }
+    }
+    if (resumo.recuperados.length) console.log(`[Meta] Varredura: ${resumo.recuperados.length} lead(s) recuperado(s) que o webhook não trouxe:`, JSON.stringify(resumo.recuperados));
+  } catch (err) {
+    console.error('[Meta] Varredura falhou:', err.message);
+    resumo.ok = false; resumo.erro = err.message;
+  } finally { varreduraMetaRodando = false; }
+  return resumo;
+}
+setTimeout(() => { varrerLeadsMeta().catch(() => {}); setInterval(() => varrerLeadsMeta().catch(() => {}), 5 * 60 * 1000); }, 90 * 1000);
+
+// Uso (logado como admin): /api/admin/varrer-meta-leads — roda a varredura agora e mostra o resultado.
+app.all('/api/admin/varrer-meta-leads', basicAuth, async (req, res) => {
+  res.json(await varrerLeadsMeta());
+});
+
 // ─── ROTA ADMIN: REPROCESSAR LEADS DO META QUE NÃO CHEGARAM ─────
 // Uso (logado como admin): /api/admin/reprocessar-meta-leads?ids=ID1,ID2,...[&forcar=1]
 // forcar=1: reenvia mesmo os já processados (apaga a linha sem número do CRM antes).
