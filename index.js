@@ -1495,6 +1495,33 @@ app.all('/api/admin/testar-meta-lead', basicAuth, async (req, res) => {
   }
 });
 
+// ─── ROTA ADMIN: REPROCESSAR LEADS DO META QUE NÃO CHEGARAM ─────
+// Uso (logado como admin): /api/admin/reprocessar-meta-leads?ids=ID1,ID2,...
+// Aceita o ID do CSV do Meta ("l:123...") ou só o número. Lead que já tinha sido
+// processado é ignorado (não duplica); os demais são lidos no Meta e distribuídos
+// de verdade (corretor recebe no WhatsApp, entra no CRM).
+app.all('/api/admin/reprocessar-meta-leads', basicAuth, async (req, res) => {
+  try {
+    const ids = String(req.query.ids || req.body?.ids || '')
+      .split(/[,\s;]+/).map(x => x.replace(/^l:/i, '').trim()).filter(Boolean).slice(0, 30);
+    if (!ids.length) return res.status(400).json({ ok: false, erro: 'Informe ?ids=ID1,ID2' });
+    if (!process.env.META_PAGE_TOKEN) return res.status(500).json({ ok: false, erro: 'META_PAGE_TOKEN não configurado' });
+    const resultados = [];
+    for (const id of ids) {
+      try {
+        const corretor = await (filaMetaLeads = filaMetaLeads.catch(() => {}).then(() => processarLeadMeta(id)));
+        resultados.push({ id, status: corretor ? 'distribuído' : 'já estava processado (ignorado)', corretor: corretor || null });
+      } catch (err) {
+        try { await pool.query('DELETE FROM config_sistema WHERE chave = $1', [`meta_lead_${id}`]); } catch (e) {}
+        resultados.push({ id, status: 'erro', erro: err.message });
+      }
+    }
+    res.json({ ok: true, resultados });
+  } catch (err) {
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
 app.post('/webhook-meta-leads', (req, res) => {
   // Valida assinatura quando META_APP_SECRET está definido.
   const segredo = process.env.META_APP_SECRET;
