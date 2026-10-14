@@ -53,10 +53,8 @@ const NUMERO_SUPERVISAO = process.env.NUMERO_SUPERVISAO || JULIANE_LL;
 // descomentar quando quiser voltar o rodízio entre eles.
 const CORRETORES = [
   { nome: 'Laís',   fone: '5562992754858' },
-  // { nome: 'Nalcio', fone: '5562982077466' },
   // { nome: 'Renata', fone: '5562992670935' },
   // { nome: 'Junior', fone: '5562981625610' },
-  // { nome: 'Thayná', fone: '5562991749547' },
 ];
 
 // Telefones de todos os corretores que podem receber lead do Meta de forma FIXA
@@ -64,10 +62,8 @@ const CORRETORES = [
 // do anúncio traz o corretor entre colchetes, ex: "VD03 - Gran Veneza [Junior]".
 const TELEFONES_CORRETORES = {
   'lais': { nome: 'Laís', fone: '5562992754858' },
-  'nalcio': { nome: 'Nalcio', fone: '5562982077466' },
   'renata': { nome: 'Renata', fone: '5562992670935' },
   'junior': { nome: 'Junior', fone: '5562981625610' },
-  'thayna': { nome: 'Thayná', fone: '5562991749547' },
   'cyda': { nome: 'Cyda', fone: '5562993652226' },
   'michelle': { nome: 'Michelle', fone: '5562994494723' },
   'patricia': { nome: 'Patricia', fone: '5562984888731' },
@@ -79,9 +75,7 @@ const CORRETORES_META = [
   { nome: 'Junior', fone: '5562981625610' },
   { nome: 'Michelle', fone: '5562994494723' },
   { nome: 'Patricia', fone: '5562984888731' },
-  // { nome: 'Nalcio', fone: '5562982077466' },
   // { nome: 'Renata', fone: '5562992670935' },
-  // { nome: 'Thayná', fone: '5562991749547' },
 ];
 
 // Nomes extras que aparecem como opção no dropdown de corretor do dashboard,
@@ -477,6 +471,14 @@ async function initDb() {
     if (fix.rowCount > 0) console.log(`✅ ${fix.rowCount} lead(s) com grafia "Michele" corrigidos para "Michelle".`);
   } catch (err) {
     console.error('Erro ao corrigir grafia Michele:', err);
+  }
+
+  // Nalcio e Thayná saíram da equipe: os leads que ainda estavam com eles vão pra Juliane redistribuir.
+  try {
+    const fixN = await pool.query(`UPDATE leads SET corretor = 'Juliane' WHERE lower(trim(corretor)) IN ('nalcio','nálcio','nelson','thayna','thayná') RETURNING id`);
+    if (fixN.rowCount > 0) console.log(`✅ ${fixN.rowCount} lead(s) de ex-corretores (Nalcio/Thayná) passados para a Juliane.`);
+  } catch (err) {
+    console.error('Erro ao reatribuir leads do Nalcio:', err);
   }
 }
 
@@ -1682,7 +1684,6 @@ function basicAuthAdminOuSdr(req, res, next) {
     michelle: { user: process.env.CORRETOR_MICHELLE_USER || 'michelle', pass: process.env.CORRETOR_MICHELLE_PASS, nome: 'Michelle' },
     lais: { user: process.env.CORRETOR_LAIS_USER || 'lais', pass: process.env.CORRETOR_LAIS_PASS, nome: 'Laís' },
     patricia: { user: process.env.CORRETOR_PATRICIA_USER || 'patricia', pass: process.env.CORRETOR_PATRICIA_PASS, nome: 'Patricia' },
-    nalcio: { user: process.env.CORRETOR_NALCIO_USER || 'nalcio', pass: process.env.CORRETOR_NALCIO_PASS, nome: 'Nalcio' },
     renata: { user: process.env.CORRETOR_RENATA_USER || 'renata', pass: process.env.CORRETOR_RENATA_PASS, nome: 'Renata' },
     bruno: { user: process.env.CORRETOR_BRUNO_USER || 'bruno.corretor', pass: process.env.CORRETOR_BRUNO_PASS, nome: 'Bruno' },
     juliane: { user: process.env.CORRETOR_JULIANE_USER || 'juliane.corretor', pass: process.env.CORRETOR_JULIANE_PASS, nome: 'Juliane' },
@@ -1777,7 +1778,7 @@ app.post('/api/corretores-extra', basicAuthAdminOuSdr, async (req, res) => {
     const semAcento = t => normalizarTexto(t);
     if (NOMES_OFICIAIS_CORRETORES.some(n => semAcento(n) === semAcento(nome))) return res.status(409).json({ ok: false, erro: `Já existe um corretor chamado ${nome}.` });
     const reservados = [process.env.DASHBOARD_USER || 'diniz', process.env.CRM_USER || 'sdr', process.env.JULIANE_CRM_USER || 'juliane',
-      'junior', 'michelle', 'lais', 'patricia', 'nalcio', 'renata', 'bruno.corretor', 'juliane.corretor', 'amanda', 'cyda'];
+      'junior', 'michelle', 'lais', 'patricia', 'renata', 'bruno.corretor', 'juliane.corretor', 'amanda', 'cyda'];
     if (reservados.includes(usuario)) return res.status(409).json({ ok: false, erro: 'Esse usuário já está em uso. Escolha outro.' });
 
     const salt = crypto.randomBytes(16).toString('hex');
@@ -2599,52 +2600,52 @@ const DADOS_CORRIGIDOS_CANALPRO = [
   { whatsapp: '5562993767420', corretor: 'Laís', data: '25/08/2026 12:40' },
   { whatsapp: '5541988481366', corretor: 'Laís', data: '24/08/2026 11:55' },
   { whatsapp: '5562992699641', corretor: 'Junior', data: '23/08/2026 21:45' },
-  { whatsapp: '5562994442693', corretor: 'Nalcio', data: '22/08/2026 19:22' },
+  { whatsapp: '5562994442693', corretor: 'Juliane', data: '22/08/2026 19:22' },
   { whatsapp: '5562992671240', corretor: 'Laís', data: '21/08/2026 12:55' },
-  { whatsapp: '5562994084045', corretor: 'Nalcio', data: '20/08/2026 10:45' },
+  { whatsapp: '5562994084045', corretor: 'Juliane', data: '20/08/2026 10:45' },
   { whatsapp: '5562994546023', corretor: 'Laís', data: '19/08/2026 14:32' },
   { whatsapp: '5562991071195', corretor: 'Renata', data: '19/08/2026 12:37' },
   { whatsapp: '5516988505505', corretor: 'Laís', data: '17/08/2026 23:17' },
   { whatsapp: '5562996448898', corretor: 'Renata', data: '17/08/2026 08:48' },
   { whatsapp: '5562991814817', corretor: 'Junior', data: '14/08/2026 07:35' },
-  { whatsapp: '5562992295892', corretor: 'Nalcio', data: '14/08/2026 04:09' },
+  { whatsapp: '5562992295892', corretor: 'Juliane', data: '14/08/2026 04:09' },
   { whatsapp: '5562982679938', corretor: 'Laís', data: '12/08/2026 22:25' },
   { whatsapp: '5562981224201', corretor: 'Junior', data: '10/08/2026 10:07' },
   { whatsapp: '5562992795220', corretor: 'Renata', data: '09/08/2026 16:17' },
-  { whatsapp: '5562992402227', corretor: 'Nalcio', data: '08/08/2026 19:24' },
+  { whatsapp: '5562992402227', corretor: 'Juliane', data: '08/08/2026 19:24' },
   { whatsapp: '5535383361855', corretor: 'Laís', data: '08/08/2026 17:41' },
-  { whatsapp: '5562984111295', corretor: 'Nalcio', data: '08/08/2026 08:52' },
+  { whatsapp: '5562984111295', corretor: 'Juliane', data: '08/08/2026 08:52' },
   { whatsapp: '5561984172632', corretor: 'Laís', data: '05/08/2026 16:02' },
-  { whatsapp: '5511945655849', corretor: 'Nalcio', data: '05/08/2026 10:43' },
+  { whatsapp: '5511945655849', corretor: 'Juliane', data: '05/08/2026 10:43' },
   { whatsapp: '5562996973237', corretor: 'Laís', data: '04/08/2026 16:02' },
-  { whatsapp: '5562994069875', corretor: 'Nalcio', data: '04/08/2026 06:28' },
-  { whatsapp: '5562992638241', corretor: 'Nalcio', data: '02/08/2026 21:48' },
-  { whatsapp: '5564996432984', corretor: 'Nalcio', data: '02/08/2026 16:53' },
+  { whatsapp: '5562994069875', corretor: 'Juliane', data: '04/08/2026 06:28' },
+  { whatsapp: '5562992638241', corretor: 'Juliane', data: '02/08/2026 21:48' },
+  { whatsapp: '5564996432984', corretor: 'Juliane', data: '02/08/2026 16:53' },
   { whatsapp: '5562991481170', corretor: 'Laís', data: '31/07/2026 19:01' },
-  { whatsapp: '5562994891474', corretor: 'Nalcio', data: '29/07/2026 12:01' },
+  { whatsapp: '5562994891474', corretor: 'Juliane', data: '29/07/2026 12:01' },
   { whatsapp: '5562982249292', corretor: 'Laís', data: '27/07/2026 15:40' },
   { whatsapp: '5562991681084', corretor: 'Renata', data: '27/07/2026 13:57' },
-  { whatsapp: '5562991876319', corretor: 'Nalcio', data: '25/07/2026 08:10' },
-  { whatsapp: '5563999167720', corretor: 'Nalcio', data: '23/07/2026 08:01' },
+  { whatsapp: '5562991876319', corretor: 'Juliane', data: '25/07/2026 08:10' },
+  { whatsapp: '5563999167720', corretor: 'Juliane', data: '23/07/2026 08:01' },
   { whatsapp: '5562995393451', corretor: 'Renata', data: '21/07/2026 11:54' },
-  { whatsapp: '5562992296303', corretor: 'Nalcio', data: '20/07/2026 09:22' },
-  { whatsapp: '5562981007075', corretor: 'Nalcio', data: '16/07/2026 19:35' },
+  { whatsapp: '5562992296303', corretor: 'Juliane', data: '20/07/2026 09:22' },
+  { whatsapp: '5562981007075', corretor: 'Juliane', data: '16/07/2026 19:35' },
   { whatsapp: '5562991754544', corretor: 'Laís', data: '16/07/2026 19:14' },
   { whatsapp: '5562985993485', corretor: 'Renata', data: '15/07/2026 13:34' },
-  { whatsapp: '5511951268877', corretor: 'Nalcio', data: '14/07/2026 12:09' },
+  { whatsapp: '5511951268877', corretor: 'Juliane', data: '14/07/2026 12:09' },
   { whatsapp: '5562993908306', corretor: 'Laís', data: '12/07/2026 06:57' },
-  { whatsapp: '5562992118453', corretor: 'Nalcio', data: '12/07/2026 00:14' },
+  { whatsapp: '5562992118453', corretor: 'Juliane', data: '12/07/2026 00:14' },
   { whatsapp: '5562991075395', corretor: 'Laís', data: '11/07/2026 12:38' },
-  { whatsapp: '5562991724840', corretor: 'Nalcio', data: '10/07/2026 18:30' },
-  { whatsapp: '5562993456060', corretor: 'Nalcio', data: '09/07/2026 14:20' },
-  { whatsapp: '5562992474585', corretor: 'Nalcio', data: '09/07/2026 00:03' },
+  { whatsapp: '5562991724840', corretor: 'Juliane', data: '10/07/2026 18:30' },
+  { whatsapp: '5562993456060', corretor: 'Juliane', data: '09/07/2026 14:20' },
+  { whatsapp: '5562992474585', corretor: 'Juliane', data: '09/07/2026 00:03' },
   { whatsapp: '5562994933970', corretor: 'Laís', data: '07/07/2026 18:09' },
   { whatsapp: '5562993580158', corretor: 'Laís', data: '02/07/2026 09:46' },
-  { whatsapp: '5562998368040', corretor: 'Nalcio', data: '01/07/2026 12:44' },
+  { whatsapp: '5562998368040', corretor: 'Juliane', data: '01/07/2026 12:44' },
   { whatsapp: '5562994057532', corretor: 'Laís', data: '01/07/2026 04:55' },
-  { whatsapp: '5562995675744', corretor: 'Nalcio', data: '30/06/2026 10:00' },
+  { whatsapp: '5562995675744', corretor: 'Juliane', data: '30/06/2026 10:00' },
   { whatsapp: '5562981502498', corretor: 'Laís', data: '30/06/2026 02:12' },
-  { whatsapp: '5562994679355', corretor: 'Nalcio', data: '29/06/2026 11:41' },
+  { whatsapp: '5562994679355', corretor: 'Juliane', data: '29/06/2026 11:41' },
   { whatsapp: '5511982795830', corretor: 'Laís', data: '28/06/2026 21:32' },
   { whatsapp: '5562996986440', corretor: 'Laís', data: '23/06/2026 19:44' },
 ];
