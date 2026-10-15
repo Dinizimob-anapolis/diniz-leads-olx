@@ -195,6 +195,7 @@ const CRM_HTML = `<!DOCTYPE html>
   .barra-selecao button { border: 0; border-radius: 8px; padding: 8px 14px; font-weight: 700; cursor: pointer; font-size: 14px; }
   .barra-selecao .sel-mover { background: #d4a017; color: #111; }
   .barra-selecao .sel-limpar { background: #333; color: #fff; }
+  .barra-selecao .sel-editar { background: #fff; color: #111; }
   .lead.reaquecer { border-color: var(--warn-border); background: linear-gradient(180deg, var(--warn-bg), var(--card) 32px); }
   .lead.atrasado { border-color: #e0453f !important; background: linear-gradient(180deg, #fdecec, var(--card) 32px); box-shadow: 0 0 0 2px #e0453f33; }
   .lead.cliente-ouro { border-color: #d4a017 !important; background: linear-gradient(180deg, #ffe58a, var(--card) 90px); box-shadow: 0 0 0 3px #f2c94c; }
@@ -763,7 +764,92 @@ function atualizarBarraSelecao() {
       COLUNAS.map(c => '<option value="' + c + '"' + (c === DESTINO_SELECAO ? ' selected' : '') + '>' + c + '</option>').join('') +
     '</select>' +
     '<button class="sel-mover" onclick="moverSelecionados(DESTINO_SELECAO)">Mover</button>' +
+    '<button class="sel-editar" onclick="abrirModalLote()">✏️ Editar todos</button>' +
     '<button class="sel-limpar" onclick="limparSelecao()">Limpar</button>';
+}
+
+
+// Edição em lote: tarefa, prazo, notas, status e "atualizado até" de todos os selecionados.
+function abrirModalLote() {
+  const n = SELECIONADOS.size;
+  if (!n) return;
+  document.getElementById('modal').innerHTML =
+    '<h2>Editar ' + n + ' card' + (n > 1 ? 's' : '') + ' de uma vez</h2>' +
+    '<div class="lead-meta">Só o que você preencher é alterado. Campo em branco fica como está em cada card.</div>' +
+    '<label>Status</label>' +
+    '<select id="lote-status"><option value="">— não alterar —</option>' + COLUNAS.map(c => '<option value="' + c + '">' + c + '</option>').join('') + '</select>' +
+    '<label>Tarefa</label>' +
+    '<input type="text" id="lote-tarefa" placeholder="Próximo passo, ex: ligar amanhã 14h">' +
+    '<label>Prazo da tarefa</label>' +
+    '<input type="datetime-local" id="lote-tarefa-data">' +
+    '<label style="display:flex;gap:8px;align-items:center;margin-top:10px;color:#17a34a;"><input type="checkbox" id="lote-concluir" style="width:auto;margin:0;"> ✓ Marcar a tarefa como concluída (limpa tarefa e prazo)</label>' +
+    '<label>Notas</label>' +
+    '<textarea id="lote-notas" placeholder="Texto que vai entrar nas notas de todos os cards selecionados..."></textarea>' +
+    '<label style="display:flex;gap:8px;align-items:center;margin-top:6px;font-weight:600;"><input type="checkbox" id="lote-notas-substituir" style="width:auto;margin:0;"> Substituir as notas atuais (se desmarcado, o texto é adicionado no final das notas de cada card)</label>' +
+    '<label>Atualizado até (data)</label>' +
+    '<input type="date" id="lote-atualizado">' +
+    '<button class="primary-btn" id="lote-aplicar" style="width:100%;margin-top:14px;">Aplicar em ' + n + ' card' + (n > 1 ? 's' : '') + '</button>' +
+    '<button class="close-btn" id="lote-fechar" style="width:100%;margin-top:8px;">Cancelar</button>';
+  document.getElementById('overlay').classList.add('show');
+  document.getElementById('lote-fechar').addEventListener('click', fecharModal);
+  document.getElementById('lote-aplicar').addEventListener('click', aplicarLote);
+}
+
+async function aplicarLote() {
+  const status = document.getElementById('lote-status').value;
+  const concluir = document.getElementById('lote-concluir').checked;
+  const tarefa = document.getElementById('lote-tarefa').value.trim();
+  const tarefaDataBruta = document.getElementById('lote-tarefa-data').value;
+  const notas = document.getElementById('lote-notas').value.trim();
+  const substituir = document.getElementById('lote-notas-substituir').checked;
+  const atualizado = document.getElementById('lote-atualizado').value;
+
+  if (!status && !concluir && !tarefa && !tarefaDataBruta && !notas && !atualizado) {
+    alert('Preencha pelo menos um campo pra aplicar nos cards selecionados.');
+    return;
+  }
+  const ids = Array.from(SELECIONADOS);
+  if (!confirm('Aplicar essas alterações em ' + ids.length + ' card(s)?')) return;
+
+  const btn = document.getElementById('lote-aplicar');
+  btn.disabled = true;
+  const falhas = [];
+  let feitos = 0;
+  for (let i = 0; i < ids.length; i += 3) {
+    const lote = ids.slice(i, i + 3);
+    await Promise.all(lote.map(async id => {
+      const lead = TODOS_LEADS.find(x => String(x.id) === String(id));
+      if (!lead) return;
+      const campos = [];
+      if (status) campos.push(['status', status]);
+      if (concluir) {
+        campos.push(['tarefa_sdr', '']);
+        campos.push(['tarefa_data', null]);
+      } else {
+        if (tarefa) campos.push(['tarefa_sdr', tarefa]);
+        if (tarefaDataBruta) campos.push(['tarefa_data', new Date(tarefaDataBruta).toISOString()]);
+      }
+      if (notas) {
+        const atuais = (lead.notas_sdr || '').trim();
+        campos.push(['notas_sdr', (substituir || !atuais) ? notas : atuais + '\\n' + notas]);
+      }
+      if (atualizado) campos.push(['ultima_atualizacao_sdr', atualizado]);
+      try {
+        await salvarCamposComRetry(id, campos);
+        campos.forEach(([campo, valor]) => { lead[campo] = valor; });
+        SELECIONADOS.delete(String(id));
+        feitos++;
+      } catch (e) {
+        falhas.push(lead.nome || id);
+      }
+    }));
+    btn.textContent = 'Aplicando... ' + Math.min(i + 3, ids.length) + '/' + ids.length;
+  }
+  fecharModal();
+  render();
+  if (falhas.length) {
+    alert('⚠️ ' + falhas.length + ' card(s) NÃO foram alterados (rede instável): ' + falhas.join(', ') + '. Eles continuam marcados, tente de novo.');
+  }
 }
 
 async function moverSelecionados(novoStatus) {
