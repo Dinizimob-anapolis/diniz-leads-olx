@@ -9,6 +9,7 @@ const { JULIANE_HTML } = require('./juliane-template');
 const { CORRETOR_HTML } = require('./corretor-template');
 const { ANALYTICS_HTML } = require('./analytics-template');
 const crypto = require('crypto');
+const { criarModuloImoveis } = require('./imoveis-grupo');
 const app = express();
 app.use(express.json({ verify: (req, res, buf) => { req.rawBody = buf; } }));
 
@@ -1669,6 +1670,32 @@ app.post('/webhook-meta-leads', (req, res) => {
   }
 });
 
+// ─── AUTOMAÇÃO: IMÓVEIS DO GRUPO (separada do CRM) ───────────
+const IMOVEIS = criarModuloImoveis({
+  pool,
+  evolutionUrl: EVOLUTION_URL,
+  evolutionToken: EVOLUTION_TOKEN,
+  instanciaPadrao: EVOLUTION_INSTANCE,
+  enviarTexto: (fone, texto, inst) => enviarWhatsApp(fone, texto, inst),
+  getDestinos: () => {
+    const excluir = String(process.env.IMOVEIS_EXCLUIR || '').split(',').map(x => x.replace(/\D/g, '')).filter(Boolean);
+    const lista = process.env.IMOVEIS_DESTINOS
+      ? process.env.IMOVEIS_DESTINOS.split(',').map(x => x.replace(/\D/g, '')).filter(Boolean)
+      : Object.values(TELEFONES_CORRETORES).map(c => c.fone);
+    return lista.filter(f => !excluir.includes(f));
+  },
+});
+app.all('/api/admin/imoveis-grupo', basicAuth, async (req, res) => {
+  try {
+    if (req.query.grupos) return res.json(await IMOVEIS.listarGrupos());
+    if (req.query.enviar_agora) {
+      // ?enviar_agora=1&so=5562999999999 → repassa o que estiver pendente já, só pra esse número (teste)
+      return res.json(await IMOVEIS.processarPendentes({ agora: true, soPara: req.query.so || null }));
+    }
+    res.json(await IMOVEIS.status());
+  } catch (e) { res.status(500).json({ erro: e.message }); }
+});
+
 // ─── ROTA: ESPELHO DE MENSAGENS + LEAD ROUTER (Juliane) ──────
 app.post('/webhook-mensagens', async (req, res) => {
   try {
@@ -1678,7 +1705,8 @@ app.post('/webhook-mensagens', async (req, res) => {
     const jid = body?.data?.key?.remoteJid || body?.key?.remoteJid || '';
 
     if (jid.includes('@g.us')) {
-      console.log('Mensagem de grupo ignorada');
+      // grupo "Descrição dos imóveis" → automação separada (imoveis-grupo.js)
+      await IMOVEIS.tratarMensagem(body);
       return res.status(200).json({ ok: true });
     }
 
@@ -4160,6 +4188,7 @@ const PORT = process.env.PORT || 3001;
 app.listen(PORT, async () => {
   console.log(`Servidor rodando na porta ${PORT}`);
   await initDb();
+  IMOVEIS.iniciar().catch(err => console.error('[Imóveis] Erro ao iniciar:', err));
 
   // Backup automático diário — roda uma vez ao iniciar e depois a cada 24h.
   // Como o servidor pode reiniciar a qualquer hora (deploy), isso não é num
