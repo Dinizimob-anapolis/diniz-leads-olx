@@ -188,6 +188,13 @@ const CRM_HTML = `<!DOCTYPE html>
   }
   .lead:active { cursor: grabbing; }
   .lead.dragging { opacity: 0.4; }
+  .lead.selecionado { outline: 3px solid #d4a017; outline-offset: -1px; background: #fff8e1 !important; }
+  .sel-check { position: absolute; right: 8px; bottom: 8px; width: 18px; height: 18px; cursor: pointer; accent-color: #d4a017; }
+  .barra-selecao { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 50; display: none; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: center; background: #111; color: #fff; padding: 10px 16px; border-radius: 14px; box-shadow: 0 6px 24px rgba(0,0,0,0.35); font-size: 14px; max-width: calc(100vw - 24px); }
+  .barra-selecao select { padding: 7px 8px; border-radius: 8px; border: 1px solid #555; background: #222; color: #fff; font-size: 14px; }
+  .barra-selecao button { border: 0; border-radius: 8px; padding: 8px 14px; font-weight: 700; cursor: pointer; font-size: 14px; }
+  .barra-selecao .sel-mover { background: #d4a017; color: #111; }
+  .barra-selecao .sel-limpar { background: #333; color: #fff; }
   .lead.reaquecer { border-color: var(--warn-border); background: linear-gradient(180deg, var(--warn-bg), var(--card) 32px); }
   .lead.atrasado { border-color: #e0453f !important; background: linear-gradient(180deg, #fdecec, var(--card) 32px); box-shadow: 0 0 0 2px #e0453f33; }
   .lead.cliente-ouro { border-color: #d4a017 !important; background: linear-gradient(180deg, #ffe58a, var(--card) 90px); box-shadow: 0 0 0 3px #f2c94c; }
@@ -418,6 +425,8 @@ const CRM_HTML = `<!DOCTYPE html>
 
 <div class="board" id="board"></div>
 
+<div class="barra-selecao" id="barra-selecao"></div>
+
 <div class="overlay" id="overlay">
   <div class="modal" id="modal"></div>
 </div>
@@ -429,6 +438,8 @@ let TODOS_LEADS = [];
 const ORIGENS = ['OLX/Canal Pro', 'Meta Ads', 'Patrocinado', 'TikTok', 'Instagram', 'Comentário', 'Indicação', 'SDR', 'Outro'];
 let BUSCA = '';
 let LEAD_ARRASTADO = null;
+let SELECIONADOS = new Set(); // ids (string) dos cards marcados pra mover em lote
+let DESTINO_SELECAO = '';
 let ULTIMO_ADICIONADO_ID = null;
 let FILTROS_DATA_COLUNA = {}; // { [coluna]: { de, ate } } — filtro de período por coluna
 let COLUNA_FILTRO_ABERTA = null; // qual coluna está com o painel de data aberto agora
@@ -631,6 +642,7 @@ function render() {
           <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">
             <span>\${coluna}</span>
             <div style="display:flex;align-items:center;gap:4px;">
+              <button class="lupa-filtro-btn" title="Selecionar (ou desmarcar) todos desta coluna" onclick="selecionarColuna('\${coluna}')">☑</button>
               <button class="lupa-filtro-btn \${filtroAtivo ? 'ativa' : ''}" title="Filtrar por período" onclick="alternarFiltroData('\${coluna}')">🔍</button>
               <span class="column-count">\${leadsColuna.length}\${filtroAtivo ? \`/\${leadsColunaSemFiltro.length}\` : ''}</span>
             </div>
@@ -657,10 +669,18 @@ function render() {
     el.addEventListener('dragstart', e => {
       LEAD_ARRASTADO = el.dataset.id;
       el.classList.add('dragging');
+      // Se o card arrastado está selecionado, todos os selecionados "vão junto".
+      if (SELECIONADOS.has(String(el.dataset.id))) {
+        board.querySelectorAll('.lead.selecionado').forEach(x => x.classList.add('dragging'));
+      }
       e.dataTransfer.effectAllowed = 'move';
     });
-    el.addEventListener('dragend', () => el.classList.remove('dragging'));
-    el.addEventListener('click', () => abrirModalLead(el.dataset.id));
+    el.addEventListener('dragend', () => board.querySelectorAll('.lead.dragging').forEach(x => x.classList.remove('dragging')));
+    el.addEventListener('click', e => {
+      // Ctrl / Cmd / Shift + clique seleciona o card (sem abrir).
+      if (e.ctrlKey || e.metaKey || e.shiftKey) { e.preventDefault(); alternarSelecao(el.dataset.id); return; }
+      abrirModalLead(el.dataset.id);
+    });
   });
 
   board.querySelectorAll('.column-cards').forEach(col => {
@@ -674,11 +694,19 @@ function render() {
       col.closest('.column').classList.remove('dragover');
       if (LEAD_ARRASTADO) {
         const novoStatus = col.dataset.coluna;
-        salvarCampo(LEAD_ARRASTADO, 'status', novoStatus, () => { render(); });
+        if (SELECIONADOS.has(String(LEAD_ARRASTADO)) && SELECIONADOS.size > 1) {
+          moverSelecionados(novoStatus);
+        } else {
+          salvarCampo(LEAD_ARRASTADO, 'status', novoStatus, () => { render(); });
+        }
         LEAD_ARRASTADO = null;
       }
     });
   });
+
+  // Limpa da seleção quem não está mais na carteira e atualiza a barra.
+  SELECIONADOS.forEach(id => { if (!TODOS_LEADS.some(l => String(l.id) === id)) SELECIONADOS.delete(id); });
+  atualizarBarraSelecao();
 
   if (ULTIMO_ADICIONADO_ID) {
     const cardNovo = board.querySelector(\`.lead[data-id="\${ULTIMO_ADICIONADO_ID}"]\`);
@@ -689,6 +717,86 @@ function render() {
     ULTIMO_ADICIONADO_ID = null;
   }
 }
+
+
+// ─── SELEÇÃO DE VÁRIOS CARDS (mover em lote) ──────────────────
+function sincronizarSelecaoNoDom() {
+  document.querySelectorAll('#board .lead').forEach(el => {
+    const marcado = SELECIONADOS.has(String(el.dataset.id));
+    el.classList.toggle('selecionado', marcado);
+    const chk = el.querySelector('.sel-check');
+    if (chk) chk.checked = marcado;
+  });
+  atualizarBarraSelecao();
+}
+
+function alternarSelecao(id) {
+  id = String(id);
+  if (SELECIONADOS.has(id)) SELECIONADOS.delete(id); else SELECIONADOS.add(id);
+  sincronizarSelecaoNoDom();
+}
+
+function selecionarColuna(coluna) {
+  const els = Array.from(document.querySelectorAll('#board .column-cards[data-coluna="' + coluna + '"] .lead'));
+  if (!els.length) return;
+  const todosMarcados = els.every(el => SELECIONADOS.has(String(el.dataset.id)));
+  els.forEach(el => { if (todosMarcados) SELECIONADOS.delete(String(el.dataset.id)); else SELECIONADOS.add(String(el.dataset.id)); });
+  sincronizarSelecaoNoDom();
+}
+
+function limparSelecao() {
+  SELECIONADOS.clear();
+  sincronizarSelecaoNoDom();
+}
+
+function atualizarBarraSelecao() {
+  const barra = document.getElementById('barra-selecao');
+  if (!barra) return;
+  const n = SELECIONADOS.size;
+  if (n === 0) { barra.style.display = 'none'; barra.innerHTML = ''; return; }
+  if (!DESTINO_SELECAO || !COLUNAS.includes(DESTINO_SELECAO)) DESTINO_SELECAO = COLUNAS[0];
+  barra.style.display = 'flex';
+  barra.innerHTML =
+    '<span><b>' + n + '</b> selecionado' + (n > 1 ? 's' : '') + '</span>' +
+    '<span>Mover para</span>' +
+    '<select id="sel-destino" onchange="DESTINO_SELECAO = this.value">' +
+      COLUNAS.map(c => '<option value="' + c + '"' + (c === DESTINO_SELECAO ? ' selected' : '') + '>' + c + '</option>').join('') +
+    '</select>' +
+    '<button class="sel-mover" onclick="moverSelecionados(DESTINO_SELECAO)">Mover</button>' +
+    '<button class="sel-limpar" onclick="limparSelecao()">Limpar</button>';
+}
+
+async function moverSelecionados(novoStatus) {
+  const ids = Array.from(SELECIONADOS).filter(id => {
+    const l = TODOS_LEADS.find(x => String(x.id) === String(id));
+    return l && statusDoLead(l) !== novoStatus;
+  });
+  if (!ids.length) { limparSelecao(); return; }
+  const barra = document.getElementById('barra-selecao');
+  if (barra) { barra.style.display = 'flex'; barra.innerHTML = '<span>Movendo ' + ids.length + ' card(s) para <b>' + novoStatus + '</b>...</span>'; }
+  const falhas = [];
+  for (let i = 0; i < ids.length; i += 4) {
+    const lote = ids.slice(i, i + 4);
+    const resultados = await Promise.all(lote.map(id => salvarUmCampoComRetry(id, 'status', novoStatus)));
+    resultados.forEach((ok, j) => {
+      const id = lote[j];
+      if (ok) {
+        const l = TODOS_LEADS.find(x => String(x.id) === String(id));
+        if (l) l.status = novoStatus;
+        SELECIONADOS.delete(String(id));
+      } else {
+        falhas.push(id);
+      }
+    });
+  }
+  render();
+  if (falhas.length) {
+    const nomes = falhas.map(id => { const l = TODOS_LEADS.find(x => String(x.id) === String(id)); return l ? (l.nome || 'Sem nome') : id; });
+    alert('⚠️ ' + falhas.length + ' card(s) NÃO foram movidos (rede instável): ' + nomes.join(', ') + '. Eles continuam marcados, tente mover de novo.');
+  }
+}
+
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && SELECIONADOS.size > 0 && !document.getElementById('overlay').classList.contains('show')) limparSelecao(); });
 
 function formatarData(dataStr) {
   if (!dataStr) return null;
@@ -737,7 +845,7 @@ function cardHtml(lead, corBorda) {
   const classeDestaque = \`\${tarefaAtrasada ? 'atrasado' : (duplicado ? 'reaquecer' : '')} \${lead.cliente_ouro ? 'cliente-ouro' : ''}\`.trim();
   const botaoOuro = \`<button class="btn-ouro modal-versao \${lead.cliente_ouro ? 'ativo' : ''}" onclick="event.stopPropagation();alternarClienteOuro('\${lead.id}', \${!lead.cliente_ouro})" title="\${lead.cliente_ouro ? 'Cliente Ouro — clique pra desmarcar' : 'Marcar como Cliente Ouro'}">⭐</button>\`;
   return \`
-    <div class="lead \${classeDestaque}" draggable="true" data-id="\${lead.id}" style="\${classeDestaque.includes('atrasado') || classeDestaque.includes('reaquecer') ? '' : \`border-left-color:\${corBorda}\`}">
+    <div class="lead \${classeDestaque} \${SELECIONADOS.has(String(lead.id)) ? 'selecionado' : ''}" draggable="true" data-id="\${lead.id}" style="\${classeDestaque.includes('atrasado') || classeDestaque.includes('reaquecer') ? '' : \`border-left-color:\${corBorda}\`}">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:6px;">
         <div class="lead-nome">\${lead.nome || 'Sem nome'}\${botaoOuro}</div>
         \${lead.valor_imovel_sdr ? \`<span style="font-size:10px;font-weight:700;color:#17a34a;white-space:nowrap;">💰 \${lead.valor_imovel_sdr}</span>\` : ''}
@@ -752,6 +860,7 @@ function cardHtml(lead, corBorda) {
       \${lead.ultima_atualizacao_sdr ? \`<div class="tarefa-preview" style="color:var(--muted);font-weight:600;">🗓️ Atualizado até \${formatarData(lead.ultima_atualizacao_sdr)}</div>\` : ''}
       \${lead.notas_sdr ? \`<div class="lead-notas">\${lead.notas_sdr.split('\\n')[0]}</div>\` : ''}
       \${lead.buscando_sdr ? \`<div class="lead-notas" style="color:#5b6bf5;font-weight:600;">🔎 \${lead.buscando_sdr.split('\\n')[0]}</div>\` : ''}
+      <input type="checkbox" class="sel-check" title="Selecionar este card (depois arraste um deles pra mover todos)" \${SELECIONADOS.has(String(lead.id)) ? 'checked' : ''} onclick="event.stopPropagation();alternarSelecao('\${lead.id}')">
     </div>
   \`;
 }
