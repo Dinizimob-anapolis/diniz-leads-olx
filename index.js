@@ -1989,6 +1989,39 @@ app.post('/api/corretores-extra', basicAuthAdminOuSdr, async (req, res) => {
   }
 });
 
+// ─── ROTA ADMIN: REDEFINIR LOGIN/SENHA DE UM CORRETOR DO PAINEL ─
+// Ex: /api/admin/redefinir-corretor?nome=Rubens&usuario=rubens.crm&senha=MinhaSenha123
+// (reativa o corretor se estiver removido; só admin)
+app.all('/api/admin/redefinir-corretor', basicAuth, async (req, res) => {
+  try {
+    const q = { ...req.query, ...(req.body || {}) };
+    const nome = String(q.nome || '').trim();
+    const senha = String(q.senha || '');
+    const usuario = q.usuario ? String(q.usuario).trim().toLowerCase() : null;
+    if (!nome || senha.length < 6) return res.status(400).json({ ok: false, erro: 'Informe nome e senha (mínimo 6 caracteres).' });
+    if (usuario && !/^[a-z0-9._-]{3,30}$/.test(usuario)) return res.status(400).json({ ok: false, erro: 'Usuário inválido (3 a 30 letras minúsculas, números, ponto ou hífen).' });
+    const achou = await pool.query(`SELECT id, usuario FROM corretores_extra WHERE lower(nome) = lower($1) ORDER BY id DESC LIMIT 1`, [nome]);
+    if (!achou.rows.length) return res.status(404).json({ ok: false, erro: 'Corretor não encontrado entre os criados pelo painel.' });
+    const salt = crypto.randomBytes(16).toString('hex');
+    try {
+      await pool.query(
+        `UPDATE corretores_extra SET senha_salt = $1, senha_hash = $2, usuario = COALESCE($3, usuario), ativo = true WHERE id = $4`,
+        [salt, hashSenha(senha, salt), usuario, achou.rows[0].id]
+      );
+    } catch (e) {
+      if (String(e.code) === '23505') return res.status(409).json({ ok: false, erro: 'Esse usuário já está em uso. Escolha outro.' });
+      throw e;
+    }
+    await carregarCorretoresExtra();
+    const atual = await pool.query(`SELECT nome, usuario, ativo FROM corretores_extra WHERE id = $1`, [achou.rows[0].id]);
+    console.log(`[Corretores] Login redefinido pelo admin: ${atual.rows[0].nome} (${atual.rows[0].usuario})`);
+    res.json({ ok: true, corretor: atual.rows[0], link: '/meu-crm' });
+  } catch (err) {
+    console.error('Erro ao redefinir corretor:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
 app.delete('/api/corretores-extra/:id', basicAuthAdminOuSdr, async (req, res) => {
   if (req.authTipo !== 'juliane' && req.authTipo !== 'admin') return res.status(403).json({ ok: false, erro: 'Só a Juliane pode remover corretor.' });
   try {
@@ -4240,3 +4273,4 @@ app.listen(PORT, async () => {
     console.warn('⚠️  Sincronização com Google Sheets desativada — configure GOOGLE_SHEET_ID e GOOGLE_SERVICE_ACCOUNT_KEY pra ativar.');
   }
 });
+    
