@@ -1871,6 +1871,7 @@ function basicAuthAdminOuSdr(req, res, next) {
     juliane: { user: process.env.CORRETOR_JULIANE_USER || 'juliane.corretor', pass: process.env.CORRETOR_JULIANE_PASS, nome: 'Juliane' },
     amanda: { user: process.env.CORRETOR_AMANDA_USER || 'amanda', pass: process.env.CORRETOR_AMANDA_PASS, nome: 'Amanda' },
     cyda: { user: process.env.CORRETOR_CYDA_USER || 'cyda', pass: process.env.CORRETOR_CYDA_PASS, nome: 'Cyda' },
+    rubens: { user: process.env.CORRETOR_RUBENS_USER || 'rubens.fixo', pass: process.env.CORRETOR_RUBENS_PASS, nome: 'Rubens' },
   };
 
   const algumaSenhaConfigurada = adminPass || sdrPass || julianePass ||
@@ -2020,6 +2021,22 @@ app.all('/api/admin/redefinir-corretor', basicAuth, async (req, res) => {
     console.error('Erro ao redefinir corretor:', err);
     res.status(500).json({ ok: false, erro: err.message });
   }
+});
+
+// ─── ROTA ADMIN: DIAGNÓSTICO DE LOGIN DE CORRETOR DO PAINEL ───
+// /api/admin/diagnostico-login?usuario=rubens&senha=xxx → diz se o login confere
+app.all('/api/admin/diagnostico-login', basicAuth, async (req, res) => {
+  try {
+    const q = { ...req.query, ...(req.body || {}) };
+    const doBanco = await pool.query(`SELECT id, nome, usuario, ativo FROM corretores_extra ORDER BY id`);
+    const carregados = LOGINS_DINAMICOS.map(l => ({ usuario: l.user, nome: l.nome }));
+    let confere = null;
+    if (q.usuario && q.senha) {
+      const l = LOGINS_DINAMICOS.find(x => x.user === String(q.usuario).trim().toLowerCase());
+      confere = l ? senhaConfere(String(q.senha), l.salt, l.hash) : 'usuário não está carregado na memória';
+    }
+    res.json({ ok: true, noBanco: doBanco.rows, carregadosNaMemoria: carregados, senhaConfere: confere });
+  } catch (err) { res.status(500).json({ ok: false, erro: err.message }); }
 });
 
 app.delete('/api/corretores-extra/:id', basicAuthAdminOuSdr, async (req, res) => {
