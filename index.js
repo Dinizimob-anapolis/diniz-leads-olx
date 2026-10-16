@@ -1910,7 +1910,7 @@ function basicAuthAdminOuSdr(req, res, next) {
   }
 
   for (const login of LOGINS_DINAMICOS) {
-    if (u === login.user && p && senhaConfere(p, login.salt, login.hash)) {
+    if (u && String(u).trim().toLowerCase() === login.user && p && senhaConfere(p, login.salt, login.hash)) {
       req.authTipo = 'corretor';
       req.corretorNome = login.nome;
       return next();
@@ -4273,4 +4273,3 @@ app.listen(PORT, async () => {
     console.warn('⚠️  Sincronização com Google Sheets desativada — configure GOOGLE_SHEET_ID e GOOGLE_SERVICE_ACCOUNT_KEY pra ativar.');
   }
 });
-    
