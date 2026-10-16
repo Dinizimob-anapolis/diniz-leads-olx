@@ -73,13 +73,41 @@ function criarModuloImoveis({ pool, evolutionUrl, evolutionToken, instanciaPadra
     return jidGrupo;
   }
 
+  // Linha de separador (———, ----, ____, ====, etc.) que a equipe usa entre um imóvel e outro
+  const LINHA_SEP = /^[\s—–\-_=─━~*•.·]{4,}$/;
+  const temSep = t => String(t || '').split('\n').some(l => LINHA_SEP.test(l));
+
+  // Divide as mensagens de uma pessoa em imóveis: cada separador fecha um imóvel
+  function separarImoveis(msgs) {
+    const grupos = [[]];
+    const fecha = () => { if (grupos[grupos.length - 1].length) grupos.push([]); };
+    for (const x of msgs) {
+      if (x.tipo === 'text' && temSep(x.texto)) {
+        const partes = x.texto.split(/\n/).reduce((acc, l) => {
+          if (LINHA_SEP.test(l)) acc.push([]); else acc[acc.length - 1].push(l);
+          return acc;
+        }, [[]]);
+        partes.forEach((linhas, i) => {
+          if (i > 0) fecha();
+          const texto = linhas.join('\n').trim();
+          if (texto) grupos[grupos.length - 1].push({ ...x, texto });
+        });
+      } else {
+        const y = x.tipo !== 'text' && temSep(x.texto)
+          ? { ...x, texto: x.texto.split('\n').filter(l => !LINHA_SEP.test(l)).join('\n').trim() } : x;
+        grupos[grupos.length - 1].push(y);
+      }
+    }
+    return grupos.filter(g => g.length);
+  }
+
   // ── Limpeza da descrição: tira qualquer contato do proprietário ──
   function limparDescricao(texto) {
     let t = String(texto || '').replace(/\r/g, '');
     t = t.replace(/https?:\/\/(?:wa\.me|api\.whatsapp\.com|chat\.whatsapp\.com)\S*/gi, '');
     t = t.replace(/\bwa\.me\/\S*/gi, '');
     const rotulo = /(propriet[aá]ri|\bdono\b|\bdona\b|contato|telefone|\btel\b|\bfone\b|whats|\bzap\b|\bcel\b|celular|falar com|ligar para|ligar p\/)/i;
-    t = t.split('\n').filter(l => !rotulo.test(l)).join('\n');
+    t = t.split('\n').filter(l => !rotulo.test(l) && !LINHA_SEP.test(l)).join('\n');
     t = t.replace(/\+?\d[\d\s().-]{8,}\d/g, (m, pos, tudo) => {
       const antes = tudo.slice(Math.max(0, pos - 4), pos);
       if (/R\$\s*$/i.test(antes) || m.includes(',')) return m;
@@ -217,8 +245,10 @@ function criarModuloImoveis({ pool, evolutionUrl, evolutionToken, instanciaPadra
           `SELECT * FROM imoveis_grupo_msgs WHERE remetente = $1 AND processado = false ORDER BY criado_em, id`, [row.remetente]);
         // marca antes de enviar: nunca reenvia em duplicidade se travar no meio
         await pool.query(`UPDATE imoveis_grupo_msgs SET processado = true WHERE id = ANY($1)`, [m.rows.map(x => x.id)]);
-        try { resultados.push(await repassar(m.rows, opts.soPara)); }
-        catch (e) { console.error('[Imóveis] Erro ao repassar imóvel:', e); resultados.push({ erro: e.message }); }
+        for (const grupo of separarImoveis(m.rows)) {
+          try { resultados.push(await repassar(grupo, opts.soPara)); }
+          catch (e) { console.error('[Imóveis] Erro ao repassar imóvel:', e); resultados.push({ erro: e.message }); }
+        }
       }
     } finally { processando = false; }
     return resultados;
@@ -244,7 +274,7 @@ function criarModuloImoveis({ pool, evolutionUrl, evolutionToken, instanciaPadra
     return lista.map(g => ({ id: g.id, nome: g.subject }));
   }
 
-  return { iniciar, tratarMensagem, processarPendentes, status, listarGrupos, resolverGrupo, limparDescricao };
+  return { separarImoveis, iniciar, tratarMensagem, processarPendentes, status, listarGrupos, resolverGrupo, limparDescricao };
 }
 
 module.exports = { criarModuloImoveis };
