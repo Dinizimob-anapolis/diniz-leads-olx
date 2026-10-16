@@ -9,6 +9,9 @@ function criarModuloImoveis({ pool, evolutionUrl, evolutionToken, instanciaPadra
   const JID_FIXO = process.env.IMOVEIS_GRUPO_JID || '';
   const PAUSA_MS = Math.max(1, parseFloat(process.env.IMOVEIS_PAUSA_MIN) || 3) * 60 * 1000;
   const MAX_MIDIAS = parseInt(process.env.IMOVEIS_MAX_MIDIAS, 10) || 40;
+  // Grupo único de destino (padrão: "Infos Imóveis"). Use IMOVEIS_DESTINO_NOME=- pra voltar a mandar nos grupos Estratégico de cada corretor.
+  const NOME_DESTINO = process.env.IMOVEIS_DESTINO_NOME === undefined ? 'Infos Imóveis' : process.env.IMOVEIS_DESTINO_NOME;
+  const MODO_GRUPO_UNICO = !!NOME_DESTINO && NOME_DESTINO !== '-';
   const INSTANCIA_ENVIO = process.env.IMOVEIS_INSTANCIA_ENVIO || instanciaPadrao;
   const DESATIVADO = String(process.env.IMOVEIS_GRUPO_DESATIVADO || '') === '1';
 
@@ -86,6 +89,12 @@ function criarModuloImoveis({ pool, evolutionUrl, evolutionToken, instanciaPadra
     const primeiro = norm(nome).split(' ')[0];
     if (!primeiro || process.env.IMOVEIS_SO_PRIVADO === '1') return null;
     const g = (await gruposDaInstancia()).find(x => { const n = norm(x.subject); return n.includes('estrategico') && n.split(' ').includes(primeiro); });
+    return g ? g.id : null;
+  }
+  async function grupoDestinoUnico() {
+    const alvo = norm(NOME_DESTINO);
+    const lista = await gruposDaInstancia();
+    const g = lista.find(x => norm(x.subject) === alvo) || lista.find(x => norm(x.subject).includes(alvo));
     return g ? g.id : null;
   }
   const paraObjeto = d => typeof d === 'string' ? { nome: '', fone: d.replace(/\D/g, '') } : { nome: d.nome || '', fone: String(d.fone || '').replace(/\D/g, '') };
@@ -210,12 +219,19 @@ function criarModuloImoveis({ pool, evolutionUrl, evolutionToken, instanciaPadra
     const foneRemetente = remetente.replace(/\D/g, '');
     let todos = getDestinos().map(paraObjeto);
     let destinos;
-    if (soPara) {
+    if (MODO_GRUPO_UNICO && !(soPara && String(soPara).replace(/\D/g, '').length >= 8)) {
+      const jidD = await grupoDestinoUnico();
+      if (!jidD) {
+        console.warn(`[Imóveis] Grupo de destino "${NOME_DESTINO}" não encontrado — o 7070 precisa estar nele. Nada enviado.`);
+        return { erro: `grupo "${NOME_DESTINO}" não encontrado (o 7070 precisa ser membro)` };
+      }
+      destinos = [{ nome: NOME_DESTINO, fone: jidD, grupoUnico: true }];
+    } else if (soPara) {
       const so = String(soPara);
       if (so.replace(/\D/g, '').length >= 8) destinos = [{ nome: '', fone: so.replace(/\D/g, ''), soPrivado: true }];
       else destinos = todos.filter(d => norm(d.nome).includes(norm(so))); // teste por nome: usa o grupo do corretor
     } else destinos = todos;
-    destinos = destinos.filter(d => d.fone && !(foneRemetente && foneRemetente.length >= 10 && d.fone.endsWith(foneRemetente.slice(-10))));
+    if (!MODO_GRUPO_UNICO || !destinos[0]?.grupoUnico) destinos = destinos.filter(d => d.fone && !(foneRemetente && foneRemetente.length >= 10 && d.fone.endsWith(foneRemetente.slice(-10))));
     destinos = destinos.filter((d, i) => destinos.findIndex(x => x.fone === d.fone) === i);
 
     // baixa cada mídia uma vez só
@@ -234,11 +250,11 @@ function criarModuloImoveis({ pool, evolutionUrl, evolutionToken, instanciaPadra
     for (const dest of destinos) {
       let fone = dest.fone, via = 'privado';
       try {
-        const jidG = dest.soPrivado ? null : await grupoDoCorretor(dest.nome);
+        const jidG = (dest.soPrivado || dest.grupoUnico) ? null : await grupoDoCorretor(dest.nome);
         if (jidG) { fone = jidG; via = 'grupo'; }
       } catch (e) { console.error('[Imóveis] Erro ao buscar grupo do corretor:', e.message); }
       // só no grupo "Estratégico": sem grupo, NÃO manda no privado (a menos que IMOVEIS_ENVIAR_PRIVADO=1)
-      if (via === 'privado' && !dest.soPrivado && process.env.IMOVEIS_ENVIAR_PRIVADO !== '1') {
+      if (via === 'privado' && !dest.soPrivado && !dest.grupoUnico && process.env.IMOVEIS_ENVIAR_PRIVADO !== '1') {
         console.warn(`[Imóveis] Sem grupo Estratégico para ${dest.nome || dest.fone} — não enviado (o 7070 precisa estar no grupo)`);
         falhas.push((dest.nome || dest.fone) + ' (sem grupo)');
         continue;
@@ -307,6 +323,7 @@ function criarModuloImoveis({ pool, evolutionUrl, evolutionToken, instanciaPadra
   }
 
   async function mostrarDestinos() {
+    if (MODO_GRUPO_UNICO) { const g = await grupoDestinoUnico().catch(() => null); return { modo: 'grupo único', destino: NOME_DESTINO, jid: g, aviso: g ? null : 'grupo não encontrado — o 7070 precisa ser membro' }; }
     const out = [];
     for (const d of getDestinos().map(paraObjeto)) {
       let g = null; try { g = await grupoDoCorretor(d.nome); } catch (e) {}
