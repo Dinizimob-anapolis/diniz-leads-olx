@@ -1401,7 +1401,7 @@ async function confirmarNovoCorretor() {
     }
     await carregarCorretoresExtra();
     render();
-    const link = window.location.origin + '/crm';
+    const link = window.location.origin + '/meu-crm';
     document.getElementById('modal').innerHTML = \`
       <h2>✅ Corretor criado</h2>
       <div class="lead-meta">Mande estes dados pro \${data.corretor.nome}. A senha não aparece de novo.</div>
