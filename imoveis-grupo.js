@@ -97,9 +97,10 @@ function criarModuloImoveis({ pool, evolutionUrl, evolutionToken, instanciaPadra
     if (!jid.includes('@g.us')) return false;
     if (DESATIVADO) return true;
     try {
-      if (d.key.fromMe) return true;
+      console.log(`[Imóveis] Mensagem de grupo recebida: ${jid} fromMe=${!!d.key.fromMe} de=${d.pushName || d.key.participant || '?'} tipos=${Object.keys(d.message || {}).join(',')}`);
+      if (d.key.fromMe) { console.log('[Imóveis] Ignorada: enviada pelo próprio número (7070)'); return true; }
       const alvo = await resolverGrupo(false);
-      if (!alvo || jid !== alvo) return true;
+      if (!alvo || jid !== alvo) { console.log(`[Imóveis] Ignorada: não é o grupo alvo (${alvo || 'grupo ainda não encontrado'})`); return true; }
 
       const m = d.message || {};
       let tipo = null, texto = '', mimetype = null;
