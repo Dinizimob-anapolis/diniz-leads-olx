@@ -1677,17 +1677,28 @@ const IMOVEIS = criarModuloImoveis({
   evolutionToken: EVOLUTION_TOKEN,
   instanciaPadrao: EVOLUTION_INSTANCE,
   enviarTexto: (fone, texto, inst) => enviarWhatsApp(fone, texto, inst),
+  // IMOVEIS_DESTINOS aceita "Nome:5562999999999" (envia no grupo "Estratégico Nome" se existir)
+  // ou só o número. Sem a variável, usa os corretores cadastrados no sistema.
   getDestinos: () => {
     const excluir = String(process.env.IMOVEIS_EXCLUIR || '').split(',').map(x => x.replace(/\D/g, '')).filter(Boolean);
-    const lista = process.env.IMOVEIS_DESTINOS
-      ? process.env.IMOVEIS_DESTINOS.split(',').map(x => x.replace(/\D/g, '')).filter(Boolean)
-      : Object.values(TELEFONES_CORRETORES).map(c => c.fone);
-    return lista.filter(f => !excluir.includes(f));
+    let lista;
+    if (process.env.IMOVEIS_DESTINOS) {
+      lista = process.env.IMOVEIS_DESTINOS.split(',').map(x => x.trim()).filter(Boolean).map(x => {
+        const [a, b] = x.includes(':') ? x.split(':') : ['', x];
+        const fone = String(b).replace(/\D/g, '');
+        const nome = a.trim() || (Object.values(TELEFONES_CORRETORES).find(c => c.fone === fone) || {}).nome || '';
+        return { nome, fone };
+      }).filter(d => d.fone);
+    } else {
+      lista = Object.values(TELEFONES_CORRETORES).map(c => ({ nome: c.nome, fone: c.fone }));
+    }
+    return lista.filter(d => !excluir.includes(d.fone));
   },
 });
 app.all('/api/admin/imoveis-grupo', basicAuth, async (req, res) => {
   try {
     if (req.query.grupos) return res.json(await IMOVEIS.listarGrupos());
+    if (req.query.destinos) return res.json(await IMOVEIS.mostrarDestinos());
     if (req.query.enviar_agora) {
       // ?enviar_agora=1&so=5562999999999 → repassa o que estiver pendente já, só pra esse número (teste)
       return res.json(await IMOVEIS.processarPendentes({ agora: true, soPara: req.query.so || null }));
