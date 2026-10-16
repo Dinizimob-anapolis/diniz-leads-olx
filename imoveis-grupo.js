@@ -175,16 +175,18 @@ function criarModuloImoveis({ pool, evolutionUrl, evolutionToken, instanciaPadra
 
     const cabecalho = '🏠 *Imóvel novo do grupo*';
     let enviados = 0;
+    const falhas = [];
     for (const fone of destinos) {
       try {
-        if (descricao) await enviarTexto(fone, `${cabecalho}\n\n${descricao}`, INSTANCIA_ENVIO);
-        else await enviarTexto(fone, cabecalho, INSTANCIA_ENVIO);
+        const rt = await enviarTexto(fone, descricao ? `${cabecalho}\n\n${descricao}` : cabecalho, INSTANCIA_ENVIO);
+        if (rt && rt._ok === false) { falhas.push(fone); await dormir(aleatorio(1000, 2000)); continue; }
         for (const md of midias) {
           await dormir(aleatorio(1500, 3500));
           await enviarMidia(fone, md.tipo, md, '');
         }
         enviados++;
       } catch (e) {
+        falhas.push(fone);
         console.error(`[Imóveis] Erro ao enviar pra ...${fone.slice(-4)}:`, e.message);
       }
       await dormir(aleatorio(5000, 10000));
@@ -194,7 +196,7 @@ function criarModuloImoveis({ pool, evolutionUrl, evolutionToken, instanciaPadra
       [remetente, midias.length, enviados, descricao.slice(0, 2000)]
     );
     console.log(`[Imóveis] Imóvel repassado: ${midias.length} mídia(s) pra ${enviados} corretor(es)`);
-    return { midias: midias.length, destinatarios: enviados };
+    return { midias: midias.length, destinatarios: enviados, falharam: falhas.length };
   }
 
   // Varre o banco: remetentes cuja última mensagem tem mais de PAUSA_MS
