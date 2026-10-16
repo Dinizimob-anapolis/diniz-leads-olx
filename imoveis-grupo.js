@@ -73,6 +73,23 @@ function criarModuloImoveis({ pool, evolutionUrl, evolutionToken, instanciaPadra
     return jidGrupo;
   }
 
+  // ── Grupo "Estratégico (nome)" de cada corretor ──
+  let cacheGrupos = { em: 0, lista: [] };
+  async function gruposDaInstancia() {
+    if (Date.now() - cacheGrupos.em < 10 * 60 * 1000 && cacheGrupos.lista.length) return cacheGrupos.lista;
+    const r = await evo('GET', `/group/fetchAllGroups/${encodeURIComponent(INSTANCIA_ENVIO)}?getParticipants=false`);
+    const lista = Array.isArray(r.json) ? r.json : (r.json?.groups || []);
+    if (lista.length) cacheGrupos = { em: Date.now(), lista: lista.map(g => ({ id: g.id, subject: g.subject || '' })) };
+    return cacheGrupos.lista;
+  }
+  async function grupoDoCorretor(nome) {
+    const primeiro = norm(nome).split(' ')[0];
+    if (!primeiro || process.env.IMOVEIS_SO_PRIVADO === '1') return null;
+    const g = (await gruposDaInstancia()).find(x => { const n = norm(x.subject); return n.includes('estrategico') && n.split(' ').includes(primeiro); });
+    return g ? g.id : null;
+  }
+  const paraObjeto = d => typeof d === 'string' ? { nome: '', fone: d.replace(/\D/g, '') } : { nome: d.nome || '', fone: String(d.fone || '').replace(/\D/g, '') };
+
   // Linha de separador (———, ----, ____, ====, etc.) que a equipe usa entre um imóvel e outro
   const LINHA_SEP = /^[\s—–\-_=─━~*•.·]{4,}$/;
   const temSep = t => String(t || '').split('\n').some(l => LINHA_SEP.test(l));
@@ -106,7 +123,10 @@ function criarModuloImoveis({ pool, evolutionUrl, evolutionToken, instanciaPadra
     let t = String(texto || '').replace(/\r/g, '');
     t = t.replace(/https?:\/\/(?:wa\.me|api\.whatsapp\.com|chat\.whatsapp\.com)\S*/gi, '');
     t = t.replace(/\bwa\.me\/\S*/gi, '');
-    const rotulo = /(propriet[aá]ri|\bdono\b|\bdona\b|contato|telefone|\btel\b|\bfone\b|whats|\bzap\b|\bcel\b|celular|falar com|ligar para|ligar p\/)/i;
+    // links de mapa / localização (Google Maps, Waze, coordenadas)
+    t = t.replace(/(?:https?:\/\/)?(?:(?:www\.|maps\.)?google\.[a-z.]+\/maps|maps\.app\.goo\.gl|goo\.gl\/maps|g\.page|waze\.com|ul\.waze\.com|maps\.apple\.com|share\.google)\S*/gi, '');
+    t = t.replace(/-?\d{1,2}\.\d{4,},\s*-?\d{1,3}\.\d{4,}/g, '');
+    const rotulo = /(localiza[çc][aã]o|\blocal:|\bmaps\b|\bwaze\b|propriet[aá]ri|\bdono\b|\bdona\b|contato|telefone|\btel\b|\bfone\b|whats|\bzap\b|\bcel\b|celular|falar com|ligar para|ligar p\/)/i;
     t = t.split('\n').filter(l => !rotulo.test(l) && !LINHA_SEP.test(l)).join('\n');
     t = t.replace(/\+?\d[\d\s().-]{8,}\d/g, (m, pos, tudo) => {
       const antes = tudo.slice(Math.max(0, pos - 4), pos);
@@ -188,9 +208,15 @@ function criarModuloImoveis({ pool, evolutionUrl, evolutionToken, instanciaPadra
     }
 
     const foneRemetente = remetente.replace(/\D/g, '');
-    let destinos = (soPara ? [soPara.replace(/\D/g, '')] : getDestinos())
-      .filter(f => f && !(foneRemetente && foneRemetente.length >= 10 && f.endsWith(foneRemetente.slice(-10))));
-    destinos = [...new Set(destinos)];
+    let todos = getDestinos().map(paraObjeto);
+    let destinos;
+    if (soPara) {
+      const so = String(soPara);
+      if (so.replace(/\D/g, '').length >= 8) destinos = [{ nome: '', fone: so.replace(/\D/g, ''), soPrivado: true }];
+      else destinos = todos.filter(d => norm(d.nome).includes(norm(so))); // teste por nome: usa o grupo do corretor
+    } else destinos = todos;
+    destinos = destinos.filter(d => d.fone && !(foneRemetente && foneRemetente.length >= 10 && d.fone.endsWith(foneRemetente.slice(-10))));
+    destinos = destinos.filter((d, i) => destinos.findIndex(x => x.fone === d.fone) === i);
 
     // baixa cada mídia uma vez só
     const midias = [];
@@ -205,18 +231,30 @@ function criarModuloImoveis({ pool, evolutionUrl, evolutionToken, instanciaPadra
     const cabecalho = '🏠 *Imóvel novo do grupo*';
     let enviados = 0;
     const falhas = [];
-    for (const fone of destinos) {
+    for (const dest of destinos) {
+      let fone = dest.fone, via = 'privado';
+      try {
+        const jidG = dest.soPrivado ? null : await grupoDoCorretor(dest.nome);
+        if (jidG) { fone = jidG; via = 'grupo'; }
+      } catch (e) { console.error('[Imóveis] Erro ao buscar grupo do corretor:', e.message); }
+      // só no grupo "Estratégico": sem grupo, NÃO manda no privado (a menos que IMOVEIS_ENVIAR_PRIVADO=1)
+      if (via === 'privado' && !dest.soPrivado && process.env.IMOVEIS_ENVIAR_PRIVADO !== '1') {
+        console.warn(`[Imóveis] Sem grupo Estratégico para ${dest.nome || dest.fone} — não enviado (o 7070 precisa estar no grupo)`);
+        falhas.push((dest.nome || dest.fone) + ' (sem grupo)');
+        continue;
+      }
       try {
         const rt = await enviarTexto(fone, descricao ? `${cabecalho}\n\n${descricao}` : cabecalho, INSTANCIA_ENVIO);
-        if (rt && rt._ok === false) { falhas.push(fone); await dormir(aleatorio(1000, 2000)); continue; }
+        if (rt && rt._ok === false) { falhas.push(dest.nome || dest.fone); await dormir(aleatorio(1000, 2000)); continue; }
         for (const md of midias) {
           await dormir(aleatorio(1500, 3500));
           await enviarMidia(fone, md.tipo, md, '');
         }
         enviados++;
+        console.log(`[Imóveis] Enviado pra ${dest.nome || '...' + dest.fone.slice(-4)} (${via})`);
       } catch (e) {
-        falhas.push(fone);
-        console.error(`[Imóveis] Erro ao enviar pra ...${fone.slice(-4)}:`, e.message);
+        falhas.push(dest.nome || dest.fone);
+        console.error(`[Imóveis] Erro ao enviar pra ${dest.nome || dest.fone}:`, e.message);
       }
       await dormir(aleatorio(5000, 10000));
     }
@@ -225,7 +263,7 @@ function criarModuloImoveis({ pool, evolutionUrl, evolutionToken, instanciaPadra
       [remetente, midias.length, enviados, descricao.slice(0, 2000)]
     );
     console.log(`[Imóveis] Imóvel repassado: ${midias.length} mídia(s) pra ${enviados} corretor(es)`);
-    return { midias: midias.length, destinatarios: enviados, falharam: falhas.length };
+    return { midias: midias.length, destinatarios: enviados, falharam: falhas.length, falhas };
   }
 
   // Varre o banco: remetentes cuja última mensagem tem mais de PAUSA_MS
@@ -268,13 +306,22 @@ function criarModuloImoveis({ pool, evolutionUrl, evolutionToken, instanciaPadra
     return { grupo: NOME_GRUPO, jid: jidGrupo || null, pausaMin: PAUSA_MS / 60000, destinos: getDestinos().length, pendentes: pend.rows, ultimosEnvios: env.rows };
   }
 
+  async function mostrarDestinos() {
+    const out = [];
+    for (const d of getDestinos().map(paraObjeto)) {
+      let g = null; try { g = await grupoDoCorretor(d.nome); } catch (e) {}
+      out.push({ nome: d.nome || '(sem nome)', fone: d.fone, envia_para: g ? 'grupo ' + g : (process.env.IMOVEIS_ENVIAR_PRIVADO === '1' ? 'privado (grupo não encontrado)' : 'NÃO ENVIA (grupo Estratégico não encontrado)') });
+    }
+    return out;
+  }
+
   async function listarGrupos() {
     const r = await evo('GET', `/group/fetchAllGroups/${encodeURIComponent(instanciaPadrao)}?getParticipants=false`);
     const lista = Array.isArray(r.json) ? r.json : (r.json?.groups || []);
     return lista.map(g => ({ id: g.id, nome: g.subject }));
   }
 
-  return { separarImoveis, iniciar, tratarMensagem, processarPendentes, status, listarGrupos, resolverGrupo, limparDescricao };
+  return { separarImoveis, iniciar, tratarMensagem, processarPendentes, status, mostrarDestinos, listarGrupos, resolverGrupo, limparDescricao };
 }
 
 module.exports = { criarModuloImoveis };
