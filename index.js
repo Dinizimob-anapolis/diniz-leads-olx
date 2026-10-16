@@ -1921,6 +1921,13 @@ function basicAuthAdminOuSdr(req, res, next) {
   return res.status(401).send('Credenciais inválidas');
 }
 
+// Bloqueia login de corretor em rotas que são só de admin/SDR/Juliane
+// (listas gerais de leads, carteiras, exclusão). O corretor só usa /meu-crm.
+function semCorretor(req, res, next) {
+  if (req.authTipo === 'corretor') return res.status(403).json({ ok: false, erro: 'Sem permissão' });
+  next();
+}
+
 // Campos que o corretor pode editar no próprio Kanban — nada de reatribuir
 // corretor, nem mexer em carteiras, nem em campos administrativos.
 const CAMPOS_EDITAVEIS_CORRETOR = ['status_corretor', 'notas_sdr', 'tarefa_sdr', 'tarefa_data', 'ultima_atualizacao_sdr', 'valor_imovel_sdr', 'buscando_sdr', 'tipo_lead', 'cliente_ouro'];
@@ -1996,7 +2003,7 @@ app.delete('/api/corretores-extra/:id', basicAuthAdminOuSdr, async (req, res) =>
 });
 
 // ─── ROTA: API DE LEADS (alimenta o dashboard) ───────────────
-app.get('/api/leads', basicAuthAdminOuSdr, async (req, res) => {
+app.get('/api/leads', basicAuthAdminOuSdr, semCorretor, async (req, res) => {
   res.set('Cache-Control', 'no-store');
   if (!process.env.DATABASE_URL) {
     return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
@@ -2339,7 +2346,7 @@ app.post('/api/leads/conferir', basicAuthAdminOuSdr, async (req, res) => {
 // Lista só os leads que a SDR já adicionou (carteira_sdr = true) — usada
 // pelo Kanban do /crm, que começa vazio e vai crescendo conforme ela sobe
 // os contatos, sem mostrar os leads do sistema todo.
-app.get('/api/leads/carteira-sdr', basicAuthAdminOuSdr, async (req, res) => {
+app.get('/api/leads/carteira-sdr', basicAuthAdminOuSdr, semCorretor, async (req, res) => {
   res.set('Cache-Control', 'no-store');
   if (!process.env.DATABASE_URL) {
     return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
@@ -2363,7 +2370,7 @@ app.get('/api/leads/carteira-sdr', basicAuthAdminOuSdr, async (req, res) => {
 // Lista os leads que passaram pra Juliane (carteira_juliane = true) — isso
 // acontece sozinho quando a SDR marca o status como "Visita agendada", sem
 // precisar recadastrar nada.
-app.get('/api/leads/carteira-juliane', basicAuthAdminOuSdr, async (req, res) => {
+app.get('/api/leads/carteira-juliane', basicAuthAdminOuSdr, semCorretor, async (req, res) => {
   res.set('Cache-Control', 'no-store');
   if (!process.env.DATABASE_URL) {
     return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
@@ -2415,7 +2422,7 @@ app.get('/api/leads/meus', basicAuthAdminOuSdr, async (req, res) => {
 
 // da Juliane organizado por corretor: quem já tem corretor definido cai na
 // coluna dele, quem não tem cai em "Repassado ao corretor" pra ela organizar.
-app.get('/api/leads/todos-resumo', basicAuthAdminOuSdr, async (req, res) => {
+app.get('/api/leads/todos-resumo', basicAuthAdminOuSdr, semCorretor, async (req, res) => {
   res.set('Cache-Control', 'no-store');
   if (!process.env.DATABASE_URL) {
     return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
@@ -2893,7 +2900,7 @@ app.post('/api/admin/limpar-duplicados-sem-numero', basicAuth, async (req, res) 
 // porque é o mesmo registro em todo lugar. Sem volta (a não ser recuperando
 // de um backup). Só admin e Juliane podem — a SDR continua só "removendo da
 // carteira" (isso não muda, é uma ação diferente e reversível).
-app.delete('/api/leads/:id', basicAuthAdminOuSdr, async (req, res) => {
+app.delete('/api/leads/:id', basicAuthAdminOuSdr, semCorretor, async (req, res) => {
   if (!process.env.DATABASE_URL) {
     return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
   }
@@ -4106,6 +4113,8 @@ app.all('/api/admin/backups/:id/restaurar-carteira-sdr', basicAuth, async (req, 
 // (/api/leads e /api/leads/:id) do dashboard principal, só que com uma
 // visão focada em reaquecimento e histórico de corretores.
 app.get('/crm', basicAuthAdminOuSdr, (req, res) => {
+  // Login de corretor que cai aqui (link antigo/errado) vai pro CRM do corretor
+  if (req.authTipo === 'corretor') return res.redirect('/meu-crm');
   // Sem cache — senão o navegador pode continuar mostrando uma versão
   // antiga da página depois de um deploy novo, mesmo recarregando.
   res.set('Cache-Control', 'no-store');
@@ -4168,6 +4177,7 @@ app.get('/analytics', basicAuthAdminOuSdr, (req, res) => {
 
 // ─── ROTA: CRM DA JULIANE ─────────────────────────────────────
 app.get('/crm-juliane', basicAuthAdminOuSdr, (req, res) => {
+  if (req.authTipo === 'corretor') return res.redirect('/meu-crm');
   res.set('Cache-Control', 'no-store');
   res.send(JULIANE_HTML);
 });
@@ -4183,6 +4193,12 @@ app.get('/meu-crm', basicAuthAdminOuSdr, (req, res) => {
   if ((req.authTipo === 'admin' || req.authTipo === 'juliane') && req.query.corretor) {
     nomeCorretor = String(req.query.corretor);
   } else if (req.authTipo !== 'corretor') {
+    // Navegador já com a senha de admin/SDR/Juliane guardada: pede o login do corretor de novo
+    // (em vez de dar erro), pra quem testa o link no mesmo navegador conseguir entrar.
+    if (!req.query.relogin) {
+      res.set('WWW-Authenticate', 'Basic realm="Painel de Leads"');
+      return res.status(401).send('Entre com o login e a senha do corretor.');
+    }
     return res.status(403).send('Essa página é só pra login de corretor (ou admin/Juliane passando ?corretor=Nome).');
   }
   const nomeMaiusculo = nomeCorretor.toUpperCase();
