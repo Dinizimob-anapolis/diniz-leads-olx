@@ -822,7 +822,9 @@ async function aplicarLote() {
       if (!lead) return;
       const campos = [];
       if (status) campos.push(['status', status]);
-      if (concluir) {
+      if (!lead.carteira_sdr) {
+        // já repassado: a tarefa é do corretor, não mexe
+      } else if (concluir) {
         campos.push(['tarefa_sdr', '']);
         campos.push(['tarefa_data', null]);
       } else {
@@ -927,7 +929,9 @@ function cardHtml(lead, corBorda) {
   const envolvidos = corretoresEnvolvidos(lead);
   const chipsRepassados = corretoresRepassadosLista(lead);
   const dataEtapa = formatarData(lead.status_alterado_em || lead.distribuido_em);
-  const tarefaAtrasada = !!(lead.tarefa_data && new Date(lead.tarefa_data) <= new Date());
+  // Tarefa só aparece enquanto o lead é da SDR; depois de repassado, a tarefa é do corretor.
+  const tarefaVisivel = !!lead.carteira_sdr;
+  const tarefaAtrasada = !!(tarefaVisivel && lead.tarefa_data && new Date(lead.tarefa_data) <= new Date());
   const classeDestaque = \`\${tarefaAtrasada ? 'atrasado' : (duplicado ? 'reaquecer' : '')} \${lead.cliente_ouro ? 'cliente-ouro' : ''}\`.trim();
   const botaoOuro = \`<button class="btn-ouro modal-versao \${lead.cliente_ouro ? 'ativo' : ''}" onclick="event.stopPropagation();alternarClienteOuro('\${lead.id}', \${!lead.cliente_ouro})" title="\${lead.cliente_ouro ? 'Cliente Ouro — clique pra desmarcar' : 'Marcar como Cliente Ouro'}">⭐</button>\`;
   return \`
@@ -942,7 +946,7 @@ function cardHtml(lead, corBorda) {
       \${badgeImovel(lead)}
       \${duplicado ? \`<span class="badge warn">⚠️ \${envolvidos.length}: \${envolvidos.join(', ')}</span>\` : ''}
       \${lead.corretor ? \`<div><span class="chip-corretor" style="border-color:\${corDoCorretor(lead.corretor)};color:\${corDoCorretor(lead.corretor)};background:\${corDoCorretor(lead.corretor)}1a">\${lead.corretor}</span></div>\` : ''}
-      \${lead.tarefa_sdr ? \`<div class="tarefa-preview" style="\${tarefaAtrasada ? 'color:#e0453f;' : ''}">\${tarefaAtrasada ? '⏰ ATRASADO — ' : '📌 '}\${lead.tarefa_sdr}\${lead.tarefa_data ? \` (\${new Date(lead.tarefa_data).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })})\` : ''}</div>\` : ''}
+      \${(lead.tarefa_sdr && tarefaVisivel) ? \`<div class="tarefa-preview" style="\${tarefaAtrasada ? 'color:#e0453f;' : ''}">\${tarefaAtrasada ? '⏰ ATRASADO — ' : '📌 '}\${lead.tarefa_sdr}\${lead.tarefa_data ? \` (\${new Date(lead.tarefa_data).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })})\` : ''}</div>\` : ''}
       \${lead.ultima_atualizacao_sdr ? \`<div class="tarefa-preview" style="color:var(--muted);font-weight:600;">🗓️ Atualizado até \${formatarData(lead.ultima_atualizacao_sdr)}</div>\` : ''}
       \${lead.notas_sdr ? \`<div class="lead-notas">\${lead.notas_sdr.split('\\n')[0]}</div>\` : ''}
       \${lead.buscando_sdr ? \`<div class="lead-notas" style="color:#5b6bf5;font-weight:600;">🔎 \${lead.buscando_sdr.split('\\n')[0]}</div>\` : ''}
@@ -982,12 +986,14 @@ function abrirModalLead(id) {
     </select>
     \${lead.corretor ? \`<div style="margin-top:6px;"><span class="chip-corretor" style="border-color:\${corDoCorretor(lead.corretor)};color:\${corDoCorretor(lead.corretor)};background:\${corDoCorretor(lead.corretor)}1a">\${lead.corretor}</span></div>\` : ''}
 
+    <div style="\${lead.carteira_sdr ? '' : 'display:none;'}">
     <label>Tarefa</label>
     <input type="text" id="modal-tarefa" placeholder="Próximo passo, ex: ligar amanhã 14h" value="\${lead.tarefa_sdr || ''}">
 
     <label>Prazo da tarefa</label>
     <input type="datetime-local" id="modal-tarefa-data" value="\${lead.tarefa_data ? new Date(lead.tarefa_data).toISOString().slice(0, 16) : ''}">
     \${lead.tarefa_sdr || lead.tarefa_data ? '<button type="button" class="close-btn" id="modal-tarefa-concluida" style="width:100%;margin-top:6px;color:#17a34a;border-color:#a8ecca;">✓ Tarefa concluída</button>' : ''}
+    </div>
 
     <div style="display:flex;gap:8px;">
       <div style="flex:1;">
@@ -1253,16 +1259,17 @@ function salvarBlocoTexto(id, lead, aoTerminar) {
 
   lead.notas_sdr = notas;
   lead.buscando_sdr = buscando;
-  lead.tarefa_sdr = tarefa;
-  lead.tarefa_data = tarefaData ? new Date(tarefaData).toISOString() : null;
+  if (lead.carteira_sdr) {
+    lead.tarefa_sdr = tarefa;
+    lead.tarefa_data = tarefaData ? new Date(tarefaData).toISOString() : null;
+  }
   lead.ultima_atualizacao_sdr = dataAtualizacao;
   lead.valor_imovel_sdr = valorFormatado;
 
   const campos = [
     ['notas_sdr', notas],
     ['buscando_sdr', buscando],
-    ['tarefa_sdr', tarefa],
-    ['tarefa_data', lead.tarefa_data],
+    ...(lead.carteira_sdr ? [['tarefa_sdr', tarefa], ['tarefa_data', lead.tarefa_data]] : []),
     ['ultima_atualizacao_sdr', dataAtualizacao],
     ['valor_imovel_sdr', valorFormatado],
   ];
