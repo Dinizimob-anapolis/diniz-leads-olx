@@ -552,7 +552,7 @@ const ORIGENS = ['OLX/Canal Pro', 'Meta Ads', 'Patrocinado', 'TikTok', 'Instagra
 // montadas na hora, com base em quem realmente tem lead no sistema.
 // Ordem e conjunto fixos de corretores no quadro da Juliane — não muda
 // sozinho conforme os dados; só muda quando alguém pedir pra ajustar aqui.
-const ORDEM_CORRETORES_JULIANE = ['Bruna SDR', 'Junior', 'Laís', 'Patricia', 'Michelle', 'Renata', 'Bruno', 'Juliane', 'Amanda', 'Cyda'];
+const ORDEM_CORRETORES_JULIANE = ['Bruna SDR', 'Junior', 'Laís', 'Patricia', 'Michelle', 'Renata', 'Bruno', 'Juliane', 'Amanda', 'Cyda', 'Lucas'];
 
 // Uma cor fixa e diferente pra cada um (não é por hash, pra ficar sempre
 // igual e fácil de reconhecer de relance).
@@ -567,6 +567,7 @@ const CORES_CORRETORES_JULIANE = {
   'Amanda':    '#f2789c',
   'Cyda':      '#2dd4bf',
   'Bruna SDR': '#f2941c',
+  'Lucas':     '#0ea5e9',
 };
 
 function colunasCorretorAtual() {
@@ -607,7 +608,7 @@ function corretoresEnvolvidos(lead) {
 }
 
 const PALETA_CORES = ['#3b6cf0', '#e0453f', '#f2941c', '#12b76a', '#9b4de0', '#e8479e', '#0aa5c2', '#c9a20a'];
-const NOMES_OFICIAIS_CORRETORES = ['Junior', 'Laís', 'Patricia', 'Michelle', 'Renata', 'Bruno', 'Juliane', 'Amanda', 'Cyda', 'Bruna SDR'];
+const NOMES_OFICIAIS_CORRETORES = ['Junior', 'Laís', 'Patricia', 'Michelle', 'Renata', 'Bruno', 'Juliane', 'Amanda', 'Cyda', 'Bruna SDR', 'Lucas'];
 function normalizarNomeCorretor(nomeDigitado) {
   const chave = (nomeDigitado || '').trim();
   if (!chave) return chave;
