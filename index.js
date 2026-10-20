@@ -2461,6 +2461,42 @@ app.get('/api/leads/carteira-juliane', basicAuthAdminOuSdr, semCorretor, async (
 
 // Lista TODOS os leads do sistema (não só uma carteira) — alimenta o quadro
 // Lista só os leads do corretor que está logado agora — nunca de outro.
+// ─── ROTA: ACOMPANHAMENTO DOS LEADS REAQUECIDOS/REPASSADOS ───
+// Lista os leads que a SDR reaqueceu e repassou a corretores, com os sinais de
+// que estão (ou não) sendo trabalhados. Só admin/SDR/Juliane.
+app.get('/api/analytics/repassados', basicAuthAdminOuSdr, semCorretor, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (!process.env.DATABASE_URL) return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  try {
+    const params = [];
+    let filtroPeriodo = '';
+    const reData = /^\d{4}-\d{2}-\d{2}$/;
+    if (reData.test(req.query.inicio || '') && reData.test(req.query.fim || '')) {
+      params.push(req.query.inicio, req.query.fim);
+      filtroPeriodo = ` AND COALESCE(CASE WHEN status = 'Repassado ao corretor' THEN status_alterado_em END, reaquecido_em) >= $1::date
+                        AND COALESCE(CASE WHEN status = 'Repassado ao corretor' THEN status_alterado_em END, reaquecido_em) < ($2::date + interval '1 day')`;
+    }
+    const r = await pool.query(
+      `SELECT id, nome, whatsapp, corretor, origem, imovel_desc, status, status_corretor,
+              status_corretor_alterado_em, reaquecido_em, contatou, primeiro_contato_em,
+              tarefa_sdr, tarefa_data, notas_sdr,
+              COALESCE(CASE WHEN status = 'Repassado ao corretor' THEN status_alterado_em END, reaquecido_em) AS repassado_em
+       FROM leads
+       WHERE corretor IS NOT NULL AND corretor <> ''
+         AND carteira_sdr IS NOT TRUE
+         AND (status = 'Repassado ao corretor' OR reaquecido_em IS NOT NULL)
+         ${filtroPeriodo}
+       ORDER BY repassado_em DESC NULLS LAST
+       LIMIT 2000`,
+      params
+    );
+    res.json({ ok: true, leads: r.rows });
+  } catch (err) {
+    console.error('Erro ao listar repassados:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
 app.get('/api/leads/meus', basicAuthAdminOuSdr, async (req, res) => {
   res.set('Cache-Control', 'no-store');
   if (!process.env.DATABASE_URL) {
@@ -4204,6 +4240,7 @@ app.get('/analytics', basicAuthAdminOuSdr, (req, res) => {
 
   if (req.authTipo === 'corretor') {
     const html = ANALYTICS_HTML
+      .split('{{REPASSADOS_DISPLAY}}').join('none')
       .split('{{TITULO}}').join('📊 Analytics ' + req.corretorNome)
       .split('{{SUBTITULO}}').join('Seus resultados e desempenho')
       .split('{{VOLTAR_HREF}}').join('/meu-crm')
@@ -4214,6 +4251,7 @@ app.get('/analytics', basicAuthAdminOuSdr, (req, res) => {
   if ((req.authTipo === 'admin' || req.authTipo === 'juliane') && corretorDaQuery) {
     const voltarHref = '/meu-crm?corretor=' + encodeURIComponent(corretorDaQuery);
     const html = ANALYTICS_HTML
+      .split('{{REPASSADOS_DISPLAY}}').join('none')
       .split('{{TITULO}}').join('📊 Analytics ' + corretorDaQuery)
       .split('{{SUBTITULO}}').join('Resultados e desempenho desse corretor')
       .split('{{VOLTAR_HREF}}').join(voltarHref)
@@ -4228,6 +4266,7 @@ app.get('/analytics', basicAuthAdminOuSdr, (req, res) => {
   // funciona não importa qual senha foi usada pra logar.
   if (req.query.origem === 'juliane') {
     const html = ANALYTICS_HTML
+      .split('{{REPASSADOS_DISPLAY}}').join('inline-block')
       .split('{{TITULO}}').join('📊 Analytics')
       .split('{{SUBTITULO}}').join('Resultados e desempenho de todos os leads, corretores e canais')
       .split('{{VOLTAR_HREF}}').join('/crm-juliane')
@@ -4236,6 +4275,7 @@ app.get('/analytics', basicAuthAdminOuSdr, (req, res) => {
   }
 
   const html = ANALYTICS_HTML
+      .split('{{REPASSADOS_DISPLAY}}').join('inline-block')
     .split('{{TITULO}}').join('📊 Analytics')
     .split('{{SUBTITULO}}').join('Resultados e desempenho de todos os leads, corretores e canais')
     .split('{{VOLTAR_HREF}}').join('/crm')
