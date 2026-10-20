@@ -68,6 +68,7 @@ const TELEFONES_CORRETORES = {
   'cyda': { nome: 'Cyda', fone: '5562993652226' },
   'bruna sdr': { nome: 'Bruna SDR', fone: '5562996488279' },
   'bruna': { nome: 'Bruna SDR', fone: '5562996488279' },
+  'lucas': { nome: 'Lucas', fone: '5562981183994' },
   'michelle': { nome: 'Michelle', fone: '5562994494723' },
   'patricia': { nome: 'Patricia', fone: '5562984888731' },
 };
