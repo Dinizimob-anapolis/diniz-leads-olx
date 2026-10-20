@@ -181,6 +181,31 @@ const ANALYTICS_HTML = `<!DOCTYPE html>
   .badge-pct { font-weight: 800; }
   .vazio { color: var(--muted); font-size: 13px; padding: 20px; text-align: center; }
   .carregando { color: var(--muted); font-size: 13px; padding: 40px; text-align: center; }
+
+  .btn-repassados {
+    background: var(--accent); color: #fff; border: none; padding: 9px 16px;
+    border-radius: var(--radius); font-size: 13px; font-weight: 700; cursor: pointer; white-space: nowrap;
+  }
+  .rep-overlay { display: none; position: fixed; inset: 0; background: rgba(20,22,30,0.55); z-index: 200; padding: 14px; overflow: auto; }
+  .rep-overlay.aberto { display: block; }
+  .rep-caixa { background: var(--card); border-radius: var(--radius); max-width: 1280px; margin: 0 auto; padding: 16px 18px 20px; }
+  .rep-topo { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; margin-bottom: 10px; }
+  .rep-topo h2 { margin: 0 0 3px; font-size: 18px; }
+  .rep-chips { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
+  .rep-chip { border: 1px solid var(--card-border); background: #fff; border-radius: 12px; padding: 8px 12px; cursor: pointer; min-width: 120px; }
+  .rep-chip .n { font-size: 20px; font-weight: 800; }
+  .rep-chip .r { font-size: 11px; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: .02em; }
+  .rep-chip.ativo { outline: 2px solid var(--accent); }
+  .rep-filtros { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; font-size: 13px; }
+  .rep-filtros select, .rep-filtros input { padding: 6px 8px; border: 1px solid var(--card-border); border-radius: 8px; font-size: 13px; }
+  .rep-tabela-wrap { overflow-x: auto; }
+  .tag-sit { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 800; white-space: nowrap; }
+  .sit-vermelho { background: #fde8ea; color: #c0293a; }
+  .sit-amarelo { background: #fff3da; color: #a8700a; }
+  .sit-verde { background: #e0f5ec; color: #11794c; }
+  .sit-cinza { background: #eceef4; color: #5a6072; }
+  .rep-nota { color: var(--muted); font-size: 12px; max-width: 260px; }
+  .rep-resumo { margin: 14px 0 6px; font-size: 14px; font-weight: 800; }
 </style>
 </head>
 <body>
@@ -190,7 +215,10 @@ const ANALYTICS_HTML = `<!DOCTYPE html>
     <h1>{{TITULO}}</h1>
     <div class="sub">{{SUBTITULO}}</div>
   </div>
-  <a class="voltar-btn" href="{{VOLTAR_HREF}}">{{VOLTAR_TEXTO}}</a>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;">
+    <button class="btn-repassados" id="btn-repassados" style="display:{{REPASSADOS_DISPLAY}};" onclick="abrirRepassados()">🔎 Acompanhar repassados</button>
+    <a class="voltar-btn" href="{{VOLTAR_HREF}}">{{VOLTAR_TEXTO}}</a>
+  </div>
 </div>
 
 <div class="filtros" id="filtros">
@@ -210,6 +238,30 @@ const ANALYTICS_HTML = `<!DOCTYPE html>
 
 <div id="conteudo">
   <div class="carregando">Carregando dados...</div>
+</div>
+
+
+<div class="rep-overlay" id="rep-overlay" onclick="if(event.target===this) fecharRepassados()">
+  <div class="rep-caixa">
+    <div class="rep-topo">
+      <div>
+        <h2>🔎 Acompanhamento dos leads repassados</h2>
+        <div class="sub">Leads reaquecidos e repassados aos corretores: quem está trabalhando e quem está parado.</div>
+      </div>
+      <button class="voltar-btn" onclick="fecharRepassados()">Fechar ✕</button>
+    </div>
+    <div class="rep-filtros">
+      <label>Corretor <select id="rep-corretor" onchange="renderRepassados()"><option value="">Todos</option></select></label>
+      <label>Parado após <select id="rep-dias" onchange="renderRepassados()"><option value="3">3 dias</option><option value="5">5 dias</option><option value="7" selected>7 dias</option><option value="15">15 dias</option></select></label>
+      <label>Buscar <input id="rep-busca" placeholder="nome ou whatsapp" oninput="renderRepassados()"></label>
+      <span class="sub" id="rep-periodo-aviso"></span>
+    </div>
+    <div class="rep-chips" id="rep-chips"></div>
+    <div class="rep-resumo">Por corretor</div>
+    <div class="rep-tabela-wrap" id="rep-por-corretor"></div>
+    <div class="rep-resumo">Leads</div>
+    <div class="rep-tabela-wrap" id="rep-tabela"></div>
+  </div>
 </div>
 
 <div class="modal-overlay" id="modal-detalhe-overlay" onclick="if(event.target===this) fecharModalDetalhe()">
@@ -503,6 +555,128 @@ function desenharCorretor(corretores) {
       scales: { x: { grid: { display: false }, ticks: { font: { size: 10 } } }, y: { beginAtZero: true, grid: { color: '#eef0f6' } } }
     }
   });
+}
+
+
+// ─── Acompanhamento dos repassados ───
+var REP_DADOS = [];
+var REP_FILTRO_SIT = '';
+var ETAPAS_PARADAS = ['Novo', 'Reaquecido', 'Reaquecendo', ''];
+
+function repDiasDesde(iso) {
+  if (!iso) return null;
+  return Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+}
+function repSituacao(l, limite) {
+  var etapa = l.status_corretor || '';
+  if (etapa === 'Sem retorno') return 'sem_retorno';
+  var movimentou = ETAPAS_PARADAS.indexOf(etapa) === -1;
+  var desdeMov = repDiasDesde(l.status_corretor_alterado_em);
+  var desdeRepasse = repDiasDesde(l.repassado_em);
+  if (!movimentou) return 'sem_movimentacao';
+  if (desdeMov !== null && desdeMov > limite) return 'parado';
+  return 'andamento';
+}
+var REP_ROTULO = {
+  sem_movimentacao: ['🔴 Sem movimentação', 'sit-vermelho'],
+  parado: ['🟡 Parado', 'sit-amarelo'],
+  andamento: ['🟢 Em andamento', 'sit-verde'],
+  sem_retorno: ['⚪ Sem retorno', 'sit-cinza']
+};
+function repFmtData(iso) {
+  if (!iso) return '—';
+  var d = new Date(iso);
+  return d.toLocaleDateString('pt-BR') + ' ' + d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+}
+function repEsc(t) {
+  return String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function repHa(dias) { return dias === null ? '—' : (dias === 0 ? 'hoje' : 'há ' + dias + 'd'); }
+
+async function abrirRepassados() {
+  document.getElementById('rep-overlay').classList.add('aberto');
+  document.getElementById('rep-tabela').innerHTML = '<div class="carregando">Carregando...</div>';
+  var params = new URLSearchParams();
+  var ini = document.getElementById('data-inicio').value, fim = document.getElementById('data-fim').value;
+  if (ini && fim) { params.set('inicio', ini); params.set('fim', fim); }
+  document.getElementById('rep-periodo-aviso').textContent = (ini && fim) ? ('Período do repasse: ' + formatarDataBR(ini) + ' — ' + formatarDataBR(fim)) : 'Todo o período';
+  try {
+    var res = await fetch('/api/analytics/repassados?' + params.toString());
+    var data = await res.json();
+    if (!data.ok) throw new Error(data.erro || 'Erro');
+    REP_DADOS = data.leads || [];
+    var sel = document.getElementById('rep-corretor');
+    var atual = sel.value;
+    var nomes = Array.from(new Set(REP_DADOS.map(function (l) { return l.corretor; }))).sort();
+    sel.innerHTML = '<option value="">Todos</option>' + nomes.map(function (n) { return '<option value="' + repEsc(n) + '">' + repEsc(n) + '</option>'; }).join('');
+    sel.value = nomes.indexOf(atual) >= 0 ? atual : '';
+    renderRepassados();
+  } catch (err) {
+    document.getElementById('rep-tabela').innerHTML = '<div class="vazio">Erro: ' + repEsc(err.message) + '</div>';
+  }
+}
+function fecharRepassados() { document.getElementById('rep-overlay').classList.remove('aberto'); }
+function repFiltrarSit(s) { REP_FILTRO_SIT = (REP_FILTRO_SIT === s ? '' : s); renderRepassados(); }
+
+function renderRepassados() {
+  var limite = parseInt(document.getElementById('rep-dias').value, 10);
+  var corr = document.getElementById('rep-corretor').value;
+  var busca = document.getElementById('rep-busca').value.trim().toLowerCase();
+  var base = REP_DADOS.filter(function (l) {
+    if (corr && l.corretor !== corr) return false;
+    if (busca && (String(l.nome || '').toLowerCase().indexOf(busca) < 0 && String(l.whatsapp || '').indexOf(busca) < 0)) return false;
+    return true;
+  }).map(function (l) { l._sit = repSituacao(l, limite); return l; });
+
+  var cont = { sem_movimentacao: 0, parado: 0, andamento: 0, sem_retorno: 0 };
+  base.forEach(function (l) { cont[l._sit]++; });
+  var chips = [['', 'Total repassados', base.length], ['sem_movimentacao', '🔴 Sem movimentação', cont.sem_movimentacao], ['parado', '🟡 Parados', cont.parado], ['andamento', '🟢 Em andamento', cont.andamento], ['sem_retorno', '⚪ Sem retorno', cont.sem_retorno]];
+  document.getElementById('rep-chips').innerHTML = chips.map(function (c) {
+    return '<div class="rep-chip ' + (REP_FILTRO_SIT === c[0] ? 'ativo' : '') + '" data-s="' + c[0] + '" onclick="repFiltrarSit(this.dataset.s)"><div class="n">' + c[2] + '</div><div class="r">' + c[1] + '</div></div>';
+  }).join('');
+
+  // resumo por corretor
+  var porC = {};
+  base.forEach(function (l) {
+    var o = porC[l.corretor] || (porC[l.corretor] = { total: 0, sem_movimentacao: 0, parado: 0, andamento: 0, sem_retorno: 0 });
+    o.total++; o[l._sit]++;
+  });
+  var linhasC = Object.keys(porC).sort(function (a, b) { return porC[b].sem_movimentacao - porC[a].sem_movimentacao; }).map(function (n) {
+    var o = porC[n];
+    var trab = o.andamento + o.parado + o.sem_retorno;
+    return '<tr><td><b>' + repEsc(n) + '</b></td><td class="num">' + o.total + '</td><td class="num">' + o.sem_movimentacao + '</td><td class="num">' + o.parado + '</td><td class="num">' + o.andamento + '</td><td class="num">' + o.sem_retorno + '</td><td class="num">' + fmtPct(trab, o.total) + '</td></tr>';
+  }).join('');
+  document.getElementById('rep-por-corretor').innerHTML = linhasC
+    ? '<table><thead><tr><th>Corretor</th><th class="num">Repassados</th><th class="num">Sem movimentação</th><th class="num">Parados</th><th class="num">Em andamento</th><th class="num">Sem retorno</th><th class="num">% já mexeu</th></tr></thead><tbody>' + linhasC + '</tbody></table>'
+    : '<div class="vazio">Nenhum lead repassado nesse filtro.</div>';
+
+  // tabela de leads
+  var ordem = { sem_movimentacao: 0, parado: 1, andamento: 2, sem_retorno: 3 };
+  var lista = base.filter(function (l) { return !REP_FILTRO_SIT || l._sit === REP_FILTRO_SIT; }).sort(function (a, b) {
+    if (ordem[a._sit] !== ordem[b._sit]) return ordem[a._sit] - ordem[b._sit];
+    return new Date(a.repassado_em || 0) - new Date(b.repassado_em || 0);
+  });
+  var linhas = lista.map(function (l) {
+    var rot = REP_ROTULO[l._sit];
+    var zap = String(l.whatsapp || '').replace(/[^0-9]/g, '');
+    var tarefa = l.tarefa_sdr ? ('📌 ' + repEsc(l.tarefa_sdr) + (l.tarefa_data ? ' (' + repFmtData(l.tarefa_data) + ')' : '')) : '—';
+    var nota = l.notas_sdr ? repEsc(String(l.notas_sdr).split(String.fromCharCode(10)).slice(-1)[0]) : '';
+    var contato = l.primeiro_contato_em ? ('✅ ' + repFmtData(l.primeiro_contato_em)) : (l.contatou ? '✅ sim' : '—');
+    return '<tr>' +
+      '<td><span class="tag-sit ' + rot[1] + '">' + rot[0] + '</span></td>' +
+      '<td><b>' + repEsc(l.nome || 'Sem nome') + '</b><br>' + (zap ? '<a href="https://wa.me/' + zap + '" target="_blank" style="color:var(--accent);font-size:12px;">' + repEsc(l.whatsapp) + '</a>' : '') + '</td>' +
+      '<td>' + repEsc(l.corretor) + '</td>' +
+      '<td>' + repFmtData(l.repassado_em) + '<br><span class="sub">' + repHa(repDiasDesde(l.repassado_em)) + '</span></td>' +
+      '<td>' + repEsc(l.status_corretor || 'Novo') + '</td>' +
+      '<td>' + (l.status_corretor_alterado_em && ETAPAS_PARADAS.indexOf(l.status_corretor || '') === -1 ? repFmtData(l.status_corretor_alterado_em) + '<br><span class="sub">' + repHa(repDiasDesde(l.status_corretor_alterado_em)) + '</span>' : '<span class="sub">nunca mexeu</span>') + '</td>' +
+      '<td>' + contato + '</td>' +
+      '<td>' + tarefa + '</td>' +
+      '<td class="rep-nota">' + nota + '</td>' +
+      '</tr>';
+  }).join('');
+  document.getElementById('rep-tabela').innerHTML = linhas
+    ? '<table><thead><tr><th>Situação</th><th>Lead</th><th>Corretor</th><th>Repassado</th><th>Etapa do corretor</th><th>Última movimentação</th><th>Contato com o lead</th><th>Tarefa</th><th>Última nota</th></tr></thead><tbody>' + linhas + '</tbody></table>'
+    : '<div class="vazio">Nenhum lead nesse filtro.</div>';
 }
 
 // Carrega "Tudo" por padrão
