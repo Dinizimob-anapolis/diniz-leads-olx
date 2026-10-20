@@ -568,6 +568,7 @@ const CORES_CORRETORES_JULIANE = {
   'Cyda':      '#2dd4bf',
   'Bruna SDR': '#f2941c',
   'Lucas':     '#0ea5e9',
+  'Rubens':    '#92400e',
 };
 
 function colunasCorretorAtual() {
