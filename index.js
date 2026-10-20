@@ -77,6 +77,7 @@ const CORRETORES_META = [
   { nome: 'Michelle', fone: '5562994494723' },
   { nome: 'Junior', fone: '5562981625610' },
   { nome: 'Renata', fone: '5562992670935' },
+  { nome: 'Bruna SDR', fone: '5562996488279' },
   // Rubens entra por último: foi criado pelo painel, então o rodízio dele é
   // ligado no banco (/api/admin/rodizio-meta?nome=Rubens&ligar=1).
   // Patrícia saiu do rodízio geral em 19/10/2026 (continua recebendo leads
