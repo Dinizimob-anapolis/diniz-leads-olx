@@ -2019,7 +2019,24 @@ app.all('/api/admin/redefinir-corretor', basicAuth, async (req, res) => {
     if (!nome || senha.length < 6) return res.status(400).json({ ok: false, erro: 'Informe nome e senha (mínimo 6 caracteres).' });
     if (usuario && !/^[a-z0-9._-]{3,30}$/.test(usuario)) return res.status(400).json({ ok: false, erro: 'Usuário inválido (3 a 30 letras minúsculas, números, ponto ou hífen).' });
     const achou = await pool.query(`SELECT id, usuario FROM corretores_extra WHERE lower(nome) = lower($1) ORDER BY id DESC LIMIT 1`, [nome]);
-    if (!achou.rows.length) return res.status(404).json({ ok: false, erro: 'Corretor não encontrado entre os criados pelo painel.' });
+    if (!achou.rows.length) {
+      // Não existe ainda: se veio o WhatsApp (&fone=62999998888) e o usuário, CRIA o corretor.
+      const foneNovo = canonicalizarWhatsapp(String(q.fone || ''));
+      if (!foneNovo || !usuario) return res.status(404).json({ ok: false, erro: 'Corretor não encontrado entre os criados pelo painel. Para criar, passe também &usuario=...&fone=62999998888' });
+      const saltN = crypto.randomBytes(16).toString('hex');
+      try {
+        await pool.query(
+          `INSERT INTO corretores_extra (nome, usuario, senha_salt, senha_hash, fone, rodizio_meta) VALUES ($1,$2,$3,$4,$5,false)`,
+          [nome, usuario, saltN, hashSenha(senha, saltN), foneNovo]
+        );
+      } catch (e) {
+        if (String(e.code) === '23505') return res.status(409).json({ ok: false, erro: 'Esse usuário já está em uso. Escolha outro.' });
+        throw e;
+      }
+      await carregarCorretoresExtra();
+      console.log(`[Corretores] Criado pelo admin: ${nome} (${usuario})`);
+      return res.json({ ok: true, criado: true, corretor: { nome, usuario, fone: foneNovo }, link: '/meu-crm' });
+    }
     const salt = crypto.randomBytes(16).toString('hex');
     try {
       await pool.query(
