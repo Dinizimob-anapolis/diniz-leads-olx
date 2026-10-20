@@ -552,7 +552,7 @@ const ORIGENS = ['OLX/Canal Pro', 'Meta Ads', 'Patrocinado', 'TikTok', 'Instagra
 // montadas na hora, com base em quem realmente tem lead no sistema.
 // Ordem e conjunto fixos de corretores no quadro da Juliane — não muda
 // sozinho conforme os dados; só muda quando alguém pedir pra ajustar aqui.
-const ORDEM_CORRETORES_JULIANE = ['Junior', 'Laís', 'Patricia', 'Michelle', 'Renata', 'Bruno', 'Juliane', 'Amanda', 'Cyda', 'Bruna SDR'];
+const ORDEM_CORRETORES_JULIANE = ['Bruna SDR', 'Junior', 'Laís', 'Patricia', 'Michelle', 'Renata', 'Bruno', 'Juliane', 'Amanda', 'Cyda'];
 
 // Uma cor fixa e diferente pra cada um (não é por hash, pra ficar sempre
 // igual e fácil de reconhecer de relance).
