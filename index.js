@@ -4248,13 +4248,27 @@ app.all('/api/admin/backups/:id/restaurar-carteira-sdr', basicAuth, async (req, 
   }
 });
 
+// O navegador guarda o último login (mesmo "Painel de Leads" pra todos). Quando um
+// login de CORRETOR cai numa página da SDR/Juliane/admin, em vez de mandar pro CRM
+// do corretor (o que prendia a Juliane no CRM do Lucas depois de um teste), pede
+// o login de novo — digitando o da Juliane/SDR/admin o navegador troca o que guardou.
+function pedirLoginDeEquipe(res) {
+  res.set('WWW-Authenticate', 'Basic realm="Painel de Leads"');
+  res.set('Cache-Control', 'no-store');
+  return res.status(401).send('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
+    '<body style="font-family:sans-serif;padding:24px;max-width:480px;margin:auto">' +
+    '<h3>Esta página é da equipe (SDR / Juliane / admin).</h3>' +
+    '<p>Entre com o login e a senha da equipe.</p>' +
+    '<p>É corretor? <a href="/meu-crm">Clique aqui para o seu CRM</a>.</p></body>');
+}
+
 // ─── ROTA: CRM DA SDR ─────────────────────────────────────────
 // Painel enxuto pra SDR organizar a carteira de leads: usa a mesma API
 // (/api/leads e /api/leads/:id) do dashboard principal, só que com uma
 // visão focada em reaquecimento e histórico de corretores.
 app.get('/crm', basicAuthAdminOuSdr, (req, res) => {
   // Login de corretor que cai aqui (link antigo/errado) vai pro CRM do corretor
-  if (req.authTipo === 'corretor') return res.redirect('/meu-crm');
+  if (req.authTipo === 'corretor') return pedirLoginDeEquipe(res);
   // Sem cache — senão o navegador pode continuar mostrando uma versão
   // antiga da página depois de um deploy novo, mesmo recarregando.
   res.set('Cache-Control', 'no-store');
@@ -4321,7 +4335,7 @@ app.get('/analytics', basicAuthAdminOuSdr, (req, res) => {
 
 // ─── ROTA: CRM DA JULIANE ─────────────────────────────────────
 app.get('/crm-juliane', basicAuthAdminOuSdr, (req, res) => {
-  if (req.authTipo === 'corretor') return res.redirect('/meu-crm');
+  if (req.authTipo === 'corretor') return pedirLoginDeEquipe(res);
   res.set('Cache-Control', 'no-store');
   res.send(JULIANE_HTML);
 });
