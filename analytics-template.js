@@ -206,6 +206,63 @@ const ANALYTICS_HTML = `<!DOCTYPE html>
   .sit-cinza { background: #eceef4; color: #5a6072; }
   .rep-nota { color: var(--muted); font-size: 12px; max-width: 260px; }
   .rep-resumo { margin: 14px 0 6px; font-size: 14px; font-weight: 800; }
+
+  /* ── visual novo ── */
+  body { padding: 18px; max-width: 1400px; margin: 0 auto; }
+  h1 { font-size: 24px; letter-spacing: -.01em; }
+  .filtros { position: sticky; top: 0; z-index: 20; }
+  .filtros .auto { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 4px; cursor: pointer; }
+  .kpis { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
+  .kpi { padding: 16px 16px 14px 20px; }
+  .kpi .valor { font-size: 30px; letter-spacing: -.02em; }
+  .kpi .extra { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; min-height: 18px; }
+  .delta { font-size: 11px; font-weight: 800; padding: 2px 7px; border-radius: 999px; }
+  .delta.bom { background: #e0f5ec; color: #11794c; }
+  .delta.ruim { background: #fde8ea; color: #c0293a; }
+  .delta.neutro { background: #eceef4; color: #5a6072; }
+  .nota-comp { font-size: 12px; color: var(--muted); margin: -8px 0 14px; }
+  .alertas { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+  .alerta { font-size: 13px; padding: 8px 12px; border-radius: 10px; border: 1px solid transparent; font-family: inherit; }
+  button.alerta { cursor: pointer; }
+  .alerta-vermelho { background: #fde8ea; color: #a31f2f; border-color: #f7c5cb; }
+  .alerta-amarelo { background: #fff3da; color: #8a5a06; border-color: #f4dba5; }
+  .alerta-cinza { background: #eceef4; color: #4a5064; }
+  .alerta-verde { background: #e0f5ec; color: #11794c; }
+  .alerta-ouro { background: #fff6d6; color: #7a5b00; border-color: #efdc96; }
+  .painel h2 { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+  .painel h2 .dica { font-size: 11px; font-weight: 500; color: var(--muted); }
+  .funil { display: flex; flex-direction: column; gap: 9px; }
+  .funil-linha { display: grid; grid-template-columns: 120px 1fr 70px; gap: 8px; align-items: center; row-gap: 2px; }
+  .funil-rotulo { font-size: 13px; font-weight: 600; }
+  .funil-trilho { background: #eef0f6; border-radius: 8px; height: 22px; overflow: hidden; }
+  .funil-barra { height: 100%; border-radius: 8px; transition: width .4s; }
+  .funil-num { text-align: right; font-size: 13px; }
+  .funil-num span { color: var(--muted); font-size: 11px; margin-left: 5px; }
+  .funil-passo { grid-column: 2 / 4; font-size: 11px; color: var(--muted); min-height: 0; }
+  .funil-passo:empty { display: none; }
+  .grade { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .tabela-wrap { overflow-x: auto; margin-top: 8px; }
+  th.ord { cursor: pointer; user-select: none; white-space: nowrap; }
+  th.ord:hover, th.ord.ativa { color: var(--accent); }
+  .camp-nome { max-width: 380px; }
+  tbody tr:hover td { background: #f7f8fc; }
+  @media (max-width: 640px) {
+    body { padding: 12px; }
+    .grade { grid-template-columns: minmax(0, 1fr); }
+    .funil-linha { grid-template-columns: 90px 1fr 62px; }
+    #label-periodo { margin-left: 0; width: 100%; }
+  }
+
+  .orc-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 12px; }
+  .orc-form label { font-size: 12px; color: var(--muted); font-weight: 600; display: flex; flex-direction: column; gap: 3px; }
+  .orc-form input { padding: 8px 10px; border: 1px solid var(--card-border); border-radius: 8px; font-size: 14px; }
+  .orc-form button { background: var(--accent); color: #fff; border: none; padding: 10px 16px; border-radius: 10px; font-weight: 700; cursor: pointer; font-size: 13px; }
+  .orc-resumo { display: flex; gap: 10px; flex-wrap: wrap; margin: 10px 0; }
+  .orc-resumo .caixa { background: #f7f8fc; border: 1px solid var(--card-border); border-radius: 12px; padding: 10px 14px; min-width: 190px; }
+  .orc-resumo .caixa b { font-size: 20px; display: block; }
+  .orc-resumo .caixa span { font-size: 12px; color: var(--muted); }
+  .orc-apagar { background: none; border: none; color: var(--danger); cursor: pointer; font-size: 13px; }
+  .tag-zero { background: #fde8ea; color: #c0293a; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 800; }
 </style>
 </head>
 <body>
@@ -234,11 +291,16 @@ const ANALYTICS_HTML = `<!DOCTYPE html>
   <input type="date" id="data-fim">
   <button class="periodo-btn" id="btn-aplicar-custom">Aplicar</button>
   <span id="label-periodo"></span>
+  <button class="periodo-btn" id="btn-atualizar-agora" title="Atualizar agora">↻ Atualizar</button>
+  <label class="auto"><input type="checkbox" id="auto-atualizar"> auto (2 min)</label>
+  <span class="sub" id="hora-atualizacao"></span>
 </div>
 
 <div id="conteudo">
   <div class="carregando">Carregando dados...</div>
 </div>
+
+<div id="orcamento-painel" style="display:none;"></div>
 
 
 <div class="rep-overlay" id="rep-overlay" onclick="if(event.target===this) fecharRepassados()">
@@ -320,8 +382,8 @@ document.getElementById('btn-aplicar-custom').addEventListener('click', () => {
   carregarDados(inicio, fim);
 });
 
-async function carregarDados(inicio, fim) {
-  document.getElementById('conteudo').innerHTML = '<div class="carregando">Carregando dados...</div>';
+async function carregarDados(inicio, fim, silencioso) {
+  if (!silencioso) document.getElementById('conteudo').innerHTML = '<div class="carregando">Carregando dados...</div>';
   const label = document.getElementById('label-periodo');
   label.textContent = (inicio && fim) ? (formatarDataBR(inicio) + ' — ' + formatarDataBR(fim)) : 'Todo o período';
 
@@ -351,82 +413,148 @@ function formatarDataBR(iso) {
   return d + '/' + m + '/' + y;
 }
 
-function renderizar(data) {
-  const f = data.funil;
-  const totalGeral = f.total || 0;
+var ORDEM_ETAPAS = ['Novo', 'Reaquecido', 'Aguardando retorno', 'Aguardando documentação', 'Aguardando aprovação', 'Aprovado', 'Visita', 'Em negociação', 'Venda', 'Sem retorno'];
+var ULTIMOS_DADOS = null;
+var ORDEM_TABELA = { chave: 'total', dir: -1 };
+var AUTO_TIMER = null;
 
-  document.getElementById('conteudo').innerHTML = \`
-    <div class="kpis">
-      <div class="kpi kpi-clicavel" data-metrica="total" data-titulo="Total de leads" style="--barra:\${CORES.accent}"><div class="rotulo">Total de leads</div><div class="valor">\${fmtNum(f.total)}</div></div>
-      <div class="kpi kpi-clicavel" data-metrica="aprovado" data-titulo="Aprovados" style="--barra:\${CORES.accent2}"><div class="rotulo">Aprovados</div><div class="valor">\${fmtNum(f.aprovado)}</div></div>
-      <div class="kpi kpi-clicavel" data-metrica="visita" data-titulo="Visitas" style="--barra:\${CORES.accent2}"><div class="rotulo">Visitas</div><div class="valor">\${fmtNum(f.visita)}</div></div>
-      <div class="kpi kpi-clicavel" data-metrica="em_negociacao" data-titulo="Em negociação" style="--barra:\${CORES.warn}"><div class="rotulo">Em negociação</div><div class="valor">\${fmtNum(f.em_negociacao)}</div></div>
-      <div class="kpi kpi-clicavel" data-metrica="venda" data-titulo="Vendas" style="--barra:\${CORES.ok}"><div class="rotulo">Vendas</div><div class="valor">\${fmtNum(f.venda)}</div></div>
-      <div class="kpi kpi-clicavel" data-metrica="sem_retorno" data-titulo="Sem retorno" style="--barra:\${CORES.danger}"><div class="rotulo">Sem retorno</div><div class="valor">\${fmtNum(f.sem_retorno)}</div></div>
-    </div>
+function esc(t) { return String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function pct(n, d) { return d ? (n / d) * 100 : 0; }
+function fmtHoras(h) { if (h == null) return '—'; h = Number(h); if (h < 1) return '< 1h'; if (h >= 48) return (h / 24).toFixed(1).replace('.', ',') + ' dias'; return h.toFixed(1).replace('.', ',') + 'h'; }
 
-    <div class="grade">
-      <div class="painel full">
-        <h2>Funil de conversão</h2>
-        <div class="chart-wrap baixo"><canvas id="chart-funil"></canvas></div>
-      </div>
-
-      <div class="painel">
-        <h2>Leads por dia</h2>
-        <div class="chart-wrap"><canvas id="chart-tendencia"></canvas></div>
-      </div>
-
-      <div class="painel">
-        <h2>Leads por origem</h2>
-        <div class="chart-wrap"><canvas id="chart-origem"></canvas></div>
-      </div>
-
-      <div class="painel">
-        <h2>Leads por status</h2>
-        <div class="chart-wrap"><canvas id="chart-status"></canvas></div>
-      </div>
-
-      <div class="painel">
-        <h2>Volume por corretor</h2>
-        <div class="chart-wrap"><canvas id="chart-corretor"></canvas></div>
-      </div>
-
-      <div class="painel full">
-        <h2>Performance por corretor</h2>
-        \${tabelaCorretores(data.corretores, totalGeral)}
-      </div>
-    </div>
-  \`;
-
-  desenharFunil(f);
-  desenharTendencia(data.tendencia);
-  desenharOrigem(data.origens);
-  desenharStatus(data.status);
-  desenharCorretor(data.corretores);
-
-  DADOS_CORRETORES = data.corretores || [];
-  document.querySelectorAll('.kpi-clicavel').forEach(el => {
-    el.addEventListener('click', () => mostrarDetalheMetrica(el.dataset.metrica, el.dataset.titulo));
-  });
+// Variação contra o período anterior. invertido = quando menos é melhor (ex: sem retorno).
+function delta(atual, anterior, invertido) {
+  if (anterior == null) return '';
+  atual = Number(atual) || 0; anterior = Number(anterior) || 0;
+  if (anterior === 0 && atual === 0) return '<span class="delta neutro">= 0</span>';
+  if (anterior === 0) return '<span class="delta bom">novo</span>';
+  var v = ((atual - anterior) / anterior) * 100;
+  if (Math.abs(v) < 0.5) return '<span class="delta neutro">= igual</span>';
+  var bom = invertido ? v < 0 : v > 0;
+  return '<span class="delta ' + (bom ? 'bom' : 'ruim') + '">' + (v > 0 ? '▲ +' : '▼ ') + Math.round(v) + '%</span>';
 }
 
-let DADOS_CORRETORES = [];
+function kpiCard(rotulo, valor, extra, cor, metrica, dl) {
+  return '<div class="kpi' + (metrica ? ' kpi-clicavel' : '') + '"' + (metrica ? ' data-metrica="' + metrica + '" data-titulo="' + esc(rotulo) + '"' : '') + ' style="--barra:' + cor + '">' +
+    '<div class="rotulo">' + esc(rotulo) + '</div><div class="valor">' + valor + '</div>' +
+    '<div class="extra">' + (dl || '') + (extra ? '<span>' + extra + '</span>' : '') + '</div></div>';
+}
+
+function renderizar(data) {
+  ULTIMOS_DADOS = data;
+  var f = data.funil || {};
+  var ant = data.anterior || null;
+  var al = data.alertas || {};
+  var total = f.total || 0;
+  var rotAnt = data.periodo_anterior ? ('vs ' + formatarDataBR(data.periodo_anterior.inicio) + ' a ' + formatarDataBR(data.periodo_anterior.fim)) : '';
+  var taxaContato = pct(f.contatou, total), taxaContatoAnt = ant ? pct(ant.contatou, ant.total) : null;
+  var conv = pct(f.venda, total), convAnt = ant ? pct(ant.venda, ant.total) : null;
+
+  var h = '';
+  // ── KPIs ──
+  h += '<div class="kpis">' +
+    kpiCard('Leads recebidos', fmtNum(total), rotAnt ? '' : '', CORES.accent, 'total', delta(total, ant && ant.total, false)) +
+    kpiCard('Contatados', fmtNum(f.contatou), Math.round(taxaContato) + '% dos leads', CORES.info, 'contatou', delta(taxaContato, taxaContatoAnt, false)) +
+    kpiCard('Tempo até 1º contato', fmtHoras(f.horas_media_resposta), 'média', CORES.accent2, null, delta(f.horas_media_resposta, ant && ant.horas_media_resposta, true)) +
+    kpiCard('Visitas', fmtNum(f.visita), fmtPct(f.visita, total) + ' dos leads', CORES.accent2, 'visita', delta(f.visita, ant && ant.visita, false)) +
+    kpiCard('Em negociação', fmtNum(f.em_negociacao), fmtPct(f.em_negociacao, total) + ' dos leads', CORES.warn, 'em_negociacao', delta(f.em_negociacao, ant && ant.em_negociacao, false)) +
+    kpiCard('Vendas', fmtNum(f.venda), 'conversão ' + conv.toFixed(1).replace('.', ',') + '%', CORES.ok, 'venda', delta(f.venda, ant && ant.venda, false)) +
+    kpiCard('Sem retorno', fmtNum(f.sem_retorno), fmtPct(f.sem_retorno, total) + ' dos leads', CORES.danger, 'sem_retorno', delta(f.sem_retorno, ant && ant.sem_retorno, true)) +
+    '</div>';
+  if (rotAnt) h += '<div class="nota-comp">Variação ' + esc(rotAnt) + '. Etapas (visita, negociação, venda) mostram onde o lead está agora.</div>';
+
+  // ── Alertas ──
+  var alertas = [];
+  if (al.parados > 0) alertas.push('<button class="alerta alerta-vermelho" data-parados="1"><b>' + fmtNum(al.parados) + '</b> leads parados há mais de 2 dias, sem o corretor mexer</button>');
+  if (al.tarefas_atrasadas > 0) alertas.push('<span class="alerta alerta-amarelo"><b>' + fmtNum(al.tarefas_atrasadas) + '</b> tarefas atrasadas</span>');
+  if (f.numero_invalido > 0) alertas.push('<span class="alerta alerta-cinza"><b>' + fmtNum(f.numero_invalido) + '</b> números inválidos</span>');
+  if (data.nao_identificados > 0) alertas.push('<span class="alerta alerta-cinza"><b>' + fmtNum(data.nao_identificados) + '</b> mensagens não identificadas</span>');
+  if (f.cliente_ouro > 0) alertas.push('<span class="alerta alerta-ouro"><b>' + fmtNum(f.cliente_ouro) + '</b> clientes ouro ⭐</span>');
+  h += '<div class="alertas">' + (alertas.length ? alertas.join('') : '<span class="alerta alerta-verde">✅ Nada parado no momento</span>') + '</div>';
+
+  // ── Funil + Etapas ──
+  h += '<div class="grade">';
+  h += '<div class="painel"><h2>Funil de conversão</h2>' + funilHtml(f) + '</div>';
+  h += '<div class="painel"><h2>Onde estão os leads agora</h2><div class="chart-wrap"><canvas id="chart-etapas"></canvas></div></div>';
+  h += '<div class="painel full"><h2>Leads por dia</h2><div class="chart-wrap"><canvas id="chart-tendencia"></canvas></div></div>';
+  h += '<div class="painel"><h2>Horário em que os leads chegam</h2><div class="chart-wrap"><canvas id="chart-horas"></canvas></div></div>';
+  h += '<div class="painel"><h2>Origem dos leads</h2><div class="chart-wrap"><canvas id="chart-origem"></canvas></div>' + tabelaOrigens(data.origens, total) + '</div>';
+  h += '<div class="painel full"><h2>Campanhas / imóveis que mais trazem lead</h2>' + tabelaCampanhas(data.campanhas, total) + '</div>';
+  h += '<div class="painel full"><h2>Ranking dos corretores <span class="dica">clique no título da coluna para ordenar</span></h2><div id="tabela-corretores"></div></div>';
+  h += '</div>';
+  document.getElementById('conteudo').innerHTML = h;
+
+  DADOS_CORRETORES = data.corretores || [];
+  desenharTendencia(data.tendencia);
+  desenharHoras(data.horas);
+  desenharOrigem(data.origens);
+  desenharEtapas(data.etapas);
+  renderTabelaCorretores();
+  document.querySelectorAll('[data-parados]').forEach(function (el) {
+    el.addEventListener('click', function () { mostrarDetalheMetrica('parados', 'Leads parados (+2 dias)'); });
+  });
+  document.querySelectorAll('.kpi-clicavel').forEach(function (el) {
+    el.addEventListener('click', function () { mostrarDetalheMetrica(el.dataset.metrica, el.dataset.titulo); });
+  });
+  var agora = new Date();
+  document.getElementById('hora-atualizacao').textContent = 'Atualizado às ' + agora.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+}
+
+function funilHtml(f) {
+  var total = f.total || 0;
+  var etapas = [
+    ['Leads recebidos', f.total, CORES.accent],
+    ['Contatados', f.contatou, CORES.info],
+    ['Aprovados', f.aprovado, CORES.accent2],
+    ['Visitas', f.visita, CORES.accent2],
+    ['Em negociação', f.em_negociacao, CORES.warn],
+    ['Vendas', f.venda, CORES.ok]
+  ];
+  if (!total) return '<div class="vazio">Sem leads no período</div>';
+  var out = '<div class="funil">';
+  etapas.forEach(function (e, i) {
+    var w = Math.max(3, pct(e[1], total));
+    var pp = (i > 0 && etapas[i - 1][1]) ? Math.round(pct(e[1], etapas[i - 1][1])) : null;
+    var passo = (pp !== null && pp <= 100) ? pp + '% da etapa anterior' : '';
+    out += '<div class="funil-linha"><div class="funil-rotulo">' + e[0] + '</div>' +
+      '<div class="funil-trilho"><div class="funil-barra" style="width:' + w + '%;background:' + e[2] + '"></div></div>' +
+      '<div class="funil-num"><b>' + fmtNum(e[1]) + '</b><span>' + Math.round(pct(e[1], total)) + '%</span></div>' +
+      (passo ? '<div class="funil-passo">' + passo + '</div>' : '<div class="funil-passo"></div>') + '</div>';
+  });
+  return out + '</div>';
+}
+
+function tabelaOrigens(origens, total) {
+  if (!origens || !origens.length) return '';
+  var l = origens.map(function (o) {
+    return '<tr><td>' + esc(o.origem) + '</td><td class="num">' + fmtNum(o.total) + '</td><td class="num">' + fmtPct(o.total, total) + '</td><td class="num">' + fmtNum(o.venda) + '</td></tr>';
+  }).join('');
+  return '<div class="tabela-wrap"><table><thead><tr><th>Origem</th><th class="num">Leads</th><th class="num">% do total</th><th class="num">Vendas</th></tr></thead><tbody>' + l + '</tbody></table></div>';
+}
+
+function tabelaCampanhas(camps, total) {
+  if (!camps || !camps.length) return '<div class="vazio">Sem dados no período</div>';
+  var max = Math.max.apply(null, camps.map(function (c) { return c.total; })) || 1;
+  var l = camps.map(function (c) {
+    return '<tr><td class="camp-nome">' + esc(c.campanha) + '</td>' +
+      '<td class="num"><span class="barra-mini" style="width:' + Math.round((c.total / max) * 90) + 'px"></span>' + fmtNum(c.total) + '</td>' +
+      '<td class="num">' + fmtPct(c.contatou, c.total) + '</td><td class="num">' + fmtNum(c.visita) + '</td><td class="num">' + fmtNum(c.venda) + '</td>' +
+      '<td class="num badge-pct">' + fmtPct(c.venda, c.total) + '</td></tr>';
+  }).join('');
+  return '<div class="tabela-wrap"><table><thead><tr><th>Campanha / imóvel</th><th class="num">Leads</th><th class="num">Contatados</th><th class="num">Visitas</th><th class="num">Vendas</th><th class="num">Conversão</th></tr></thead><tbody>' + l + '</tbody></table></div>';
+}
+
+var DADOS_CORRETORES = [];
 
 function mostrarDetalheMetrica(metrica, titulo) {
-  const linhas = (DADOS_CORRETORES || [])
-    .map(c => ({ corretor: c.corretor, valor: c[metrica] || 0 }))
-    .filter(l => l.valor > 0)
-    .sort((a, b) => b.valor - a.valor);
-
-  const totalMetrica = linhas.reduce((soma, l) => soma + l.valor, 0);
-
-  const corpo = linhas.length === 0
+  var linhas = (DADOS_CORRETORES || [])
+    .map(function (c) { return { corretor: c.corretor, valor: c[metrica] || 0 }; })
+    .filter(function (l) { return l.valor > 0; })
+    .sort(function (a, b) { return b.valor - a.valor; });
+  var corpo = linhas.length === 0
     ? '<div class="vazio">Nenhum corretor com esse número no período</div>'
-    : \`<table class="tabela-modal">
-        <thead><tr><th>Corretor</th><th class="num">\${titulo}</th></tr></thead>
-        <tbody>\${linhas.map(l => \`<tr><td>\${l.corretor}</td><td class="num">\${fmtNum(l.valor)}</td></tr>\`).join('')}</tbody>
-      </table>\`;
-
+    : '<table class="tabela-modal"><thead><tr><th>Corretor</th><th class="num">' + esc(titulo) + '</th></tr></thead><tbody>' +
+      linhas.map(function (l) { return '<tr><td>' + esc(l.corretor) + '</td><td class="num">' + fmtNum(l.valor) + '</td></tr>'; }).join('') + '</tbody></table>';
   document.getElementById('modal-detalhe-titulo').textContent = titulo + ' — por corretor';
   document.getElementById('modal-detalhe-corpo').innerHTML = corpo;
   document.getElementById('modal-detalhe-overlay').classList.add('aberto');
@@ -436,125 +564,127 @@ function fecharModalDetalhe() {
   document.getElementById('modal-detalhe-overlay').classList.remove('aberto');
 }
 
-function tabelaCorretores(corretores, totalGeral) {
-  if (!corretores || corretores.length === 0) return '<div class="vazio">Sem dados no período</div>';
-  const linhas = corretores.map(c => {
-    const pctConv = fmtPct(c.venda, c.total);
-    const resposta = c.horas_media_resposta != null ? (c.horas_media_resposta < 1 ? '< 1h' : c.horas_media_resposta + 'h') : '—';
-    return \`<tr>
-      <td>\${c.corretor}</td>
-      <td class="num">\${fmtNum(c.total)}</td>
-      <td class="num">\${fmtNum(c.visita)}</td>
-      <td class="num">\${fmtNum(c.venda)}</td>
-      <td class="num badge-pct">\${pctConv}</td>
-      <td class="num">\${resposta}</td>
-    </tr>\`;
+function ordenarTabela(chave) {
+  if (ORDEM_TABELA.chave === chave) ORDEM_TABELA.dir *= -1; else { ORDEM_TABELA.chave = chave; ORDEM_TABELA.dir = chave === 'corretor' ? 1 : -1; }
+  renderTabelaCorretores();
+}
+
+function valorOrdem(c, chave) {
+  if (chave === 'corretor') return String(c.corretor).toLowerCase();
+  if (chave === 'taxa_contato') return pct(c.contatou, c.total);
+  if (chave === 'conversao') return pct(c.venda, c.total);
+  if (chave === 'horas_media_resposta') return c.horas_media_resposta == null ? 9999 : Number(c.horas_media_resposta);
+  return Number(c[chave]) || 0;
+}
+
+function renderTabelaCorretores() {
+  var el = document.getElementById('tabela-corretores');
+  var cs = (DADOS_CORRETORES || []).slice();
+  if (!cs.length) { el.innerHTML = '<div class="vazio">Sem dados no período</div>'; return; }
+  var k = ORDEM_TABELA.chave, d = ORDEM_TABELA.dir;
+  cs.sort(function (a, b) { var x = valorOrdem(a, k), y = valorOrdem(b, k); return x < y ? -d : x > y ? d : 0; });
+  var totalGeral = cs.reduce(function (s, c) { return s + c.total; }, 0) || 1;
+  var maxConv = 0, melhor = null;
+  cs.forEach(function (c) { var v = pct(c.venda, c.total); if (c.total >= 5 && v > maxConv) { maxConv = v; melhor = c.corretor; } });
+  function th(chave, rot, num) {
+    return '<th class="' + (num ? 'num ' : '') + 'ord' + (k === chave ? ' ativa' : '') + '" data-ord="' + chave + '">' + rot + (k === chave ? (d > 0 ? ' ▲' : ' ▼') : '') + '</th>';
+  }
+  var linhas = cs.map(function (c) {
+    var conv = pct(c.venda, c.total);
+    var parados = c.parados || 0;
+    return '<tr><td><b>' + esc(c.corretor) + '</b>' + (melhor === c.corretor && maxConv > 0 ? ' <span title="Maior conversão (mín. 5 leads)">🏆</span>' : '') + '</td>' +
+      '<td class="num"><span class="barra-mini" style="width:' + Math.round((c.total / totalGeral) * 100) + 'px"></span>' + fmtNum(c.total) + '</td>' +
+      '<td class="num">' + fmtPct(c.contatou, c.total) + '</td>' +
+      '<td class="num">' + (parados > 0 ? '<span class="tag-sit sit-vermelho">' + parados + '</span>' : '<span class="sub">0</span>') + '</td>' +
+      '<td class="num">' + fmtNum(c.visita) + '</td><td class="num">' + fmtNum(c.em_negociacao) + '</td><td class="num">' + fmtNum(c.venda) + '</td>' +
+      '<td class="num badge-pct">' + conv.toFixed(1).replace('.', ',') + '%</td>' +
+      '<td class="num">' + fmtHoras(c.horas_media_resposta) + '</td></tr>';
   }).join('');
-  return \`<table>
-    <thead><tr>
-      <th>Corretor</th><th class="num">Leads</th>
-      <th class="num">Visitas</th><th class="num">Vendas</th><th class="num">Conversão</th><th class="num">Tempo médio 1º contato</th>
-    </tr></thead>
-    <tbody>\${linhas}</tbody>
-  </table>\`;
+  el.onclick = function (ev) { var t = ev.target.closest('[data-ord]'); if (t) ordenarTabela(t.getAttribute('data-ord')); };
+  el.innerHTML = '<div class="tabela-wrap"><table><thead><tr>' +
+    th('corretor', 'Corretor', false) + th('total', 'Leads', true) + th('taxa_contato', 'Contatados', true) + th('parados', 'Parados +2d', true) +
+    th('visita', 'Visitas', true) + th('em_negociacao', 'Negociação', true) + th('venda', 'Vendas', true) + th('conversao', 'Conversão', true) + th('horas_media_resposta', '1º contato', true) +
+    '</tr></thead><tbody>' + linhas + '</tbody></table></div>';
 }
 
 function destruir(id) { if (CHARTS[id]) { CHARTS[id].destroy(); delete CHARTS[id]; } }
+function semDados(ctx) { ctx.parentElement.innerHTML = '<div class="vazio">Sem dados no período</div>'; }
 
-function desenharFunil(f) {
-  destruir('funil');
-  const etapas = [
-    { rotulo: 'Total', valor: f.total, cor: CORES.accent },
-    { rotulo: 'Aprovado', valor: f.aprovado, cor: CORES.accent2 },
-    { rotulo: 'Visita', valor: f.visita, cor: CORES.accent2 },
-    { rotulo: 'Em negociação', valor: f.em_negociacao, cor: CORES.warn },
-    { rotulo: 'Venda', valor: f.venda, cor: CORES.ok },
-  ];
-  const ctx = document.getElementById('chart-funil');
-  CHARTS.funil = new Chart(ctx, {
+function desenharTendencia(tendencia) {
+  destruir('tendencia');
+  var ctx = document.getElementById('chart-tendencia');
+  if (!tendencia || tendencia.length === 0) { semDados(ctx); return; }
+  CHARTS.tendencia = new Chart(ctx, {
     type: 'bar',
     data: {
-      labels: etapas.map(e => e.rotulo),
-      datasets: [{ data: etapas.map(e => e.valor), backgroundColor: etapas.map(e => e.cor), borderRadius: 6, maxBarThickness: 60 }]
+      labels: tendencia.map(function (t) { return formatarDataBR(t.dia).slice(0, 5); }),
+      datasets: [{ data: tendencia.map(function (t) { return t.total; }), backgroundColor: CORES.accent, borderRadius: 4, maxBarThickness: 28 }]
     },
     options: {
-      indexAxis: 'y',
       responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => fmtNum(c.raw) + ' leads (' + fmtPct(c.raw, f.total) + ')' } } },
-      scales: { x: { beginAtZero: true, grid: { color: '#eef0f6' } }, y: { grid: { display: false } } }
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: function (c) { return fmtNum(c.raw) + ' leads'; } } } },
+      scales: { x: { grid: { display: false }, ticks: { maxTicksLimit: 14 } }, y: { beginAtZero: true, grid: { color: '#eef0f6' }, ticks: { precision: 0 } } }
     }
   });
 }
 
-function desenharTendencia(tendencia) {
-  destruir('tendencia');
-  const ctx = document.getElementById('chart-tendencia');
-  if (!tendencia || tendencia.length === 0) { ctx.parentElement.innerHTML = '<div class="vazio">Sem dados no período</div>'; return; }
-  CHARTS.tendencia = new Chart(ctx, {
-    type: 'line',
-    data: {
-      labels: tendencia.map(t => formatarDataBR(t.dia)),
-      datasets: [{
-        data: tendencia.map(t => t.total),
-        borderColor: CORES.accent, backgroundColor: 'rgba(79,108,255,0.12)',
-        fill: true, tension: 0.3, pointRadius: 2
-      }]
-    },
+function desenharHoras(horas) {
+  destruir('horas');
+  var ctx = document.getElementById('chart-horas');
+  if (!horas || horas.length === 0) { semDados(ctx); return; }
+  var v = []; for (var i = 0; i < 24; i++) v.push(0);
+  horas.forEach(function (x) { v[x.hora] = x.total; });
+  var max = Math.max.apply(null, v);
+  CHARTS.horas = new Chart(ctx, {
+    type: 'bar',
+    data: { labels: v.map(function (_, i) { return i + 'h'; }), datasets: [{ data: v, backgroundColor: v.map(function (n) { return n === max && max > 0 ? CORES.warn : CORES.accent2; }), borderRadius: 3 }] },
     options: {
       responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
-      scales: { x: { grid: { display: false }, ticks: { maxTicksLimit: 8 } }, y: { beginAtZero: true, grid: { color: '#eef0f6' } } }
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: function (c) { return fmtNum(c.raw) + ' leads'; } } } },
+      scales: { x: { grid: { display: false }, ticks: { maxTicksLimit: 12 } }, y: { beginAtZero: true, grid: { color: '#eef0f6' }, ticks: { precision: 0 } } }
     }
   });
 }
 
 function desenharOrigem(origens) {
   destruir('origem');
-  const ctx = document.getElementById('chart-origem');
-  if (!origens || origens.length === 0) { ctx.parentElement.innerHTML = '<div class="vazio">Sem dados no período</div>'; return; }
+  var ctx = document.getElementById('chart-origem');
+  if (!origens || origens.length === 0) { semDados(ctx); return; }
   CHARTS.origem = new Chart(ctx, {
     type: 'doughnut',
-    data: {
-      labels: origens.map(o => o.origem),
-      datasets: [{ data: origens.map(o => o.total), backgroundColor: PALETA, borderWidth: 2, borderColor: '#fff' }]
-    },
-    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } } } }
+    data: { labels: origens.map(function (o) { return o.origem; }), datasets: [{ data: origens.map(function (o) { return o.total; }), backgroundColor: PALETA, borderWidth: 2, borderColor: '#fff' }] },
+    options: { responsive: true, maintainAspectRatio: false, cutout: '62%', plugins: { legend: { position: 'right', labels: { boxWidth: 12, font: { size: 12 } } } } }
   });
 }
 
-function desenharStatus(status) {
-  destruir('status');
-  const ctx = document.getElementById('chart-status');
-  if (!status || status.length === 0) { ctx.parentElement.innerHTML = '<div class="vazio">Sem dados no período</div>'; return; }
-  CHARTS.status = new Chart(ctx, {
-    type: 'doughnut',
-    data: {
-      labels: status.map(s => s.status),
-      datasets: [{ data: status.map(s => s.total), backgroundColor: PALETA, borderWidth: 2, borderColor: '#fff' }]
-    },
-    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } } } }
-  });
-}
-
-function desenharCorretor(corretores) {
-  destruir('corretor');
-  const ctx = document.getElementById('chart-corretor');
-  if (!corretores || corretores.length === 0) { ctx.parentElement.innerHTML = '<div class="vazio">Sem dados no período</div>'; return; }
-  CHARTS.corretor = new Chart(ctx, {
+function desenharEtapas(etapas) {
+  destruir('etapas');
+  var ctx = document.getElementById('chart-etapas');
+  if (!etapas || etapas.length === 0) { semDados(ctx); return; }
+  var mapa = {}; etapas.forEach(function (e) { mapa[e.etapa] = e.total; });
+  var rotulos = ORDEM_ETAPAS.filter(function (e) { return mapa[e]; });
+  Object.keys(mapa).forEach(function (e) { if (rotulos.indexOf(e) < 0) rotulos.push(e); });
+  var cores = { 'Novo': '#8a9099', 'Reaquecido': '#f2941c', 'Venda': CORES.ok, 'Sem retorno': CORES.danger, 'Em negociação': CORES.warn };
+  CHARTS.etapas = new Chart(ctx, {
     type: 'bar',
-    data: {
-      labels: corretores.map(c => c.corretor),
-      datasets: [
-        { label: 'Leads', data: corretores.map(c => c.total), backgroundColor: CORES.accent, borderRadius: 5 },
-        { label: 'Vendas', data: corretores.map(c => c.venda), backgroundColor: CORES.ok, borderRadius: 5 }
-      ]
-    },
+    data: { labels: rotulos, datasets: [{ data: rotulos.map(function (e) { return mapa[e]; }), backgroundColor: rotulos.map(function (e) { return cores[e] || CORES.accent; }), borderRadius: 5, maxBarThickness: 22 }] },
     options: {
-      responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 } } } },
-      scales: { x: { grid: { display: false }, ticks: { font: { size: 10 } } }, y: { beginAtZero: true, grid: { color: '#eef0f6' } } }
+      indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: function (c) { return fmtNum(c.raw) + ' leads'; } } } },
+      scales: { x: { beginAtZero: true, grid: { color: '#eef0f6' }, ticks: { precision: 0 } }, y: { grid: { display: false } } }
     }
   });
+}
+
+function configurarAuto() {
+  var cb = document.getElementById('auto-atualizar');
+  if (AUTO_TIMER) { clearInterval(AUTO_TIMER); AUTO_TIMER = null; }
+  if (cb && cb.checked) {
+    AUTO_TIMER = setInterval(function () {
+      var ini = document.getElementById('data-inicio').value || null, fim = document.getElementById('data-fim').value || null;
+      carregarDados(ini, fim, true);
+    }, 120000);
+  }
 }
 
 
@@ -679,8 +809,144 @@ function renderRepassados() {
     : '<div class="vazio">Nenhum lead nesse filtro.</div>';
 }
 
+
+// ─── Orçamento do patrocinado × leads ───
+var ORC = null;
+function orcFmtMoeda(v) { return 'R$ ' + Number(v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function orcSomaDias(iso, n) { var d = new Date(iso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
+function orcDiasEntre(a, b) { return Math.round((new Date(b + 'T00:00:00Z') - new Date(a + 'T00:00:00Z')) / 86400000); }
+
+async function carregarOrcamento() {
+  var box = document.getElementById('orcamento-painel');
+  var btn = document.getElementById('btn-repassados');
+  if (!box || (btn && btn.style.display === 'none')) return; // só equipe (não aparece pra corretor)
+  try {
+    var res = await fetch('/api/analytics/orcamentos');
+    var data = await res.json();
+    if (!data.ok) throw new Error(data.erro || 'Erro');
+    ORC = data;
+    box.style.display = 'block';
+    renderOrcamento();
+  } catch (err) {
+    box.style.display = 'block';
+    box.innerHTML = '<div class="painel"><div class="vazio">Erro ao carregar orçamento: ' + esc(err.message) + '</div></div>';
+  }
+}
+
+function renderOrcamento() {
+  var box = document.getElementById('orcamento-painel');
+  var orc = ORC.orcamentos || [];
+  var hoje = ORC.hoje;
+  // períodos: cada registro vale até o dia anterior ao próximo registro (o último vale até hoje)
+  var periodos = [];
+  var leadsPorDia = {}; (ORC.leads || []).forEach(function (x) { leadsPorDia[x.dia] = x.total; });
+  orc.forEach(function (o, i) {
+    var fim = (i + 1 < orc.length) ? orcSomaDias(orc[i + 1].data, -1) : hoje;
+    if (fim < o.data) return;
+    var dias = orcDiasEntre(o.data, fim) + 1, leads = 0;
+    for (var k = 0; k < dias; k++) leads += leadsPorDia[orcSomaDias(o.data, k)] || 0;
+    periodos.push({ id: o.id, inicio: o.data, fim: fim, valor: o.valor, obs: o.obs, dias: dias, leads: leads, porDia: dias ? leads / dias : 0,
+      custoLead: (leads > 0 && o.valor > 0) ? (o.valor * dias) / leads : null, investido: o.valor * dias });
+  });
+  var zer = periodos.filter(function (p) { return p.valor === 0; });
+  var com = periodos.filter(function (p) { return p.valor > 0; });
+  function media(arr) { var d = arr.reduce(function (s, p) { return s + p.dias; }, 0), l = arr.reduce(function (s, p) { return s + p.leads; }, 0); return d ? { porDia: l / d, dias: d } : null; }
+  var mz = media(zer), mc = media(com);
+
+  var h = '<div class="painel"><h2>💰 Orçamento do patrocinado × chegada de leads <span class="dica">registre cada mudança de orçamento (valor por dia; 0 = zerado)</span></h2>' +
+    '<div class="orc-form">' +
+    '<label>A partir do dia<input type="date" id="orc-data" value="' + hoje + '"></label>' +
+    '<label>Orçamento por dia (R$)<input type="text" inputmode="decimal" id="orc-valor" placeholder="ex: 50 ou 0"></label>' +
+    '<label>Observação (opcional)<input type="text" id="orc-obs" placeholder="ex: campanha Gran Veneza" maxlength="200"></label>' +
+    '<button id="orc-salvar">Salvar</button></div>';
+
+  if (!orc.length) {
+    h += '<div class="vazio">Nenhum orçamento registrado ainda. Registre o primeiro acima para começar a comparação.</div></div>';
+    box.innerHTML = h; ligarOrcamento(); return;
+  }
+
+  h += '<div class="orc-resumo">' +
+    (mc ? '<div class="caixa"><b>' + mc.porDia.toFixed(1).replace('.', ',') + ' leads/dia</b><span>com orçamento (' + mc.dias + ' dias)</span></div>' : '') +
+    (mz ? '<div class="caixa"><b>' + mz.porDia.toFixed(1).replace('.', ',') + ' leads/dia</b><span>com orçamento zerado (' + mz.dias + ' dias)</span></div>' : '') +
+    (mc && mz && mc.porDia > 0 ? '<div class="caixa"><b>' + Math.round((1 - mz.porDia / mc.porDia) * 100) + '%</b><span>de queda na chegada com o orçamento zerado</span></div>' : '') +
+    '</div>';
+  h += '<div class="chart-wrap"><canvas id="chart-orcamento"></canvas></div>';
+  h += '<div class="tabela-wrap"><table><thead><tr><th>Período</th><th class="num">Orçamento/dia</th><th class="num">Dias</th><th class="num">Leads</th><th class="num">Leads/dia</th><th class="num">Custo por lead</th><th>Obs.</th><th></th></tr></thead><tbody>' +
+    periodos.slice().reverse().map(function (p) {
+      return '<tr><td>' + formatarDataBR(p.inicio) + ' a ' + formatarDataBR(p.fim) + '</td>' +
+        '<td class="num">' + (p.valor === 0 ? '<span class="tag-zero">ZERADO</span>' : orcFmtMoeda(p.valor)) + '</td>' +
+        '<td class="num">' + p.dias + '</td><td class="num">' + fmtNum(p.leads) + '</td>' +
+        '<td class="num badge-pct">' + p.porDia.toFixed(1).replace('.', ',') + '</td>' +
+        '<td class="num">' + (p.custoLead != null ? orcFmtMoeda(p.custoLead) : '—') + '</td>' +
+        '<td>' + esc(p.obs || '') + '</td>' +
+        '<td><button class="orc-apagar" data-id="' + p.id + '" title="Apagar este registro">🗑</button></td></tr>';
+    }).join('') + '</tbody></table></div>';
+  h += '<div class="nota-comp" style="margin:10px 0 0">Leads = patrocinados que chegaram no dia (todos, de qualquer corretor). Custo por lead = orçamento/dia × dias ÷ leads, só uma estimativa (o gasto real está no Meta). Leva alguns dias para o efeito aparecer, então compare períodos longos.</div></div>';
+  box.innerHTML = h;
+  ligarOrcamento();
+
+  // gráfico: barras = leads/dia, linha em degrau = orçamento/dia
+  destruir('orcamento');
+  var primeiro = ORC.leads.length ? ORC.leads[0].dia : orc[0].data;
+  var ini = primeiro < orc[0].data ? primeiro : orc[0].data;
+  var dias = [], vl = [], vo = [];
+  for (var d = ini; d <= hoje; d = orcSomaDias(d, 1)) {
+    dias.push(d); vl.push(leadsPorDia[d] || 0);
+    var atual = null; orc.forEach(function (o) { if (o.data <= d) atual = o.valor; });
+    vo.push(atual);
+    if (dias.length > 400) break;
+  }
+  CHARTS.orcamento = new Chart(document.getElementById('chart-orcamento'), {
+    data: {
+      labels: dias.map(function (x) { return formatarDataBR(x).slice(0, 5); }),
+      datasets: [
+        { type: 'bar', label: 'Leads patrocinados/dia', data: vl, backgroundColor: CORES.accent, borderRadius: 3, yAxisID: 'y', order: 2 },
+        { type: 'line', label: 'Orçamento/dia (R$)', data: vo, borderColor: CORES.warn, backgroundColor: CORES.warn, stepped: true, pointRadius: 0, borderWidth: 3, yAxisID: 'y2', order: 1, spanGaps: false }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { position: 'bottom' } },
+      scales: {
+        x: { grid: { display: false }, ticks: { maxTicksLimit: 14 } },
+        y: { beginAtZero: true, grid: { color: '#eef0f6' }, ticks: { precision: 0 }, title: { display: true, text: 'Leads' } },
+        y2: { position: 'right', beginAtZero: true, grid: { display: false }, title: { display: true, text: 'R$ por dia' } }
+      }
+    }
+  });
+}
+
+function ligarOrcamento() {
+  var b = document.getElementById('orc-salvar');
+  if (b) b.addEventListener('click', salvarOrcamento);
+  document.querySelectorAll('.orc-apagar').forEach(function (el) {
+    el.addEventListener('click', async function () {
+      if (!confirm('Apagar este registro de orçamento?')) return;
+      await fetch('/api/analytics/orcamentos/' + el.getAttribute('data-id'), { method: 'DELETE' });
+      carregarOrcamento();
+    });
+  });
+}
+
+async function salvarOrcamento() {
+  var data = document.getElementById('orc-data').value;
+  var valor = document.getElementById('orc-valor').value.trim();
+  var obs = document.getElementById('orc-obs').value.trim();
+  if (!data || valor === '') { alert('Preencha o dia e o valor (use 0 se o orçamento foi zerado).'); return; }
+  var res = await fetch('/api/analytics/orcamentos', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data: data, valor: valor, obs: obs }) });
+  var j = await res.json();
+  if (!j.ok) { alert(j.erro || 'Não foi possível salvar.'); return; }
+  carregarOrcamento();
+}
+
+document.getElementById('btn-atualizar-agora').addEventListener('click', function () {
+  carregarDados(document.getElementById('data-inicio').value || null, document.getElementById('data-fim').value || null);
+});
+document.getElementById('auto-atualizar').addEventListener('change', configurarAuto);
+
 // Carrega "Tudo" por padrão
 carregarDados(null, null);
+carregarOrcamento();
 </script>
 </body>
 </html>`;
