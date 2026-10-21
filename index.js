@@ -2574,6 +2574,74 @@ app.get('/api/leads/carteira-juliane', basicAuthAdminOuSdr, semCorretor, async (
 
 // Lista TODOS os leads do sistema (não só uma carteira) — alimenta o quadro
 // Lista só os leads do corretor que está logado agora — nunca de outro.
+// ─── ORÇAMENTO DO PATROCINADO × CHEGADA DE LEADS ──────────────
+// A Juliane/admin registra "a partir de tal dia o orçamento (por dia) passou a ser R$ X"
+// (0 = zerado) pra comparar com a chegada de leads patrocinados no Analytics.
+let _tabelaOrcamentoOk = false;
+async function garantirTabelaOrcamento() {
+  if (_tabelaOrcamentoOk) return;
+  await pool.query(`CREATE TABLE IF NOT EXISTS orcamento_patrocinado (
+    id SERIAL PRIMARY KEY,
+    data DATE NOT NULL,
+    valor NUMERIC(12,2) NOT NULL,
+    obs TEXT,
+    criado_em TIMESTAMPTZ DEFAULT now()
+  )`);
+  _tabelaOrcamentoOk = true;
+}
+
+app.get('/api/analytics/orcamentos', basicAuthAdminOuSdr, semCorretor, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  if (!process.env.DATABASE_URL) return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  try {
+    await garantirTabelaOrcamento();
+    const o = await pool.query(`SELECT id, to_char(data, 'YYYY-MM-DD') AS data, valor::float AS valor, obs FROM orcamento_patrocinado ORDER BY data ASC, id ASC`);
+    // Série diária de leads patrocinados: de 14 dias antes do 1º registro (mínimo 30 dias atrás) até hoje.
+    const l = await pool.query(`
+      SELECT to_char((distribuido_em AT TIME ZONE 'America/Sao_Paulo')::date, 'YYYY-MM-DD') AS dia, COUNT(*)::int AS total
+      FROM leads
+      WHERE origem = 'Patrocinado' AND distribuido_em IS NOT NULL
+        AND (distribuido_em AT TIME ZONE 'America/Sao_Paulo')::date >=
+            LEAST((SELECT COALESCE(MIN(data), CURRENT_DATE) FROM orcamento_patrocinado) - 14, CURRENT_DATE - 30)
+      GROUP BY 1 ORDER BY 1`);
+    const hoje = await pool.query(`SELECT to_char((now() AT TIME ZONE 'America/Sao_Paulo')::date, 'YYYY-MM-DD') AS hoje`);
+    res.json({ ok: true, orcamentos: o.rows, leads: l.rows, hoje: hoje.rows[0].hoje });
+  } catch (err) {
+    console.error('Erro ao listar orçamentos:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
+app.post('/api/analytics/orcamentos', basicAuthAdminOuSdr, semCorretor, async (req, res) => {
+  try {
+    await garantirTabelaOrcamento();
+    const data = String(req.body.data || '');
+    const valor = Number(String(req.body.valor == null ? '' : req.body.valor).replace(',', '.'));
+    const obs = req.body.obs ? String(req.body.obs).slice(0, 200) : null;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) return res.status(400).json({ ok: false, erro: 'Data inválida.' });
+    if (!isFinite(valor) || valor < 0 || valor > 10000000) return res.status(400).json({ ok: false, erro: 'Valor inválido (use 0 para orçamento zerado).' });
+    const r = await pool.query(`INSERT INTO orcamento_patrocinado (data, valor, obs) VALUES ($1::date, $2, $3) RETURNING id`, [data, valor, obs]);
+    console.log(`[Orçamento] Registrado por ${req.authTipo}: ${data} R$ ${valor}`);
+    res.json({ ok: true, id: r.rows[0].id });
+  } catch (err) {
+    console.error('Erro ao salvar orçamento:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
+app.delete('/api/analytics/orcamentos/:id', basicAuthAdminOuSdr, semCorretor, async (req, res) => {
+  try {
+    await garantirTabelaOrcamento();
+    const id = parseInt(req.params.id, 10);
+    if (!id) return res.status(400).json({ ok: false, erro: 'Id inválido' });
+    await pool.query(`DELETE FROM orcamento_patrocinado WHERE id = $1`, [id]);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Erro ao apagar orçamento:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
 // ─── ROTA: ACOMPANHAMENTO DOS LEADS REAQUECIDOS/REPASSADOS ───
 // Lista os leads que a SDR reaqueceu e repassou a corretores, com os sinais de
 // que estão (ou não) sendo trabalhados. Só admin/SDR/Juliane.
@@ -2586,14 +2654,14 @@ app.get('/api/analytics/repassados', basicAuthAdminOuSdr, semCorretor, async (re
     const reData = /^\d{4}-\d{2}-\d{2}$/;
     if (reData.test(req.query.inicio || '') && reData.test(req.query.fim || '')) {
       params.push(req.query.inicio, req.query.fim);
-      filtroPeriodo = ` AND COALESCE(CASE WHEN status = 'Repassado ao corretor' THEN status_alterado_em END, reaquecido_em) >= $1::date
-                        AND COALESCE(CASE WHEN status = 'Repassado ao corretor' THEN status_alterado_em END, reaquecido_em) < ($2::date + interval '1 day')`;
+      filtroPeriodo = ` AND COALESCE(CASE WHEN status = 'Repassado ao corretor' THEN status_alterado_em END, reaquecido_em, distribuido_em) >= $1::date
+                        AND COALESCE(CASE WHEN status = 'Repassado ao corretor' THEN status_alterado_em END, reaquecido_em, distribuido_em) < ($2::date + interval '1 day')`;
     }
     const r = await pool.query(
       `SELECT id, nome, whatsapp, corretor, origem, imovel_desc, status, status_corretor,
               status_corretor_alterado_em, reaquecido_em, contatou, primeiro_contato_em,
               tarefa_sdr, tarefa_data, notas_sdr,
-              COALESCE(CASE WHEN status = 'Repassado ao corretor' THEN status_alterado_em END, reaquecido_em) AS repassado_em
+              COALESCE(CASE WHEN status = 'Repassado ao corretor' THEN status_alterado_em END, reaquecido_em, distribuido_em) AS repassado_em
        FROM leads
        WHERE corretor IS NOT NULL AND corretor <> ''
          AND carteira_sdr IS NOT TRUE
@@ -2700,28 +2768,28 @@ app.get('/api/analytics', basicAuthAdminOuSdr, async (req, res) => {
     //   (/api/leads/meus) — leads desse corretor que já saíram da carteira
     //   da SDR ou já tiveram status_corretor alterado.
     const vistoPelaJuliane = req.query.origem === 'juliane';
-    const condLeads = [];
-    const paramsLeads = [];
-    if (temPeriodo) {
-      paramsLeads.push(inicio, fim);
-      condLeads.push(`distribuido_em >= $${paramsLeads.length - 1}::date`);
-      condLeads.push(`distribuido_em < ($${paramsLeads.length}::date + interval '1 day')`);
-    }
-    if (escopoCorretor) {
-      paramsLeads.push(escopoCorretor);
-      condLeads.push(`corretor = $${paramsLeads.length}`);
-      condLeads.push(`(status_corretor_alterado_em IS NOT NULL OR carteira_sdr IS NOT TRUE)`);
-    } else if (vistoPelaJuliane) {
-      // O board dela (/crm-juliane) mostra também a coluna "Novo Lead" —
-      // lead sem corretor ainda, esperando ela distribuir. O Analytics geral
-      // da Juliane não deve contar esse pedaço (que ainda é território da
-      // SDR/triagem): só métrica de lead que já tem corretor responsável.
-      condLeads.push(`(${COND_BOARD_JULIANE})`);
-      condLeads.push(`corretor IS NOT NULL AND corretor <> ''`);
-    } else {
-      condLeads.push(`(carteira_sdr = true OR status = 'Repassado ao corretor')`);
-    }
-    const whereLeads = condLeads.length ? `WHERE ${condLeads.join(' AND ')}` : '';
+    // Monta o WHERE de leads para um período (o atual e, se houver, o anterior de mesmo tamanho).
+    const montarWhereLeads = (ini, fi) => {
+      const condLeads = [];
+      const paramsLeads = [];
+      if (ini && fi) {
+        paramsLeads.push(ini, fi);
+        condLeads.push(`distribuido_em >= $${paramsLeads.length - 1}::date`);
+        condLeads.push(`distribuido_em < ($${paramsLeads.length}::date + interval '1 day')`);
+      }
+      if (escopoCorretor) {
+        paramsLeads.push(escopoCorretor);
+        condLeads.push(`corretor = $${paramsLeads.length}`);
+        condLeads.push(`(status_corretor_alterado_em IS NOT NULL OR carteira_sdr IS NOT TRUE)`);
+      } else if (vistoPelaJuliane) {
+        condLeads.push(`(${COND_BOARD_JULIANE})`);
+        condLeads.push(`corretor IS NOT NULL AND corretor <> ''`);
+      } else {
+        condLeads.push(`(carteira_sdr = true OR status = 'Repassado ao corretor')`);
+      }
+      return { where: condLeads.length ? `WHERE ${condLeads.join(' AND ')}` : '', params: paramsLeads };
+    };
+    const { where: whereLeads, params: paramsLeads } = montarWhereLeads(temPeriodo ? inicio : null, temPeriodo ? fim : null);
 
     const condNaoIdent = [];
     const paramsNaoIdent = [];
@@ -2750,7 +2818,36 @@ app.get('/api/analytics', basicAuthAdminOuSdr, async (req, res) => {
     const COND_VENDA = `(status_corretor = 'Venda' AND ${DWELL})`;
     const COND_SEM_RETORNO = `sem_retorno`;
 
-    const [funilQ, corretorQ, origemQ, statusQ, tendenciaQ, naoIdentQ] = await Promise.all([
+    // Período anterior (mesma duração, logo antes) — pra mostrar variação.
+    let whereAnt = null, paramsAnt = null, periodoAnt = null;
+    if (temPeriodo && /^\d{4}-\d{2}-\d{2}$/.test(inicio) && /^\d{4}-\d{2}-\d{2}$/.test(fim)) {
+      const di = new Date(inicio + 'T00:00:00Z'), df = new Date(fim + 'T00:00:00Z');
+      const dias = Math.round((df - di) / 86400000) + 1;
+      if (dias > 0 && dias < 800) {
+        const fimAnt = new Date(di.getTime() - 86400000), iniAnt = new Date(fimAnt.getTime() - (dias - 1) * 86400000);
+        periodoAnt = { inicio: iniAnt.toISOString().slice(0, 10), fim: fimAnt.toISOString().slice(0, 10) };
+        const w = montarWhereLeads(periodoAnt.inicio, periodoAnt.fim);
+        whereAnt = w.where; paramsAnt = w.params;
+      }
+    }
+    const SQL_FUNIL = `
+        SELECT
+          COUNT(*)::int AS total,
+          COUNT(*) FILTER (WHERE ${COND_CONTATOU})::int AS contatou,
+          COUNT(*) FILTER (WHERE ${COND_APROVADO})::int AS aprovado,
+          COUNT(*) FILTER (WHERE ${COND_VISITA})::int AS visita,
+          COUNT(*) FILTER (WHERE ${COND_EM_NEGOCIACAO})::int AS em_negociacao,
+          COUNT(*) FILTER (WHERE ${COND_PROPOSTA})::int AS proposta,
+          COUNT(*) FILTER (WHERE ${COND_VENDA})::int AS venda,
+          COUNT(*) FILTER (WHERE ${COND_SEM_RETORNO})::int AS sem_retorno,
+          COUNT(*) FILTER (WHERE numero_invalido)::int AS numero_invalido,
+          COUNT(*) FILTER (WHERE cliente_ouro)::int AS cliente_ouro,
+          ROUND(AVG(EXTRACT(EPOCH FROM (primeiro_contato_em - distribuido_em)) / 3600.0) FILTER (WHERE primeiro_contato_em IS NOT NULL), 1) AS horas_media_resposta
+        FROM leads `;
+    // "Parado": lead que já tem corretor, continua em Novo/Reaquecido e foi distribuído há mais de 2 dias.
+    const COND_PARADO = `(COALESCE(NULLIF(status_corretor,''),'Novo') IN ('Novo','Reaquecido') AND corretor IS NOT NULL AND corretor <> '' AND distribuido_em < now() - interval '2 days' AND NOT COALESCE(sem_retorno,false))`;
+
+    const [funilQ, corretorQ, origemQ, statusQ, tendenciaQ, naoIdentQ, anteriorQ, etapasQ, horasQ, campanhasQ, alertasQ] = await Promise.all([
       pool.query(`
         SELECT
           COUNT(*)::int AS total,
@@ -2780,7 +2877,9 @@ app.get('/api/analytics', basicAuthAdminOuSdr, async (req, res) => {
             AVG(EXTRACT(EPOCH FROM (primeiro_contato_em - distribuido_em)) / 3600.0)
               FILTER (WHERE primeiro_contato_em IS NOT NULL),
             1
-          ) AS horas_media_resposta
+          ) AS horas_media_resposta,
+          COUNT(*) FILTER (WHERE ${COND_PARADO})::int AS parados,
+          COUNT(*) FILTER (WHERE ${COND_PROPOSTA})::int AS proposta
         FROM leads ${whereLeads}
         GROUP BY 1
         ORDER BY total DESC
@@ -2813,6 +2912,40 @@ app.get('/api/analytics', basicAuthAdminOuSdr, async (req, res) => {
       pool.query(`
         SELECT COUNT(*)::int AS total FROM leads_nao_identificados ${whereNaoIdent}
       `, paramsNaoIdent),
+
+      whereAnt !== null ? pool.query(SQL_FUNIL + whereAnt, paramsAnt) : Promise.resolve({ rows: [null] }),
+
+      pool.query(`
+        SELECT COALESCE(NULLIF(status_corretor, ''), 'Novo') AS etapa, COUNT(*)::int AS total
+        FROM leads ${whereLeads}
+        ${whereLeads ? 'AND' : 'WHERE'} corretor IS NOT NULL AND corretor <> ''
+        GROUP BY 1
+      `, paramsLeads),
+
+      pool.query(`
+        SELECT EXTRACT(HOUR FROM (distribuido_em AT TIME ZONE 'America/Sao_Paulo'))::int AS hora, COUNT(*)::int AS total
+        FROM leads ${whereLeads}
+        ${whereLeads ? 'AND' : 'WHERE'} distribuido_em IS NOT NULL
+        GROUP BY 1 ORDER BY 1
+      `, paramsLeads),
+
+      pool.query(`
+        SELECT COALESCE(NULLIF(imovel_desc, ''), 'Sem campanha/imóvel') AS campanha,
+               COUNT(*)::int AS total,
+               COUNT(*) FILTER (WHERE ${COND_CONTATOU})::int AS contatou,
+               COUNT(*) FILTER (WHERE ${COND_VISITA})::int AS visita,
+               COUNT(*) FILTER (WHERE ${COND_VENDA})::int AS venda
+        FROM leads ${whereLeads}
+        GROUP BY 1 ORDER BY total DESC LIMIT 12
+      `, paramsLeads),
+
+      pool.query(`
+        SELECT
+          COUNT(*) FILTER (WHERE ${COND_PARADO})::int AS parados,
+          COUNT(*) FILTER (WHERE tarefa_data IS NOT NULL AND tarefa_data < now() AND COALESCE(tarefa_sdr,'') <> '')::int AS tarefas_atrasadas,
+          COUNT(*) FILTER (WHERE COALESCE(NULLIF(status_corretor,''),'Novo') IN ('Novo','Reaquecido') AND corretor IS NOT NULL AND corretor <> '' AND NOT COALESCE(sem_retorno,false))::int AS sem_movimentacao
+        FROM leads ${whereLeads}
+      `, paramsLeads),
     ]);
 
     res.json({
@@ -2823,6 +2956,12 @@ app.get('/api/analytics', basicAuthAdminOuSdr, async (req, res) => {
       status: statusQ.rows,
       tendencia: tendenciaQ.rows,
       nao_identificados: naoIdentQ.rows[0].total,
+      anterior: anteriorQ.rows[0],
+      periodo_anterior: periodoAnt,
+      etapas: etapasQ.rows,
+      horas: horasQ.rows,
+      campanhas: campanhasQ.rows,
+      alertas: alertasQ.rows[0],
     });
   } catch (err) {
     console.error('Erro ao gerar analytics:', err);
