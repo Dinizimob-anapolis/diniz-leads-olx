@@ -2057,6 +2057,89 @@ app.all('/api/admin/redefinir-corretor', basicAuth, async (req, res) => {
   }
 });
 
+// ─── ROTA ADMIN: COMO ESTÁ A DISTRIBUIÇÃO DOS LEADS ────────────
+// /api/admin/distribuicao  → página com a fila do Meta (quem é o próximo) e
+// quantos leads cada corretor recebeu hoje / 7 dias / 30 dias, por origem.
+app.get('/api/admin/distribuicao', basicAuthAdminOuSdr, semCorretor, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  try {
+    const esc = t => String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    const idxMeta = (parseInt(await lerConfig('indice_rodizio_meta'), 10) || 0) % Math.max(1, CORRETORES_META.length);
+    const r = await pool.query(`
+      SELECT COALESCE(NULLIF(corretor,''),'(sem corretor)') AS corretor,
+             COALESCE(NULLIF(origem,''),'?') AS origem,
+             COUNT(*) FILTER (WHERE distribuido_em >= (now() AT TIME ZONE 'America/Sao_Paulo')::date) AS hoje,
+             COUNT(*) FILTER (WHERE distribuido_em >= now() - interval '7 days') AS d7,
+             COUNT(*) FILTER (WHERE distribuido_em >= now() - interval '30 days') AS d30
+      FROM leads
+      WHERE distribuido_em >= now() - interval '30 days'
+      GROUP BY 1, 2 ORDER BY d7 DESC, d30 DESC`);
+    const porC = {};
+    r.rows.forEach(x => {
+      const o = porC[x.corretor] || (porC[x.corretor] = { hoje: 0, d7: 0, d30: 0, orig: {} });
+      o.hoje += +x.hoje; o.d7 += +x.d7; o.d30 += +x.d30;
+      o.orig[x.origem] = (o.orig[x.origem] || 0) + (+x.d7);
+    });
+    const linhas = Object.keys(porC).sort((a, b) => porC[b].d7 - porC[a].d7).map(n => {
+      const o = porC[n];
+      const orig = Object.keys(o.orig).filter(k => o.orig[k]).map(k => esc(k) + ': ' + o.orig[k]).join(' · ');
+      return '<tr><td><b>' + esc(n) + '</b></td><td>' + o.hoje + '</td><td>' + o.d7 + '</td><td>' + o.d30 + '</td><td>' + orig + '</td></tr>';
+    }).join('');
+    const filaMeta = CORRETORES_META.map((c, i) => '<li' + (i === idxMeta ? ' style="font-weight:800;color:#c0293a"' : '') + '>' + esc(c.nome) + (i === idxMeta ? ' ← próximo lead' : '') + '</li>').join('');
+    const filaOlx = CORRETORES.map(c => '<li>' + esc(c.nome) + '</li>').join('');
+    res.send('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Distribuição</title>' +
+      '<body style="font-family:sans-serif;padding:16px;max-width:900px;margin:auto"><h2>📊 Distribuição dos leads</h2>' +
+      '<div style="display:flex;gap:32px;flex-wrap:wrap"><div><h3>Rodízio Meta (geral)</h3><ol>' + filaMeta + '</ol></div>' +
+      '<div><h3>Rodízio OLX / Canal Pro</h3><ol>' + filaOlx + '</ol></div></div>' +
+      '<h3>Leads recebidos por corretor</h3><table border="1" cellpadding="6" style="border-collapse:collapse"><tr><th>Corretor</th><th>Hoje</th><th>7 dias</th><th>30 dias</th><th>Origem (7 dias)</th></tr>' +
+      (linhas || '<tr><td colspan="5">Nenhum lead nos últimos 30 dias.</td></tr>') + '</table>' +
+      '<p style="color:#666;font-size:13px">Conta pela data em que o lead foi distribuído. Campanhas com [Nome] vão direto ao corretor e não passam pela fila.</p></body>');
+  } catch (err) { res.status(500).send('Erro: ' + err.message); }
+});
+
+// ─── ROTA ADMIN: CAMPANHAS E QUEM RECEBE CADA UMA ──────────────
+// /api/admin/campanhas  → campanhas que mandaram lead nos últimos 30 dias, quem
+// está configurado pra receber (colchetes no nome) e com quem os leads estão hoje.
+app.get('/api/admin/campanhas', basicAuthAdminOuSdr, semCorretor, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  try {
+    const esc = t => String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    const dias = Math.min(365, Math.max(1, parseInt(req.query.dias, 10) || 30));
+    const r = await pool.query(`
+      SELECT COALESCE(NULLIF(imovel_desc,''),'(sem nome de campanha)') AS campanha,
+             COALESCE(NULLIF(corretor,''),'(sem corretor)') AS corretor,
+             COUNT(*) AS qtd, MAX(distribuido_em) AS ultimo
+      FROM leads
+      WHERE distribuido_em >= now() - ($1 || ' days')::interval
+        AND origem IN ('Patrocinado','Meta','Meta Ads')
+      GROUP BY 1, 2`, [String(dias)]);
+    const camp = {};
+    r.rows.forEach(x => {
+      const c = camp[x.campanha] || (camp[x.campanha] = { total: 0, ultimo: null, por: {} });
+      c.total += +x.qtd; c.por[x.corretor] = (c.por[x.corretor] || 0) + (+x.qtd);
+      if (!c.ultimo || new Date(x.ultimo) > new Date(c.ultimo)) c.ultimo = x.ultimo;
+    });
+    const linhas = Object.keys(camp).sort((a, b) => new Date(camp[b].ultimo) - new Date(camp[a].ultimo)).map(n => {
+      const c = camp[n];
+      const fixos = [];
+      for (const m of n.matchAll(/\[([^\]]+)\]/g)) {
+        const e = TELEFONES_CORRETORES[normalizarTexto(m[1])];
+        if (e && !fixos.includes(e.nome)) fixos.push(e.nome);
+      }
+      const config = fixos.length ? '<b>' + esc(fixos.join(' + ')) + '</b>' + (fixos.length > 1 ? ' (revezam)' : ' (fixo)') : 'Rodízio geral';
+      const hoje = Object.keys(c.por).sort((a, b) => c.por[b] - c.por[a]).map(k => esc(k) + ': ' + c.por[k]).join(' · ');
+      return '<tr><td>' + esc(n) + '</td><td>' + config + '</td><td>' + c.total + '</td><td>' + new Date(c.ultimo).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }) + '</td><td>' + hoje + '</td></tr>';
+    }).join('');
+    const geral = CORRETORES_META.map(c => esc(c.nome)).join(', ');
+    res.send('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Campanhas</title>' +
+      '<body style="font-family:sans-serif;padding:16px;max-width:1100px;margin:auto"><h2>📣 Campanhas e quem recebe</h2>' +
+      '<p><b>Rodízio geral (campanhas sem [nome]):</b> ' + geral + '</p>' +
+      '<table border="1" cellpadding="6" style="border-collapse:collapse;font-size:14px"><tr><th>Campanha</th><th>Quem recebe (configurado)</th><th>Leads (' + dias + ' dias)</th><th>Último lead</th><th>Com quem estão hoje</th></tr>' +
+      (linhas || '<tr><td colspan="5">Nenhum lead de campanha nesse período.</td></tr>') + '</table>' +
+      '<p style="color:#666;font-size:13px">Lista só as campanhas que mandaram lead no período (não mostra se estão ligadas ou pausadas no Meta). Para outro período: ?dias=60</p></body>');
+  } catch (err) { res.status(500).send('Erro: ' + err.message); }
+});
+
 // ─── ROTA ADMIN: DIAGNÓSTICO DE LOGIN DE CORRETOR DO PAINEL ───
 // /api/admin/diagnostico-login?usuario=rubens&senha=xxx → diz se o login confere
 app.all('/api/admin/diagnostico-login', basicAuth, async (req, res) => {
