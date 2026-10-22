@@ -2097,6 +2097,62 @@ app.get('/api/admin/distribuicao', basicAuthAdminOuSdr, semCorretor, async (req,
   } catch (err) { res.status(500).send('Erro: ' + err.message); }
 });
 
+// ─── ROTA ADMIN: AUDITORIA DE UMA CAMPANHA ─────────────────────
+// /api/admin/auditoria-campanha?campanha=Vida Nova&inicio=2026-09-22&fim=2026-10-21&meta=30
+// Lista os leads da campanha no período, pra quem foi cada um e se bate com os
+// nomes entre colchetes do anúncio ("esperado"). "meta" = quantos o Meta contou (opcional).
+app.get('/api/admin/auditoria-campanha', basicAuthAdminOuSdr, semCorretor, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  try {
+    const esc = t => String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    const campanha = String(req.query.campanha || 'Vida Nova').slice(0, 80);
+    const reData = /^\d{4}-\d{2}-\d{2}$/;
+    const inicio = reData.test(req.query.inicio || '') ? req.query.inicio : '2026-09-22';
+    const fim = reData.test(req.query.fim || '') ? req.query.fim : '2099-12-31';
+    const meta = parseInt(req.query.meta, 10) || null;
+    const r = await pool.query(`
+      SELECT id, nome, whatsapp, corretor, origem, imovel_desc, numero_invalido, status_corretor,
+             to_char(distribuido_em AT TIME ZONE 'America/Sao_Paulo', 'DD/MM HH24:MI') AS quando
+      FROM leads
+      WHERE imovel_desc ILIKE $1
+        AND (distribuido_em AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN $2::date AND $3::date
+      ORDER BY distribuido_em ASC`, ['%' + campanha + '%', inicio, fim]);
+    const vistos = {};
+    let ok = 0, fora = 0, semCorr = 0, dups = 0, invalidos = 0;
+    const porC = {};
+    const linhas = r.rows.map(l => {
+      const esperados = [];
+      for (const m of String(l.imovel_desc || '').matchAll(/\[([^\]]+)\]/g)) {
+        const e = TELEFONES_CORRETORES[normalizarTexto(m[1])];
+        if (e && !esperados.includes(e.nome)) esperados.push(e.nome);
+      }
+      const atual = String(l.corretor || '').trim();
+      porC[atual || '(sem corretor)'] = (porC[atual || '(sem corretor)'] || 0) + 1;
+      let sit;
+      if (!atual) { semCorr++; sit = '<span style="color:#c0293a">⚠ sem corretor</span>'; }
+      else if (!esperados.length) { ok++; sit = '<span style="color:#767c8c">rodízio geral</span>'; }
+      else if (esperados.some(n => normalizarTexto(n) === normalizarTexto(atual))) { ok++; sit = '<span style="color:#11794c">✔ correto</span>'; }
+      else { fora++; sit = '<span style="color:#c0293a">⚠ fora da lista do anúncio</span>'; }
+      const dup = vistos[l.whatsapp]; vistos[l.whatsapp] = (vistos[l.whatsapp] || 0) + 1;
+      if (dup) dups++;
+      if (l.numero_invalido) invalidos++;
+      return '<tr><td>' + esc(l.quando) + '</td><td>' + esc(l.nome) + (dup ? ' <b title="WhatsApp repetido">(repetido)</b>' : '') + (l.numero_invalido ? ' <b title="Número inválido">(nº inválido)</b>' : '') + '</td><td>' + esc(l.whatsapp) +
+        '</td><td>' + esc(String(l.imovel_desc || '').slice(0, 60)) + '</td><td><b>' + esc(atual || '—') + '</b></td><td>' + sit + '</td><td>' + esc(l.status_corretor || 'Novo') + '</td></tr>';
+    }).join('');
+    const resumoC = Object.keys(porC).sort((a, b) => porC[b] - porC[a]).map(n => '<li>' + esc(n) + ': <b>' + porC[n] + '</b></li>').join('');
+    const total = r.rows.length;
+    res.send('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Auditoria da campanha</title>' +
+      '<body style="font-family:sans-serif;padding:16px;max-width:1200px;margin:auto"><h2>🔎 Auditoria: "' + esc(campanha) + '"</h2>' +
+      '<p>Período: ' + esc(inicio) + ' a ' + esc(fim === '2099-12-31' ? 'hoje' : fim) + '</p>' +
+      '<p><b>' + total + '</b> leads no sistema' + (meta ? ' · Meta contou <b>' + meta + '</b> (' + (total === meta ? 'bate' : (total < meta ? 'faltam ' + (meta - total) + ' no sistema' : 'sistema tem ' + (total - meta) + ' a mais')) + ')' : '') + '</p>' +
+      '<p>✔ corretos: <b>' + ok + '</b> · ⚠ fora da lista do anúncio: <b>' + fora + '</b> · sem corretor: <b>' + semCorr + '</b> · números inválidos: <b>' + invalidos + '</b></p>' +
+      '<h3>Com quem estão hoje</h3><ul>' + (resumoC || '<li>Nenhum lead</li>') + '</ul>' +
+      '<div style="overflow-x:auto"><table border="1" cellpadding="6" style="border-collapse:collapse;font-size:13px"><tr><th>Quando</th><th>Lead</th><th>WhatsApp</th><th>Anúncio</th><th>Corretor hoje</th><th>Situação</th><th>Etapa</th></tr>' +
+      (linhas || '<tr><td colspan="7">Nenhum lead encontrado.</td></tr>') + '</table></div>' +
+      '<p style="color:#666;font-size:13px">"Correto" = o corretor está entre os nomes entre colchetes do anúncio. Se o lead foi passado depois pra outra pessoa (por exemplo, ex-corretor → Juliane), aparece como fora da lista. Para outra campanha: ?campanha=...&inicio=AAAA-MM-DD&fim=AAAA-MM-DD&meta=30</p></body>');
+  } catch (err) { res.status(500).send('Erro: ' + err.message); }
+});
+
 // ─── ROTA ADMIN: CAMPANHAS E QUEM RECEBE CADA UMA ──────────────
 // /api/admin/campanhas  → campanhas que mandaram lead nos últimos 30 dias, quem
 // está configurado pra receber (colchetes no nome) e com quem os leads estão hoje.
