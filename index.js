@@ -3055,7 +3055,9 @@ app.get('/api/analytics', basicAuthAdminOuSdr, async (req, res) => {
     // Contagem da SDR (carteira de reaquecimento do CRM SDR) por dia — separada dos leads gerais.
     let sdrDia = [];
     if (vistoPelaJuliane && !escopoCorretor) {
-      const DATA_SDR = `COALESCE(reaquecido_em, status_alterado_em, distribuido_em)`;
+      // Cards novos da SDR: a data de criação do card é a distribuido_em (default now() no INSERT).
+      // Não usa reaquecido_em/status_alterado_em: esses mudam a cada vez que ela mexe num card antigo.
+      const DATA_SDR = `distribuido_em`;
       const pSdr = [];
       let wSdr = `WHERE carteira_sdr = true`;
       if (temPeriodo) {
