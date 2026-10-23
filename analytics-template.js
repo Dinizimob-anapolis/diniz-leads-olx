@@ -458,7 +458,7 @@ function renderizar(data) {
     kpiCard('Vendas', fmtNum(f.venda), 'conversão ' + conv.toFixed(1).replace('.', ',') + '%', CORES.ok, 'venda', delta(f.venda, ant && ant.venda, false)) +
     kpiCard('Sem retorno', fmtNum(f.sem_retorno), fmtPct(f.sem_retorno, total) + ' dos leads', CORES.danger, 'sem_retorno', delta(f.sem_retorno, ant && ant.sem_retorno, true)) +
     '</div>';
-  h += '<div class="nota-comp">Contagem: todos os leads que entraram desde 17/09 (campanha, cadastro manual ou de corretor), com ou sem corretor definido, mais os anteriores que já tiveram movimentação.</div>';
+  h += '<div class="nota-comp">Contagem: todos os leads que entraram desde 17/09 (campanha, cadastro manual ou de corretor), com ou sem corretor definido, mais os anteriores que já tiveram movimentação. Os contatos que a SDR está reaquecendo não entram nos leads: aparecem à parte, na coluna SDR por dia.</div>';
   if (rotAnt) h += '<div class="nota-comp">Variação ' + esc(rotAnt) + '. Etapas (visita, negociação, venda) mostram onde o lead está agora.</div>';
 
   // ── Alertas ──
@@ -474,7 +474,7 @@ function renderizar(data) {
   h += '<div class="grade">';
   h += '<div class="painel"><h2>Funil de conversão</h2>' + funilHtml(f) + '</div>';
   h += '<div class="painel"><h2>Onde estão os leads agora</h2><div class="chart-wrap"><canvas id="chart-etapas"></canvas></div></div>';
-  h += '<div class="painel full"><h2>Leads por dia</h2><div class="chart-wrap"><canvas id="chart-tendencia"></canvas></div></div>';
+  h += '<div class="painel full"><h2>Leads por dia</h2><div class="chart-wrap"><canvas id="chart-tendencia"></canvas></div>' + tabelaPorDia(data.tendencia, data.sdr_por_dia) + '</div>';
   h += '<div class="painel"><h2>Horário em que os leads chegam</h2><div class="chart-wrap"><canvas id="chart-horas"></canvas></div></div>';
   h += '<div class="painel"><h2>Origem dos leads</h2><div class="chart-wrap"><canvas id="chart-origem"></canvas></div>' + tabelaOrigens(data.origens, total) + '</div>';
   h += '<div class="painel full"><h2>Lead nosso × lead do corretor</h2>' + tabelaTipos(data.tipos, total) + '</div>';
@@ -484,7 +484,7 @@ function renderizar(data) {
   document.getElementById('conteudo').innerHTML = h;
 
   DADOS_CORRETORES = data.corretores || [];
-  desenharTendencia(data.tendencia);
+  desenharTendencia(data.tendencia, data.sdr_por_dia);
   desenharHoras(data.horas);
   desenharOrigem(data.origens);
   desenharEtapas(data.etapas);
@@ -617,22 +617,37 @@ function renderTabelaCorretores() {
 function destruir(id) { if (CHARTS[id]) { CHARTS[id].destroy(); delete CHARTS[id]; } }
 function semDados(ctx) { ctx.parentElement.innerHTML = '<div class="vazio">Sem dados no período</div>'; }
 
-function desenharTendencia(tendencia) {
+function desenharTendencia(tendencia, sdr) {
   destruir('tendencia');
   var ctx = document.getElementById('chart-tendencia');
-  if (!tendencia || tendencia.length === 0) { semDados(ctx); return; }
+  tendencia = tendencia || []; sdr = sdr || [];
+  if (tendencia.length === 0 && sdr.length === 0) { semDados(ctx); return; }
+  var mapaG = {}, mapaS = {}, dias = {};
+  tendencia.forEach(function (t) { mapaG[t.dia] = t.total; dias[t.dia] = 1; });
+  sdr.forEach(function (t) { mapaS[t.dia] = t.total; dias[t.dia] = 1; });
+  var lista = Object.keys(dias).sort();
+  var ds = [{ label: 'Leads (campanha e cadastros)', data: lista.map(function (d) { return mapaG[d] || 0; }), backgroundColor: CORES.accent, borderRadius: 4, maxBarThickness: 28 }];
+  if (sdr.length) ds.push({ label: 'SDR (reaquecimento)', data: lista.map(function (d) { return mapaS[d] || 0; }), backgroundColor: '#f2941c', borderRadius: 4, maxBarThickness: 28 });
   CHARTS.tendencia = new Chart(ctx, {
     type: 'bar',
-    data: {
-      labels: tendencia.map(function (t) { return formatarDataBR(t.dia).slice(0, 5); }),
-      datasets: [{ data: tendencia.map(function (t) { return t.total; }), backgroundColor: CORES.accent, borderRadius: 4, maxBarThickness: 28 }]
-    },
+    data: { labels: lista.map(function (d) { return formatarDataBR(d).slice(0, 5); }), datasets: ds },
     options: {
       responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false }, tooltip: { callbacks: { label: function (c) { return fmtNum(c.raw) + ' leads'; } } } },
+      plugins: { legend: { display: ds.length > 1 }, tooltip: { callbacks: { label: function (c) { return c.dataset.label + ': ' + fmtNum(c.raw); } } } },
       scales: { x: { grid: { display: false }, ticks: { maxTicksLimit: 14 } }, y: { beginAtZero: true, grid: { color: '#eef0f6' }, ticks: { precision: 0 } } }
     }
   });
+}
+
+function tabelaPorDia(tendencia, sdr) {
+  tendencia = tendencia || []; sdr = sdr || [];
+  if (!sdr.length) return '';
+  var mapaG = {}, mapaS = {}, dias = {}, totG = 0, totS = 0;
+  tendencia.forEach(function (t) { mapaG[t.dia] = t.total; dias[t.dia] = 1; totG += t.total; });
+  sdr.forEach(function (t) { mapaS[t.dia] = t.total; dias[t.dia] = 1; totS += t.total; });
+  var lista = Object.keys(dias).sort().reverse();
+  var l = lista.map(function (d) { return '<tr><td>' + esc(formatarDataBR(d)) + '</td><td class="num">' + fmtNum(mapaG[d] || 0) + '</td><td class="num">' + fmtNum(mapaS[d] || 0) + '</td></tr>'; }).join('');
+  return '<div class="tabela-wrap" style="max-height:280px;overflow:auto;margin-top:10px"><table><thead><tr><th>Dia</th><th class="num">Leads</th><th class="num">SDR (reaquecimento)</th></tr></thead><tbody>' + l + '<tr><td><b>Total</b></td><td class="num"><b>' + fmtNum(totG) + '</b></td><td class="num"><b>' + fmtNum(totS) + '</b></td></tr></tbody></table></div>';
 }
 
 function desenharHoras(horas) {
