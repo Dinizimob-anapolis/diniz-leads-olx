@@ -2122,6 +2122,49 @@ app.get('/api/admin/distribuicao', basicAuthAdminOuSdr, semCorretor, async (req,
 });
 
 // ─── ROTA ADMIN: AUDITORIA DE UMA CAMPANHA ─────────────────────
+// /api/admin/diagnostico-sdr?dia=2026-10-22 — conta os cards da SDR do dia de cada jeito possível
+app.get('/api/admin/diagnostico-sdr', basicAuthAdminOuSdr, semCorretor, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  try {
+    const esc = t => String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    const dia = /^\d{4}-\d{2}-\d{2}$/.test(req.query.dia || '') ? req.query.dia : new Date().toISOString().slice(0, 10);
+    const sp = c => `(${c} AT TIME ZONE 'America/Sao_Paulo')::date = $1::date`;
+    const r = await pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE carteira_sdr = true)::int AS carteira_total,
+        COUNT(*) FILTER (WHERE carteira_sdr = true AND ${sp('distribuido_em')})::int AS por_chegada,
+        COUNT(*) FILTER (WHERE carteira_sdr = true AND ${sp('reaquecido_em')})::int AS por_reaquecido,
+        COUNT(*) FILTER (WHERE carteira_sdr = true AND ${sp('status_alterado_em')})::int AS por_alteracao,
+        COUNT(*) FILTER (WHERE ${sp('distribuido_em')} AND entrada_via = 'sdr')::int AS por_via_sdr,
+        COUNT(*) FILTER (WHERE ${sp('distribuido_em')})::int AS chegaram_no_dia_todos,
+        COUNT(*) FILTER (WHERE ${sp('distribuido_em')} AND carteira_sdr IS NOT TRUE)::int AS chegaram_fora_da_sdr,
+        COUNT(*) FILTER (WHERE ${sp('status_alterado_em')} AND status = 'Repassado ao corretor')::int AS repassados_no_dia
+      FROM leads`, [dia]);
+    const x = r.rows[0];
+    const l = await pool.query(`
+      SELECT nome, corretor, origem, status, entrada_via,
+        to_char(distribuido_em AT TIME ZONE 'America/Sao_Paulo','DD/MM HH24:MI') AS chegou,
+        to_char(reaquecido_em AT TIME ZONE 'America/Sao_Paulo','DD/MM HH24:MI') AS reaq,
+        to_char(status_alterado_em AT TIME ZONE 'America/Sao_Paulo','DD/MM HH24:MI') AS alt
+      FROM leads
+      WHERE carteira_sdr = true AND (${sp('distribuido_em')} OR ${sp('reaquecido_em')} OR ${sp('status_alterado_em')})
+      ORDER BY distribuido_em ASC`, [dia]);
+    const linhas = l.rows.map(z => '<tr><td>' + esc(z.nome) + '</td><td>' + esc(z.chegou) + '</td><td>' + esc(z.reaq || '—') + '</td><td>' + esc(z.alt || '—') + '</td><td>' + esc(z.status || '—') + '</td><td>' + esc(z.origem || '—') + '</td><td>' + esc(z.entrada_via || '—') + '</td></tr>').join('');
+    res.send('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Diagnóstico SDR</title>' +
+      '<style>body{font-family:system-ui;margin:16px;color:#1f2430}table{border-collapse:collapse;font-size:13px;width:100%}td,th{border-bottom:1px solid #e6e8ef;padding:5px 8px;text-align:left}</style>' +
+      '<h1>Diagnóstico da SDR — ' + esc(dia.split('-').reverse().join('/')) + '</h1><table style="max-width:640px">' +
+      '<tr><td>Cards na carteira da SDR (total hoje)</td><td><b>' + x.carteira_total + '</b></td></tr>' +
+      '<tr><td>Da carteira SDR que chegaram nesse dia (data de criação do card)</td><td><b>' + x.por_chegada + '</b></td></tr>' +
+      '<tr><td>Da carteira SDR reaquecidos/movidos pra Reaquecendo nesse dia</td><td><b>' + x.por_reaquecido + '</b></td></tr>' +
+      '<tr><td>Da carteira SDR com qualquer alteração nesse dia</td><td><b>' + x.por_alteracao + '</b></td></tr>' +
+      '<tr><td>Marcados como cadastro da SDR nesse dia (só vale depois da atualização)</td><td><b>' + x.por_via_sdr + '</b></td></tr>' +
+      '<tr><td>Todos os leads que chegaram nesse dia</td><td><b>' + x.chegaram_no_dia_todos + '</b></td></tr>' +
+      '<tr><td>…dos quais fora da carteira da SDR</td><td><b>' + x.chegaram_fora_da_sdr + '</b></td></tr>' +
+      '<tr><td>Repassados ao corretor nesse dia</td><td><b>' + x.repassados_no_dia + '</b></td></tr></table>' +
+      '<h2>Cards da SDR mexidos nesse dia (' + l.rows.length + ')</h2><table><tr><th>Nome</th><th>Chegou</th><th>Reaquecido</th><th>Última alteração</th><th>Status</th><th>Origem</th><th>Via</th></tr>' + linhas + '</table>');
+  } catch (err) { res.status(500).send('Erro: ' + err.message); }
+});
+
 // /api/admin/leads-do-dia?dia=2026-10-22 — de onde vieram os leads que chegaram num dia
 app.get('/api/admin/leads-do-dia', basicAuthAdminOuSdr, semCorretor, async (req, res) => {
   res.set('Cache-Control', 'no-store');
