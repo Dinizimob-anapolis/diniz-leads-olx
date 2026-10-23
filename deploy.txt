@@ -1,0 +1,1 @@
+Arquivo apenas para disparar um novo deploy no Railway - 23/10/2026. Pode ser ignorado.
