@@ -124,7 +124,8 @@ const COND_BOARD_JULIANE = `
 // corretor ainda — e, dos anteriores a 17/09, só os que já tinham movimentação (mesmas
 // regras do board).
 const COND_ANALISE_JULIANE = `
-  (
+  carteira_sdr IS NOT TRUE
+  AND (
     distribuido_em >= '2026-09-17'
     OR (
       (
@@ -2121,6 +2122,31 @@ app.get('/api/admin/distribuicao', basicAuthAdminOuSdr, semCorretor, async (req,
 });
 
 // ─── ROTA ADMIN: AUDITORIA DE UMA CAMPANHA ─────────────────────
+// /api/admin/leads-do-dia?dia=2026-10-22 — de onde vieram os leads que chegaram num dia
+app.get('/api/admin/leads-do-dia', basicAuthAdminOuSdr, semCorretor, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  try {
+    const esc = t => String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    const dia = /^\d{4}-\d{2}-\d{2}$/.test(req.query.dia || '') ? req.query.dia : new Date().toISOString().slice(0, 10);
+    const r = await pool.query(`
+      SELECT nome, whatsapp, corretor, origem, imovel_desc, status_corretor, entrada_via,
+             to_char(distribuido_em AT TIME ZONE 'America/Sao_Paulo', 'HH24:MI') AS hora
+      FROM leads
+      WHERE (distribuido_em AT TIME ZONE 'America/Sao_Paulo')::date = $1::date
+      ORDER BY distribuido_em ASC`, [dia]);
+    const cont = (fn) => { const m = {}; r.rows.forEach(l => { const k = fn(l); m[k] = (m[k] || 0) + 1; }); return Object.keys(m).sort((a, b) => m[b] - m[a]).map(k => '<li>' + esc(k) + ': <b>' + m[k] + '</b></li>').join(''); };
+    const linhas = r.rows.map(l => '<tr><td>' + esc(l.hora) + '</td><td>' + esc(l.nome) + '</td><td>' + esc(l.corretor || '—') + '</td><td>' + esc(l.origem || '—') + '</td><td>' + esc(String(l.imovel_desc || '').slice(0, 70)) + '</td><td>' + esc(l.entrada_via || '—') + '</td></tr>').join('');
+    res.send('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Leads do dia</title>' +
+      '<style>body{font-family:system-ui;margin:16px;color:#1f2430}table{border-collapse:collapse;font-size:13px;width:100%}td,th{border-bottom:1px solid #e6e8ef;padding:5px 8px;text-align:left}ul{columns:2;padding-left:18px}h2{margin:18px 0 6px}</style>' +
+      '<h1>Leads do dia ' + esc(dia.split('-').reverse().join('/')) + ': ' + r.rows.length + '</h1>' +
+      '<p>Conta todo lead que foi distribuído ou voltou a entrar nesse dia (se o mesmo WhatsApp entra de novo, o sistema atualiza o lead e marca a data de novo).</p>' +
+      '<h2>Por origem</h2><ul>' + cont(l => l.origem || '(sem origem)') + '</ul>' +
+      '<h2>Por campanha / imóvel</h2><ul>' + cont(l => String(l.imovel_desc || '(sem campanha)').slice(0, 60)) + '</ul>' +
+      '<h2>Por corretor</h2><ul>' + cont(l => l.corretor || '(sem corretor)') + '</ul>' +
+      '<h2>Todos</h2><table><tr><th>Hora</th><th>Nome</th><th>Corretor</th><th>Origem</th><th>Campanha/imóvel</th><th>Via</th></tr>' + linhas + '</table>');
+  } catch (err) { res.status(500).send('Erro: ' + err.message); }
+});
+
 // /api/admin/auditoria-campanha?campanha=Vida Nova&inicio=2026-09-22&fim=2026-10-21&meta=30
 // Lista os leads da campanha no período, pra quem foi cada um e se bate com os
 // nomes entre colchetes do anúncio ("esperado"). "meta" = quantos o Meta contou (opcional).
@@ -2981,7 +3007,7 @@ app.get('/api/analytics', basicAuthAdminOuSdr, async (req, res) => {
       `, paramsLeads),
 
       pool.query(`
-        SELECT to_char(date_trunc('day', distribuido_em), 'YYYY-MM-DD') AS dia, COUNT(*)::int AS total
+        SELECT to_char((distribuido_em AT TIME ZONE 'America/Sao_Paulo')::date, 'YYYY-MM-DD') AS dia, COUNT(*)::int AS total
         FROM leads ${whereLeads}
         GROUP BY 1
         ORDER BY 1
@@ -3026,6 +3052,23 @@ app.get('/api/analytics', basicAuthAdminOuSdr, async (req, res) => {
       `, paramsLeads),
     ]);
 
+    // Contagem da SDR (carteira de reaquecimento do CRM SDR) por dia — separada dos leads gerais.
+    let sdrDia = [];
+    if (vistoPelaJuliane && !escopoCorretor) {
+      const DATA_SDR = `COALESCE(reaquecido_em, status_alterado_em, distribuido_em)`;
+      const pSdr = [];
+      let wSdr = `WHERE carteira_sdr = true`;
+      if (temPeriodo) {
+        pSdr.push(inicio, fim);
+        wSdr += ` AND ${DATA_SDR} >= $1::date AND ${DATA_SDR} < ($2::date + interval '1 day')`;
+      }
+      const sdrQ = await pool.query(`
+        SELECT to_char((${DATA_SDR} AT TIME ZONE 'America/Sao_Paulo')::date, 'YYYY-MM-DD') AS dia, COUNT(*)::int AS total
+        FROM leads ${wSdr}
+        GROUP BY 1 ORDER BY 1`, pSdr);
+      sdrDia = sdrQ.rows;
+    }
+
     const viasQ = await pool.query(`
       SELECT COALESCE(entrada_via, 'sem_marcacao') AS via, COUNT(*)::int AS total
       FROM leads ${whereLeads}
@@ -3043,6 +3086,7 @@ app.get('/api/analytics', basicAuthAdminOuSdr, async (req, res) => {
 
     res.json({
       ok: true,
+      sdr_por_dia: sdrDia,
       tipos: tiposQ.rows,
       funil: funilQ.rows[0],
       corretores: corretorQ.rows,
