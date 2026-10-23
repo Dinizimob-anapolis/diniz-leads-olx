@@ -3,7 +3,7 @@ const CRM_HTML = `<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CRM - SDR</title>
+<title>CRM - SDR REAQUECIMENTO</title>
 <style>
   :root {
     --bg: #f7f8fb;
@@ -408,7 +408,7 @@ const CRM_HTML = `<!DOCTYPE html>
 </head>
 <body>
 
-<h1>CRM - SDR</h1>
+<h1>CRM - SDR REAQUECIMENTO</h1>
 <div class="sub">Arraste o cartão entre as colunas pra mudar o status. Toque num cartão pra ver detalhes e notas.</div>
 
 <div id="alerta-atrasadas" class="alerta-atrasadas" style="display:none;"></div>
@@ -421,7 +421,7 @@ const CRM_HTML = `<!DOCTYPE html>
   <button class="add-contato-btn" id="btn-salvar-backup" style="background:#fff;color:#17a34a;border:1px solid #17a34a;box-shadow:none;">💾 Salvar backup</button>
   <button class="add-contato-btn" id="btn-baixar-csv" style="background:#fff;color:#3b6cf0;border:1px solid #3b6cf0;box-shadow:none;">⬇️ Baixar planilha</button>
   <button class="add-contato-btn" id="btn-crm-bruna" onclick="window.location.href='/meu-crm?corretor=Bruna%20SDR'" style="background:#f2941c;color:#fff;border:1px solid #f2941c;box-shadow:none;">👩‍💼 CRM Bruna SDR</button>
-  <button class="add-contato-btn" id="btn-analytics" onclick="window.location.href='/analytics?origem=sdr'" style="background:#fff;color:#7c5cff;border:1px solid #7c5cff;box-shadow:none;">📊 Analytics</button>
+  <button class="add-contato-btn" id="btn-analytics" onclick="window.location.href='/analytics?origem=sdr'" style="background:#fff;color:#7c5cff;border:1px solid #7c5cff;box-shadow:none;">📊 Análise</button>
   <button class="add-contato-btn" id="btn-adicionar">+ Adicionar contato</button>
 </div>
 
