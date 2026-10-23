@@ -468,7 +468,7 @@ const JULIANE_HTML = `<!DOCTYPE html>
   <button class="add-contato-btn" id="btn-atualizar" style="background:#fff;color:var(--accent);border:1px solid var(--accent);box-shadow:none;">↻ Atualizar</button>
   <button class="add-contato-btn" id="btn-salvar-backup" style="background:#fff;color:#17a34a;border:1px solid #17a34a;box-shadow:none;">💾 Salvar backup</button>
   <button class="add-contato-btn" id="btn-baixar-csv" style="background:#fff;color:#3b6cf0;border:1px solid #3b6cf0;box-shadow:none;">⬇️ Baixar planilha</button>
-  <button class="add-contato-btn" id="btn-analytics" onclick="window.location.href='/analytics?origem=juliane'" style="background:#fff;color:#7c5cff;border:1px solid #7c5cff;box-shadow:none;">📊 Analytics</button>
+  <button class="add-contato-btn" id="btn-analytics" onclick="window.location.href='/analytics?origem=juliane'" style="background:#fff;color:#7c5cff;border:1px solid #7c5cff;box-shadow:none;">📊 Análise</button>
   <button class="add-contato-btn" id="btn-novo-corretor" style="background:#fff;color:#12b76a;border:1px solid #12b76a;box-shadow:none;">👤 Adicionar corretor</button>
   <button class="add-contato-btn" id="btn-adicionar">+ Adicionar contato</button>
 </div>
@@ -669,7 +669,7 @@ async function carregar() {
 
 function trocarAba(aba) {
   ABA_CRM = aba;
-  document.getElementById('titulo-pagina').textContent = aba === 'sdr' ? 'CRM - SDR' : 'CRM - JULIANE';
+  document.getElementById('titulo-pagina').textContent = aba === 'sdr' ? 'CRM - SDR REAQUECIMENTO' : 'CRM - JULIANE';
   document.getElementById('subtitulo-pagina').textContent = aba === 'sdr'
     ? 'Você está vendo e editando a carteira da SDR.'
     : 'Mostra só quem chegou de 17/09 pra cá. Quem já tem corretor cai direto na coluna dele; sem corretor, só aparece se já foi repassado pela SDR.';
