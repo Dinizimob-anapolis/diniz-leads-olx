@@ -3540,7 +3540,15 @@ app.patch('/api/leads/:id', basicAuthAdminOuSdr, async (req, res) => {
 // ─── ROTA: DASHBOARD ──────────────────────────────────────────
 app.get('/dashboard', basicAuth, (req, res) => {
   res.set('Cache-Control', 'no-store');
-  res.send(DASHBOARD_HTML);
+  // Garantia: se a página abrir sem carregar os dados ("Ainda não atualizado"),
+  // carrega sozinha; e atualiza a cada 60s enquanto a aba estiver visível.
+  const garantia = '<script>(function(){' +
+    'function aindaVazio(){var el=document.getElementById("last-sync");return !el||/Ainda n/.test(el.textContent||"");}' +
+    'setTimeout(function(){try{if(typeof carregarDados==="function"&&aindaVazio())carregarDados();}catch(e){}},1200);' +
+    'setInterval(function(){try{if(!document.hidden&&typeof carregarDados==="function")carregarDados();}catch(e){}},60000);' +
+    '})();</script>';
+  const html = DASHBOARD_HTML.includes('</body>') ? DASHBOARD_HTML.replace('</body>', garantia + '</body>') : DASHBOARD_HTML + garantia;
+  res.send(html);
 });
 
 // ─── ROTAS: BACKUPS AUTOMÁTICOS ──────────────────────────────
