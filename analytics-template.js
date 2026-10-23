@@ -3,7 +3,7 @@ const ANALYTICS_HTML = `<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Analytics - Diniz Imóveis</title>
+<title>Análise - Diniz Imóveis</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <style>
   :root {
@@ -404,7 +404,7 @@ async function carregarDados(inicio, fim, silencioso) {
     if (!data.ok) throw new Error(data.erro || 'Erro desconhecido');
     renderizar(data);
   } catch (err) {
-    document.getElementById('conteudo').innerHTML = '<div class="vazio">Erro ao carregar analytics: ' + err.message + '</div>';
+    document.getElementById('conteudo').innerHTML = '<div class="vazio">Erro ao carregar a análise: ' + err.message + '</div>';
   }
 }
 
@@ -413,7 +413,7 @@ function formatarDataBR(iso) {
   return d + '/' + m + '/' + y;
 }
 
-var ORDEM_ETAPAS = ['Novo', 'Reaquecido', 'Aguardando retorno', 'Aguardando documentação', 'Aguardando aprovação', 'Aprovado', 'Visita', 'Em negociação', 'Venda', 'Sem retorno'];
+var ORDEM_ETAPAS = ['Sem corretor ainda', 'Novo', 'Reaquecido', 'Aguardando retorno', 'Aguardando documentação', 'Aguardando aprovação', 'Aprovado', 'Visita', 'Em negociação', 'Venda', 'Sem retorno'];
 var ULTIMOS_DADOS = null;
 var ORDEM_TABELA = { chave: 'total', dir: -1 };
 var AUTO_TIMER = null;
@@ -447,20 +447,18 @@ function renderizar(data) {
   var al = data.alertas || {};
   var total = f.total || 0;
   var rotAnt = data.periodo_anterior ? ('vs ' + formatarDataBR(data.periodo_anterior.inicio) + ' a ' + formatarDataBR(data.periodo_anterior.fim)) : '';
-  var taxaContato = pct(f.contatou, total), taxaContatoAnt = ant ? pct(ant.contatou, ant.total) : null;
   var conv = pct(f.venda, total), convAnt = ant ? pct(ant.venda, ant.total) : null;
 
   var h = '';
   // ── KPIs ──
   h += '<div class="kpis">' +
     kpiCard('Leads recebidos', fmtNum(total), rotAnt ? '' : '', CORES.accent, 'total', delta(total, ant && ant.total, false)) +
-    kpiCard('Contatados', fmtNum(f.contatou), Math.round(taxaContato) + '% dos leads', CORES.info, 'contatou', delta(taxaContato, taxaContatoAnt, false)) +
-    kpiCard('Tempo até 1º contato', fmtHoras(f.horas_media_resposta), 'média', CORES.accent2, null, delta(f.horas_media_resposta, ant && ant.horas_media_resposta, true)) +
     kpiCard('Visitas', fmtNum(f.visita), fmtPct(f.visita, total) + ' dos leads', CORES.accent2, 'visita', delta(f.visita, ant && ant.visita, false)) +
     kpiCard('Em negociação', fmtNum(f.em_negociacao), fmtPct(f.em_negociacao, total) + ' dos leads', CORES.warn, 'em_negociacao', delta(f.em_negociacao, ant && ant.em_negociacao, false)) +
     kpiCard('Vendas', fmtNum(f.venda), 'conversão ' + conv.toFixed(1).replace('.', ',') + '%', CORES.ok, 'venda', delta(f.venda, ant && ant.venda, false)) +
     kpiCard('Sem retorno', fmtNum(f.sem_retorno), fmtPct(f.sem_retorno, total) + ' dos leads', CORES.danger, 'sem_retorno', delta(f.sem_retorno, ant && ant.sem_retorno, true)) +
     '</div>';
+  h += '<div class="nota-comp">Contagem: todos os leads que entraram desde 17/09 (campanha, cadastro manual ou de corretor), com ou sem corretor definido, mais os anteriores que já tiveram movimentação.</div>';
   if (rotAnt) h += '<div class="nota-comp">Variação ' + esc(rotAnt) + '. Etapas (visita, negociação, venda) mostram onde o lead está agora.</div>';
 
   // ── Alertas ──
@@ -479,6 +477,7 @@ function renderizar(data) {
   h += '<div class="painel full"><h2>Leads por dia</h2><div class="chart-wrap"><canvas id="chart-tendencia"></canvas></div></div>';
   h += '<div class="painel"><h2>Horário em que os leads chegam</h2><div class="chart-wrap"><canvas id="chart-horas"></canvas></div></div>';
   h += '<div class="painel"><h2>Origem dos leads</h2><div class="chart-wrap"><canvas id="chart-origem"></canvas></div>' + tabelaOrigens(data.origens, total) + '</div>';
+  h += '<div class="painel full"><h2>Lead nosso × lead do corretor</h2>' + tabelaTipos(data.tipos, total) + '</div>';
   h += '<div class="painel full"><h2>Campanhas / imóveis que mais trazem lead</h2>' + tabelaCampanhas(data.campanhas, total) + '</div>';
   h += '<div class="painel full"><h2>Ranking dos corretores <span class="dica">clique no título da coluna para ordenar</span></h2><div id="tabela-corretores"></div></div>';
   h += '</div>';
@@ -504,7 +503,6 @@ function funilHtml(f) {
   var total = f.total || 0;
   var etapas = [
     ['Leads recebidos', f.total, CORES.accent],
-    ['Contatados', f.contatou, CORES.info],
     ['Aprovados', f.aprovado, CORES.accent2],
     ['Visitas', f.visita, CORES.accent2],
     ['Em negociação', f.em_negociacao, CORES.warn],
@@ -524,6 +522,17 @@ function funilHtml(f) {
   return out + '</div>';
 }
 
+function tabelaTipos(tipos, total) {
+  var mapa = { 'Imobiliária': { total: 0, visita: 0, venda: 0 }, 'Pessoal': { total: 0, visita: 0, venda: 0 } };
+  (tipos || []).forEach(function (x) { mapa[x.tipo] = x; });
+  var nomes = { 'Imobiliária': 'Lead nosso (imobiliária)', 'Pessoal': 'Lead do corretor (pessoal)' };
+  var l = ['Imobiliária', 'Pessoal'].map(function (k) {
+    var x = mapa[k];
+    return '<tr><td>' + nomes[k] + '</td><td class="num">' + fmtNum(x.total) + '</td><td class="num">' + fmtPct(x.total, total) + '</td><td class="num">' + fmtNum(x.visita) + '</td><td class="num">' + fmtNum(x.venda) + '</td></tr>';
+  }).join('');
+  return '<div class="tabela-wrap"><table><thead><tr><th>Tipo</th><th class="num">Leads</th><th class="num">% do total</th><th class="num">Visitas</th><th class="num">Vendas</th></tr></thead><tbody>' + l + '</tbody></table></div>';
+}
+
 function tabelaOrigens(origens, total) {
   if (!origens || !origens.length) return '';
   var l = origens.map(function (o) {
@@ -538,10 +547,10 @@ function tabelaCampanhas(camps, total) {
   var l = camps.map(function (c) {
     return '<tr><td class="camp-nome">' + esc(c.campanha) + '</td>' +
       '<td class="num"><span class="barra-mini" style="width:' + Math.round((c.total / max) * 90) + 'px"></span>' + fmtNum(c.total) + '</td>' +
-      '<td class="num">' + fmtPct(c.contatou, c.total) + '</td><td class="num">' + fmtNum(c.visita) + '</td><td class="num">' + fmtNum(c.venda) + '</td>' +
+      '<td class="num">' + fmtNum(c.visita) + '</td><td class="num">' + fmtNum(c.venda) + '</td>' +
       '<td class="num badge-pct">' + fmtPct(c.venda, c.total) + '</td></tr>';
   }).join('');
-  return '<div class="tabela-wrap"><table><thead><tr><th>Campanha / imóvel</th><th class="num">Leads</th><th class="num">Contatados</th><th class="num">Visitas</th><th class="num">Vendas</th><th class="num">Conversão</th></tr></thead><tbody>' + l + '</tbody></table></div>';
+  return '<div class="tabela-wrap"><table><thead><tr><th>Campanha / imóvel</th><th class="num">Leads</th><th class="num">Visitas</th><th class="num">Vendas</th><th class="num">Conversão</th></tr></thead><tbody>' + l + '</tbody></table></div>';
 }
 
 var DADOS_CORRETORES = [];
@@ -594,16 +603,14 @@ function renderTabelaCorretores() {
     var parados = c.parados || 0;
     return '<tr><td><b>' + esc(c.corretor) + '</b>' + (melhor === c.corretor && maxConv > 0 ? ' <span title="Maior conversão (mín. 5 leads)">🏆</span>' : '') + '</td>' +
       '<td class="num"><span class="barra-mini" style="width:' + Math.round((c.total / totalGeral) * 100) + 'px"></span>' + fmtNum(c.total) + '</td>' +
-      '<td class="num">' + fmtPct(c.contatou, c.total) + '</td>' +
       '<td class="num">' + (parados > 0 ? '<span class="tag-sit sit-vermelho">' + parados + '</span>' : '<span class="sub">0</span>') + '</td>' +
       '<td class="num">' + fmtNum(c.visita) + '</td><td class="num">' + fmtNum(c.em_negociacao) + '</td><td class="num">' + fmtNum(c.venda) + '</td>' +
-      '<td class="num badge-pct">' + conv.toFixed(1).replace('.', ',') + '%</td>' +
-      '<td class="num">' + fmtHoras(c.horas_media_resposta) + '</td></tr>';
+      '<td class="num badge-pct">' + conv.toFixed(1).replace('.', ',') + '%</td></tr>';
   }).join('');
   el.onclick = function (ev) { var t = ev.target.closest('[data-ord]'); if (t) ordenarTabela(t.getAttribute('data-ord')); };
   el.innerHTML = '<div class="tabela-wrap"><table><thead><tr>' +
-    th('corretor', 'Corretor', false) + th('total', 'Leads', true) + th('taxa_contato', 'Contatados', true) + th('parados', 'Parados +2d', true) +
-    th('visita', 'Visitas', true) + th('em_negociacao', 'Negociação', true) + th('venda', 'Vendas', true) + th('conversao', 'Conversão', true) + th('horas_media_resposta', '1º contato', true) +
+    th('corretor', 'Corretor', false) + th('total', 'Leads', true) + th('parados', 'Parados +2d', true) +
+    th('visita', 'Visitas', true) + th('em_negociacao', 'Negociação', true) + th('venda', 'Vendas', true) + th('conversao', 'Conversão', true) +
     '</tr></thead><tbody>' + linhas + '</tbody></table></div>';
 }
 
@@ -664,7 +671,7 @@ function desenharEtapas(etapas) {
   var mapa = {}; etapas.forEach(function (e) { mapa[e.etapa] = e.total; });
   var rotulos = ORDEM_ETAPAS.filter(function (e) { return mapa[e]; });
   Object.keys(mapa).forEach(function (e) { if (rotulos.indexOf(e) < 0) rotulos.push(e); });
-  var cores = { 'Novo': '#8a9099', 'Reaquecido': '#f2941c', 'Venda': CORES.ok, 'Sem retorno': CORES.danger, 'Em negociação': CORES.warn };
+  var cores = { 'Sem corretor ainda': '#5a6072', 'Novo': '#8a9099', 'Reaquecido': '#f2941c', 'Venda': CORES.ok, 'Sem retorno': CORES.danger, 'Em negociação': CORES.warn };
   CHARTS.etapas = new Chart(ctx, {
     type: 'bar',
     data: { labels: rotulos, datasets: [{ data: rotulos.map(function (e) { return mapa[e]; }), backgroundColor: rotulos.map(function (e) { return cores[e] || CORES.accent; }), borderRadius: 5, maxBarThickness: 22 }] },
