@@ -119,6 +119,27 @@ const COND_BOARD_JULIANE = `
   )
 `;
 
+// Critério do ANÁLISE na visão da Juliane (diferente do board dela): conta TODO lead que
+// entrou desde 17/09 — de campanha, cadastrado por ela/SDR ou por corretor, tenha ou não
+// corretor ainda — e, dos anteriores a 17/09, só os que já tinham movimentação (mesmas
+// regras do board).
+const COND_ANALISE_JULIANE = `
+  (
+    distribuido_em >= '2026-09-17'
+    OR (
+      (
+        carteira_juliane = true
+        OR (status_corretor_alterado_em IS NOT NULL AND corretor IS NOT NULL AND corretor <> '')
+        OR status = 'Repassado ao corretor'
+      )
+      AND (
+        COALESCE(status, '') NOT IN ('Sem retorno', 'Reaquecendo')
+        OR (status_corretor_alterado_em IS NOT NULL AND corretor IS NOT NULL AND corretor <> '')
+      )
+    )
+  )
+`;
+
 // Unifica variações do mesmo nome (com/sem acento, maiúscula/minúscula) —
 // ex: "Lais" e "Laís" contam como a mesma pessoa. Sempre devolve a grafia
 // oficial (a que está em CORRETORES/CORRETORES_EXTRA_DASHBOARD); nomes que
@@ -221,6 +242,7 @@ async function initDb() {
   await pool.query(`
     ALTER TABLE leads
       ADD COLUMN IF NOT EXISTS origem TEXT,
+      ADD COLUMN IF NOT EXISTS entrada_via TEXT,
       ADD COLUMN IF NOT EXISTS interesse TEXT,
       ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'Novo',
       ADD COLUMN IF NOT EXISTS ultimo_contato DATE,
@@ -635,8 +657,8 @@ async function importarLeadsEmLote(leads) {
 
     try {
       const result = await pool.query(
-        `INSERT INTO leads (whatsapp, nome, corretor, origem, imovel_desc, numero_invalido, whatsapp_bruto, distribuido_em)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        `INSERT INTO leads (whatsapp, nome, corretor, origem, imovel_desc, numero_invalido, whatsapp_bruto, distribuido_em, entrada_via)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'planilha')
          ON CONFLICT (whatsapp) DO UPDATE SET
            origem = COALESCE(leads.origem, EXCLUDED.origem),
            corretor = COALESCE(leads.corretor, EXCLUDED.corretor),
@@ -1104,7 +1126,7 @@ function parseDistribuicao(texto) {
 
 // origemPadrao: usada só se a mensagem em si não tiver a origem escrita (dados.origem).
 // Prioridade: origem escrita na própria mensagem > origem padrão do canal > pendente (null)
-async function salvarDistribuicao(dados, origemPadrao = null) {
+async function salvarDistribuicao(dados, origemPadrao = null, via = null) {
   const origem = dados.origem || origemPadrao || null;
   const numeroInvalido = !dados.whatsapp;
   const whatsappFinal = dados.whatsapp || gerarChaveSemNumero(dados.nome, dados.email);
@@ -1113,8 +1135,8 @@ async function salvarDistribuicao(dados, origemPadrao = null) {
   dados = { ...dados, corretor: normalizarNomeCorretor(dados.corretor) };
 
   await pool.query(
-    `INSERT INTO leads (whatsapp, nome, email, corretor, imovel_codigo, imovel_desc, origem, numero_invalido, whatsapp_bruto, interesse)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    `INSERT INTO leads (whatsapp, nome, email, corretor, imovel_codigo, imovel_desc, origem, numero_invalido, whatsapp_bruto, interesse, entrada_via)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
      ON CONFLICT (whatsapp) DO UPDATE SET
        nome = EXCLUDED.nome,
        email = EXCLUDED.email,
@@ -1123,6 +1145,7 @@ async function salvarDistribuicao(dados, origemPadrao = null) {
        imovel_desc = EXCLUDED.imovel_desc,
        origem = COALESCE(leads.origem, EXCLUDED.origem),
        interesse = COALESCE(EXCLUDED.interesse, leads.interesse),
+       entrada_via = COALESCE(leads.entrada_via, EXCLUDED.entrada_via),
        distribuido_em = now(),
        contatou = false,
        primeiro_contato_em = NULL,
@@ -1134,7 +1157,7 @@ async function salvarDistribuicao(dados, origemPadrao = null) {
          THEN COALESCE(leads.outros_corretores || ', ', '') || leads.corretor
          ELSE leads.outros_corretores
        END`,
-    [whatsappFinal, dados.nome, dados.email, dados.corretor, dados.imovelCodigo, dados.imovelDesc, origem, numeroInvalido, whatsappBruto, interesse]
+    [whatsappFinal, dados.nome, dados.email, dados.corretor, dados.imovelCodigo, dados.imovelDesc, origem, numeroInvalido, whatsappBruto, interesse, via]
   );
   console.log(`Lead distribuído salvo: ${dados.nome} → ${dados.corretor} (${whatsappFinal}) [origem: ${origem || 'pendente'}]${numeroInvalido ? ' [SEM NÚMERO VÁLIDO]' : ''}`);
 }
@@ -1148,8 +1171,8 @@ async function registrarLeadAutomatico(whatsapp, nome, mensagem, origemPadrao) {
   if (existente.rows.length > 0) return false; // já está na base, não sobrescreve
 
   await pool.query(
-    `INSERT INTO leads (whatsapp, nome, corretor, origem, interesse)
-     VALUES ($1, $2, NULL, $3, $4)
+    `INSERT INTO leads (whatsapp, nome, corretor, origem, interesse, entrada_via)
+     VALUES ($1, $2, NULL, $3, $4, 'whatsapp')
      ON CONFLICT (whatsapp) DO NOTHING`,
     [whatsapp, nome || 'Sem nome', origemPadrao, mensagem || null]
   );
@@ -1274,7 +1297,7 @@ app.post('/lead-canalpro', async (req, res) => {
         corretor: corretor.nome,
         imovelCodigo: codigoImovel,
         imovelDesc: '',
-      }, 'OLX/Canal Pro');
+      }, 'OLX/Canal Pro', 'olx');
     }
 
     console.log(`Lead enviado para ${corretor.nome} (${corretor.fone})`);
@@ -1467,7 +1490,7 @@ async function processarLeadMeta(leadgenId, simulado = null) {
   await salvarDistribuicao({
     nome, email, whatsapp, whatsappBruto: telefoneBruto,
     corretor: corretor.nome, imovelCodigo, imovelDesc,
-  }, 'Meta Ads');
+  }, 'Meta Ads', 'campanha');
 
   console.log(`[Meta] Lead ${nome} (${whatsapp || telefoneBruto}) → ${corretor.nome} [${imovelCodigo || 'sem código'}]`);
   return corretor.nome;
@@ -1742,7 +1765,7 @@ app.post('/webhook-mensagens', async (req, res) => {
           // tiver nenhuma evidência, fica sem origem — não força mais 'Patrocinado' aqui.
           // Avisa a Juliane (NUMERO_SUPERVISAO = número pessoal dela, diferente do
           // WhatsApp conectado na instância, então não gera eco) pra quem o lead foi.
-          await salvarDistribuicao(distribuicao, null);
+          await salvarDistribuicao(distribuicao, null, 'manual');
           console.log(`Distribuição registrada: ${distribuicao.nome} → ${distribuicao.corretor}`);
           if (NUMERO_SUPERVISAO) {
             try {
@@ -1803,7 +1826,7 @@ app.post('/webhook-mensagens-tiktok', async (req, res) => {
           // deixe origem = null aqui e ajuste depois pelo dashboard.
           // Sem espelho pro número de supervisão — Bruno só quer aviso de
           // leads distribuídos da OLX/Canal Pro por lá, não do TikTok.
-          await salvarDistribuicao(distribuicao, 'TikTok');
+          await salvarDistribuicao(distribuicao, 'TikTok', 'whatsapp');
           console.log(`[TikTok] Distribuição registrada (sem espelho): ${distribuicao.nome} → ${distribuicao.corretor}`);
         }
       }
@@ -2433,8 +2456,8 @@ app.post('/api/leads', basicAuth, async (req, res) => {
 
   try {
     const result = await pool.query(
-      `INSERT INTO leads (whatsapp, nome, corretor, imovel_desc, origem, numero_invalido, whatsapp_bruto)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO leads (whatsapp, nome, corretor, imovel_desc, origem, numero_invalido, whatsapp_bruto, entrada_via)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'manual')
        RETURNING id`,
       [whatsappNormalizado, nome, corretor, imovelDesc || null, origem || null, numeroInvalido, numeroInvalido ? whatsapp : null]
     );
@@ -2515,8 +2538,8 @@ app.post('/api/leads/conferir', basicAuthAdminOuSdr, async (req, res) => {
         return res.json({ ok: true, encontrado: true, criado: false, lead: atualizado.rows[0] });
       }
       const result = await pool.query(
-        `INSERT INTO leads (whatsapp, nome, corretor, status, status_corretor, status_corretor_alterado_em, distribuido_em, tipo_lead, origem)
-         VALUES ($1, $2, $3, 'Novo', 'Novo', now(), now(), $4, $5)
+        `INSERT INTO leads (whatsapp, nome, corretor, status, status_corretor, status_corretor_alterado_em, distribuido_em, tipo_lead, origem, entrada_via)
+         VALUES ($1, $2, $3, 'Novo', 'Novo', now(), now(), $4, $5, 'corretor')
          RETURNING *`,
         [whatsappValido, nome.trim(), nomeCorretorAlvo, tipoLeadEscolhido, origemEscolhida]
       );
@@ -2560,8 +2583,8 @@ app.post('/api/leads/conferir', basicAuthAdminOuSdr, async (req, res) => {
       return res.json({ ok: true, encontrado: true, criado: false, lead: atualizado.rows[0] });
     }
     const result = await pool.query(
-      `INSERT INTO leads (whatsapp, nome, origem, status, ${colunaCarteira}, status_alterado_em)
-       VALUES ($1, $2, $3, 'Novo', true, now())
+      `INSERT INTO leads (whatsapp, nome, origem, status, ${colunaCarteira}, status_alterado_em, entrada_via)
+       VALUES ($1, $2, $3, 'Novo', true, now(), '${comoJuliane ? 'manual' : 'sdr'}')
        RETURNING *`,
       [whatsappValido, nome.trim(), origemNovo]
     );
@@ -2838,8 +2861,7 @@ app.get('/api/analytics', basicAuthAdminOuSdr, async (req, res) => {
         condLeads.push(`corretor = $${paramsLeads.length}`);
         condLeads.push(`(status_corretor_alterado_em IS NOT NULL OR carteira_sdr IS NOT TRUE)`);
       } else if (vistoPelaJuliane) {
-        condLeads.push(`(${COND_BOARD_JULIANE})`);
-        condLeads.push(`corretor IS NOT NULL AND corretor <> ''`);
+        condLeads.push(`(${COND_ANALISE_JULIANE})`);
       } else {
         condLeads.push(`(carteira_sdr = true OR status = 'Repassado ao corretor')`);
       }
@@ -2972,9 +2994,9 @@ app.get('/api/analytics', basicAuthAdminOuSdr, async (req, res) => {
       whereAnt !== null ? pool.query(SQL_FUNIL + whereAnt, paramsAnt) : Promise.resolve({ rows: [null] }),
 
       pool.query(`
-        SELECT COALESCE(NULLIF(status_corretor, ''), 'Novo') AS etapa, COUNT(*)::int AS total
+        SELECT CASE WHEN corretor IS NULL OR corretor = '' THEN 'Sem corretor ainda'
+                    ELSE COALESCE(NULLIF(status_corretor, ''), 'Novo') END AS etapa, COUNT(*)::int AS total
         FROM leads ${whereLeads}
-        ${whereLeads ? 'AND' : 'WHERE'} corretor IS NOT NULL AND corretor <> ''
         GROUP BY 1
       `, paramsLeads),
 
@@ -3004,8 +3026,24 @@ app.get('/api/analytics', basicAuthAdminOuSdr, async (req, res) => {
       `, paramsLeads),
     ]);
 
+    const viasQ = await pool.query(`
+      SELECT COALESCE(entrada_via, 'sem_marcacao') AS via, COUNT(*)::int AS total
+      FROM leads ${whereLeads}
+      GROUP BY 1 ORDER BY total DESC
+    `, paramsLeads);
+
+    const tiposQ = await pool.query(`
+      SELECT CASE WHEN tipo_lead = 'Pessoal' THEN 'Pessoal' ELSE 'Imobiliária' END AS tipo,
+             COUNT(*)::int AS total,
+             COUNT(*) FILTER (WHERE ${COND_VISITA})::int AS visita,
+             COUNT(*) FILTER (WHERE ${COND_VENDA})::int AS venda
+      FROM leads ${whereLeads}
+      GROUP BY 1 ORDER BY 1
+    `, paramsLeads);
+
     res.json({
       ok: true,
+      tipos: tiposQ.rows,
       funil: funilQ.rows[0],
       corretores: corretorQ.rows,
       origens: origemQ.rows,
@@ -4577,7 +4615,7 @@ app.get('/analytics', basicAuthAdminOuSdr, (req, res) => {
   if (req.authTipo === 'corretor') {
     const html = ANALYTICS_HTML
       .split('{{REPASSADOS_DISPLAY}}').join('none')
-      .split('{{TITULO}}').join('📊 Analytics ' + req.corretorNome)
+      .split('{{TITULO}}').join('📊 Análise ' + req.corretorNome)
       .split('{{SUBTITULO}}').join('Seus resultados e desempenho')
       .split('{{VOLTAR_HREF}}').join('/meu-crm')
       .split('{{VOLTAR_TEXTO}}').join('← Voltar pro meu CRM');
@@ -4588,14 +4626,14 @@ app.get('/analytics', basicAuthAdminOuSdr, (req, res) => {
     const voltarHref = '/meu-crm?corretor=' + encodeURIComponent(corretorDaQuery);
     const html = ANALYTICS_HTML
       .split('{{REPASSADOS_DISPLAY}}').join('none')
-      .split('{{TITULO}}').join('📊 Analytics ' + corretorDaQuery)
+      .split('{{TITULO}}').join('📊 Análise ' + corretorDaQuery)
       .split('{{SUBTITULO}}').join('Resultados e desempenho desse corretor')
       .split('{{VOLTAR_HREF}}').join(voltarHref)
       .split('{{VOLTAR_TEXTO}}').join('← Voltar pro CRM de ' + corretorDaQuery);
     return res.send(html);
   }
 
-  // Veio do botão "Analytics" do CRM da Juliane — não confia no tipo de
+  // Veio do botão "Análise" do CRM da Juliane — não confia no tipo de
   // login (authTipo), porque ela pode estar entrando com a senha de admin
   // em vez da própria (JULIANE_CRM_PASS pode nem estar configurada). O
   // botão do crm-juliane manda ?origem=juliane na própria URL, então isso
@@ -4603,7 +4641,7 @@ app.get('/analytics', basicAuthAdminOuSdr, (req, res) => {
   if (req.query.origem === 'juliane') {
     const html = ANALYTICS_HTML
       .split('{{REPASSADOS_DISPLAY}}').join('inline-block')
-      .split('{{TITULO}}').join('📊 Analytics')
+      .split('{{TITULO}}').join('📊 Análise')
       .split('{{SUBTITULO}}').join('Resultados e desempenho de todos os leads, corretores e canais')
       .split('{{VOLTAR_HREF}}').join('/crm-juliane')
       .split('{{VOLTAR_TEXTO}}').join('← Voltar pro CRM da Juliane');
@@ -4612,7 +4650,7 @@ app.get('/analytics', basicAuthAdminOuSdr, (req, res) => {
 
   const html = ANALYTICS_HTML
       .split('{{REPASSADOS_DISPLAY}}').join('inline-block')
-    .split('{{TITULO}}').join('📊 Analytics')
+    .split('{{TITULO}}').join('📊 Análise')
     .split('{{SUBTITULO}}').join('Resultados e desempenho de todos os leads, corretores e canais')
     .split('{{VOLTAR_HREF}}').join('/crm')
     .split('{{VOLTAR_TEXTO}}').join('← Voltar pro CRM');
