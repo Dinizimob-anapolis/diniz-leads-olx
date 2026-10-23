@@ -2122,6 +2122,46 @@ app.get('/api/admin/distribuicao', basicAuthAdminOuSdr, semCorretor, async (req,
 });
 
 // ─── ROTA ADMIN: AUDITORIA DE UMA CAMPANHA ─────────────────────
+// /api/admin/leads-sdr-manuais?inicio=2026-10-22&fim=2026-10-22 — só os cards novos inseridos à mão no CRM - SDR REAQUECIMENTO
+app.get('/api/admin/leads-sdr-manuais', basicAuthAdminOuSdr, semCorretor, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  try {
+    const esc = t => String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+    const re = /^\d{4}-\d{2}-\d{2}$/;
+    const inicio = re.test(req.query.inicio || '') ? req.query.inicio : '2026-10-22';
+    const fim = re.test(req.query.fim || '') ? req.query.fim : inicio;
+    // Card novo inserido à mão na SDR: na carteira dela, com data de chegada no período
+    // e sem via de campanha/OLX/corretor (cards antigos não têm via; os novos têm 'sdr').
+    const r = await pool.query(`
+      SELECT nome, whatsapp, status, origem,
+             to_char(distribuido_em AT TIME ZONE 'America/Sao_Paulo','DD/MM/YYYY HH24:MI') AS chegou,
+             to_char((distribuido_em AT TIME ZONE 'America/Sao_Paulo')::date,'DD/MM/YYYY') AS dia
+      FROM leads
+      WHERE carteira_sdr = true AND (entrada_via IS NULL OR entrada_via = 'sdr')
+        AND (distribuido_em AT TIME ZONE 'America/Sao_Paulo')::date BETWEEN $1::date AND $2::date
+      ORDER BY distribuido_em ASC`, [inicio, fim]);
+    if (req.query.csv === '1') {
+      const cel = v => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+      const csv = '﻿Nº;Nome;WhatsApp;Chegou;Status;Origem\n' +
+        r.rows.map((z, i) => [i + 1, cel(z.nome), cel(z.whatsapp), cel(z.chegou), cel(z.status), cel(z.origem)].join(';')).join('\n');
+      res.set('Content-Type', 'text/csv; charset=utf-8');
+      res.set('Content-Disposition', 'attachment; filename="sdr-reaquecimento-manuais-' + inicio + '_' + fim + '.csv"');
+      return res.send(csv);
+    }
+    const porDia = {};
+    r.rows.forEach(z => { porDia[z.dia] = (porDia[z.dia] || 0) + 1; });
+    const resumo = Object.keys(porDia).map(d => '<li>' + esc(d) + ': <b>' + porDia[d] + '</b></li>').join('');
+    const linhas = r.rows.map((z, i) => '<tr><td>' + (i + 1) + '</td><td>' + esc(z.nome) + '</td><td>' + esc(z.whatsapp) + '</td><td>' + esc(z.chegou) + '</td><td>' + esc(z.status || '—') + '</td><td>' + esc(z.origem || '—') + '</td></tr>').join('');
+    const q = 'inicio=' + inicio + '&fim=' + fim;
+    res.send('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SDR Reaquecimento — inseridos à mão</title>' +
+      '<style>body{font-family:system-ui;margin:16px;color:#1f2430}table{border-collapse:collapse;font-size:13px;width:100%}td,th{border-bottom:1px solid #e6e8ef;padding:5px 8px;text-align:left}input,button{padding:6px 10px;font-size:14px}a.btn{background:#f2941c;color:#fff;padding:7px 12px;border-radius:6px;text-decoration:none;font-weight:700}</style>' +
+      '<h1>CRM - SDR REAQUECIMENTO — cards inseridos à mão</h1>' +
+      '<form method="get"><label>De <input type="date" name="inicio" value="' + inicio + '"></label> <label>até <input type="date" name="fim" value="' + fim + '"></label> <button>Filtrar</button> <a class="btn" href="?' + q + '&csv=1">Baixar planilha</a></form>' +
+      '<h2>Total no período: ' + r.rows.length + '</h2><ul>' + resumo + '</ul>' +
+      '<table><tr><th>#</th><th>Nome</th><th>WhatsApp</th><th>Chegou</th><th>Status</th><th>Origem</th></tr>' + linhas + '</table>');
+  } catch (err) { res.status(500).send('Erro: ' + err.message); }
+});
+
 // /api/admin/diagnostico-sdr?dia=2026-10-22 — conta os cards da SDR do dia de cada jeito possível
 app.get('/api/admin/diagnostico-sdr', basicAuthAdminOuSdr, semCorretor, async (req, res) => {
   res.set('Cache-Control', 'no-store');
