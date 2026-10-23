@@ -2142,14 +2142,23 @@ app.get('/api/admin/diagnostico-sdr', basicAuthAdminOuSdr, semCorretor, async (r
       FROM leads`, [dia]);
     const x = r.rows[0];
     const l = await pool.query(`
-      SELECT nome, corretor, origem, status, entrada_via,
+      SELECT nome, whatsapp, corretor, origem, status, entrada_via,
         to_char(distribuido_em AT TIME ZONE 'America/Sao_Paulo','DD/MM HH24:MI') AS chegou,
         to_char(reaquecido_em AT TIME ZONE 'America/Sao_Paulo','DD/MM HH24:MI') AS reaq,
         to_char(status_alterado_em AT TIME ZONE 'America/Sao_Paulo','DD/MM HH24:MI') AS alt
       FROM leads
       WHERE carteira_sdr = true AND (${sp('distribuido_em')} OR ${sp('reaquecido_em')} OR ${sp('status_alterado_em')})
       ORDER BY distribuido_em ASC`, [dia]);
-    const linhas = l.rows.map(z => '<tr><td>' + esc(z.nome) + '</td><td>' + esc(z.chegou) + '</td><td>' + esc(z.reaq || '—') + '</td><td>' + esc(z.alt || '—') + '</td><td>' + esc(z.status || '—') + '</td><td>' + esc(z.origem || '—') + '</td><td>' + esc(z.entrada_via || '—') + '</td></tr>').join('');
+    if (req.query.csv === '1') {
+      const cel = v => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+      const novos = l.rows.filter(z => String(z.chegou).startsWith(dia.slice(8, 10) + '/' + dia.slice(5, 7)));
+      const csv = '\uFEFFNº;Nome;WhatsApp;Chegou;Status;Origem;Última alteração\n' +
+        novos.map((z, i) => [i + 1, cel(z.nome), cel(z.whatsapp), cel(z.chegou), cel(z.status), cel(z.origem), cel(z.alt)].join(';')).join('\n');
+      res.set('Content-Type', 'text/csv; charset=utf-8');
+      res.set('Content-Disposition', 'attachment; filename="cards-novos-sdr-' + dia + '.csv"');
+      return res.send(csv);
+    }
+    const linhas = l.rows.map(z => '<tr><td>' + esc(z.nome) + '</td><td>' + esc(z.whatsapp) + '</td><td>' + esc(z.chegou) + '</td><td>' + esc(z.reaq || '—') + '</td><td>' + esc(z.alt || '—') + '</td><td>' + esc(z.status || '—') + '</td><td>' + esc(z.origem || '—') + '</td><td>' + esc(z.entrada_via || '—') + '</td></tr>').join('');
     res.send('<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Diagnóstico SDR</title>' +
       '<style>body{font-family:system-ui;margin:16px;color:#1f2430}table{border-collapse:collapse;font-size:13px;width:100%}td,th{border-bottom:1px solid #e6e8ef;padding:5px 8px;text-align:left}</style>' +
       '<h1>Diagnóstico da SDR — ' + esc(dia.split('-').reverse().join('/')) + '</h1><table style="max-width:640px">' +
@@ -2161,7 +2170,7 @@ app.get('/api/admin/diagnostico-sdr', basicAuthAdminOuSdr, semCorretor, async (r
       '<tr><td>Todos os leads que chegaram nesse dia</td><td><b>' + x.chegaram_no_dia_todos + '</b></td></tr>' +
       '<tr><td>…dos quais fora da carteira da SDR</td><td><b>' + x.chegaram_fora_da_sdr + '</b></td></tr>' +
       '<tr><td>Repassados ao corretor nesse dia</td><td><b>' + x.repassados_no_dia + '</b></td></tr></table>' +
-      '<h2>Cards da SDR mexidos nesse dia (' + l.rows.length + ')</h2><table><tr><th>Nome</th><th>Chegou</th><th>Reaquecido</th><th>Última alteração</th><th>Status</th><th>Origem</th><th>Via</th></tr>' + linhas + '</table>');
+      '<h2>Cards da SDR mexidos nesse dia (' + l.rows.length + ')</h2><table><tr><th>Nome</th><th>WhatsApp</th><th>Chegou</th><th>Reaquecido</th><th>Última alteração</th><th>Status</th><th>Origem</th><th>Via</th></tr>' + linhas + '</table>');
   } catch (err) { res.status(500).send('Erro: ' + err.message); }
 });
 
@@ -3102,7 +3111,9 @@ app.get('/api/analytics', basicAuthAdminOuSdr, async (req, res) => {
       // Não usa reaquecido_em/status_alterado_em: esses mudam a cada vez que ela mexe num card antigo.
       const DATA_SDR = `distribuido_em`;
       const pSdr = [];
-      let wSdr = `WHERE carteira_sdr = true`;
+      // Só conta card NOVO inserido à mão na SDR. Lead que já existia no sistema (campanha, OLX, outro corretor…)
+      // só entra na carteira por UPDATE e não ganha data nova; o filtro de via evita contar reentradas.
+      let wSdr = `WHERE carteira_sdr = true AND (entrada_via IS NULL OR entrada_via = 'sdr')`;
       if (temPeriodo) {
         pSdr.push(inicio, fim);
         wSdr += ` AND ${DATA_SDR} >= $1::date AND ${DATA_SDR} < ($2::date + interval '1 day')`;
