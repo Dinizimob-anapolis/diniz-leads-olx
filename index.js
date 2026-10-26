@@ -4824,7 +4824,13 @@ app.get('/meu-crm', basicAuthAdminOuSdr, (req, res) => {
     return res.status(403).send('Essa página é só pra login de corretor (ou admin/Juliane passando ?corretor=Nome).');
   }
   const nomeMaiusculo = nomeCorretor.toUpperCase();
-  res.send(CORRETOR_HTML.split('{{NOME_CORRETOR}}').join(nomeMaiusculo));
+  let htmlCorretor = CORRETOR_HTML.split('{{NOME_CORRETOR}}').join(nomeMaiusculo);
+  // CRM Bruna SDR: botão laranja de volta pro CRM - SDR REAQUECIMENTO (só nessa página).
+  if (String(nomeCorretor).trim().toLowerCase() === 'bruna sdr') {
+    const scriptVoltar = '<script>(function(){function p(){var t=document.querySelector(".toolbar");if(!t||document.getElementById("btn-voltar-reaquecimento"))return;var b=document.createElement("button");b.id="btn-voltar-reaquecimento";b.className="add-contato-btn";b.type="button";b.textContent="\u2B05 CRM - SDR REAQUECIMENTO";b.style.cssText="background:#f2941c;color:#fff;border:1px solid #f2941c;box-shadow:0 2px 6px rgba(242,148,28,0.35)";b.onclick=function(){window.location.href="/crm"};t.insertBefore(b,t.firstChild)}if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",p);else p()})();</script>';
+    htmlCorretor = htmlCorretor.includes('</body>') ? htmlCorretor.replace('</body>', scriptVoltar + '</body>') : htmlCorretor + scriptVoltar;
+  }
+  res.send(htmlCorretor);
 });
 
 // ─── ROTA DE TESTE ───────────────────────────────────────────
