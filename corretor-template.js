@@ -443,6 +443,17 @@ const CORRETOR_HTML = `<!DOCTYPE html>
 <script>
 let TODOS_LEADS = [];
 
+// CRM da Bruna SDR: ela pode transferir o lead (depois do atendimento inicial) pra outro corretor.
+const CORRETORES_DESTINO = ['Junior', 'Laís', 'Patricia', 'Michelle', 'Renata', 'Cyda', 'Lucas', 'Rubens'];
+function ehCrmDaSdr() {
+  const h = document.querySelector('h1');
+  return !!h && h.textContent.toUpperCase().indexOf('BRUNA SDR') !== -1;
+}
+// No CRM da Bruna, lead que ela já transferiu fica só pra acompanhar (somente leitura).
+function somenteLeitura(lead) {
+  return ehCrmDaSdr() && !!lead.transferido_por && String(lead.corretor || '').trim().toLowerCase() !== 'bruna sdr';
+}
+
 // Opções de canal/origem pra quando o corretor adiciona um contato.
 const ORIGENS = ['OLX/Canal Pro', 'Facebook', 'Patrocinado', 'TikTok', 'Instagram', 'Comentário', 'Indicação', 'Outro'];
 let BUSCA = '';
@@ -550,7 +561,7 @@ function atualizarAlertaAtrasadas() {
   const el = document.getElementById('alerta-atrasadas');
   if (!el) return;
   const agora = new Date();
-  const atrasadas = TODOS_LEADS.filter(l => l.tarefa_data && new Date(l.tarefa_data) <= agora).length;
+  const atrasadas = TODOS_LEADS.filter(l => !somenteLeitura(l) && l.tarefa_data && new Date(l.tarefa_data) <= agora).length;
   if (atrasadas > 0) {
     el.style.display = 'block';
     el.textContent = \`⏰ Você tem \${atrasadas} tarefa\${atrasadas > 1 ? 's' : ''} atrasada\${atrasadas > 1 ? 's' : ''}!\`;
@@ -604,14 +615,17 @@ function exportarCSV() {
 
 function render() {
   const leads = leadsFiltrados();
-  const reaquecerCount = TODOS_LEADS.filter(l => statusDoLead(l) === 'Reaquecido').length;
+  const MEUS = TODOS_LEADS.filter(l => !somenteLeitura(l));
+  const acompanhando = TODOS_LEADS.length - MEUS.length;
+  const reaquecerCount = MEUS.filter(l => statusDoLead(l) === 'Reaquecido').length;
 
-  const vgvTotal = TODOS_LEADS.reduce((soma, lead) => soma + parseValorImovel(lead.valor_imovel_sdr), 0);
+  const vgvTotal = MEUS.reduce((soma, lead) => soma + parseValorImovel(lead.valor_imovel_sdr), 0);
 
   atualizarAlertaAtrasadas();
 
   document.getElementById('stats').innerHTML = \`
-    <div class="stat"><span class="num">\${TODOS_LEADS.length}</span>na carteira</div>
+    <div class="stat"><span class="num">\${MEUS.length}</span>na carteira</div>
+    \${acompanhando > 0 ? \`<div class="stat" style="color:#1a56db"><span class="num">\${acompanhando}</span>transferidos (só acompanhar)</div>\` : ''}
     <div class="stat" style="color:#b5720a"><span class="num">\${reaquecerCount}</span>pra reaquecer</div>
     \${vgvTotal > 0 ? \`<div class="stat" style="color:#17a34a"><span class="num">\${formatarReais(vgvTotal)}</span>VGV total</div>\` : ''}
   \`;
@@ -654,6 +668,8 @@ function render() {
 
   board.querySelectorAll('.lead').forEach(el => {
     el.addEventListener('dragstart', e => {
+      const ld = TODOS_LEADS.find(l => String(l.id) === String(el.dataset.id));
+      if (ld && somenteLeitura(ld)) { e.preventDefault(); return; }
       LEAD_ARRASTADO = el.dataset.id;
       el.classList.add('dragging');
       e.dataTransfer.effectAllowed = 'move';
@@ -733,13 +749,14 @@ function cardHtml(lead, corBorda) {
   const classeDestaque = \`\${tarefaAtrasada ? 'atrasado' : ''} \${lead.cliente_ouro ? 'cliente-ouro' : ''}\`.trim();
   const botaoOuro = \`<button class="btn-ouro modal-versao \${lead.cliente_ouro ? 'ativo' : ''}" onclick="event.stopPropagation();alternarClienteOuro('\${lead.id}', \${!lead.cliente_ouro})" title="\${lead.cliente_ouro ? 'Cliente Ouro — clique pra desmarcar' : 'Marcar como Cliente Ouro'}">⭐</button>\`;
   return \`
-    <div class="lead \${classeDestaque}" draggable="true" data-id="\${lead.id}" style="\${classeDestaque.includes('atrasado') ? '' : \`border-left-color:\${corBorda}\`}">
+    <div class="lead \${classeDestaque}" draggable="\${somenteLeitura(lead) ? 'false' : 'true'}" data-id="\${lead.id}" style="\${classeDestaque.includes('atrasado') ? '' : \`border-left-color:\${corBorda}\`}">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:6px;">
         <div class="lead-nome">\${lead.nome || 'Sem nome'}\${botaoOuro}</div>
         \${lead.valor_imovel_sdr ? \`<span style="font-size:10px;font-weight:700;color:#17a34a;white-space:nowrap;">💰 \${lead.valor_imovel_sdr}</span>\` : ''}
       </div>
       <div class="lead-meta">\${lead.whatsapp || 'sem WhatsApp'}</div>
       \${dataEtapa ? \`<div class="lead-meta">Nessa etapa desde \${dataEtapa}</div>\` : ''}
+      \${somenteLeitura(lead) ? \`<span class="badge" style="background:#e8f0fe;color:#1a56db;border:1px solid #c3d7fb;">➡ Transferido para \${lead.corretor}</span>\` : ''}
       \${lead.origem ? \`<span class="badge origem">\${lead.origem}</span>\` : ''}
       \${lead.veio_sdr ? \`<span class="badge" style="background:#fff1e0;color:#c2700a;border:1px solid #f2941c;" title="Reaquecido pela SDR e repassado ao corretor">🔁 SDR</span>\` : ''}
       \${badgeImovel(lead)}
@@ -757,6 +774,29 @@ function abrirModalLead(id) {
   if (!lead) return;
   const data = lead.distribuido_em ? new Date(lead.distribuido_em).toLocaleDateString('pt-BR') : '—';
   const waLink = lead.whatsapp ? \`https://wa.me/\${lead.whatsapp}\` : null;
+
+  if (somenteLeitura(lead)) {
+    document.getElementById('modal').innerHTML = \`
+      <h2>\${lead.nome || 'Sem nome'}</h2>
+      <div class="lead-meta">\${lead.whatsapp || 'sem WhatsApp'} · chegou em \${data}</div>
+      <div class="aviso-modal ok" style="margin-top:10px;">➡ Transferido para <b>\${lead.corretor}</b>\${lead.transferido_em ? ' em ' + formatarData(lead.transferido_em) : ''}. Você só acompanha — quem altera agora é o corretor.</div>
+      \${lead.origem ? \`<span class="badge origem">\${lead.origem}</span>\` : ''}
+      \${badgeImovel(lead)}
+      <label>Etapa atual com o corretor</label>
+      <div style="font-weight:700;">\${statusDoLead(lead)}</div>
+      \${lead.status_corretor_alterado_em ? \`<div class="lead-meta" style="margin-top:4px;">Nessa etapa desde \${formatarData(lead.status_corretor_alterado_em)}</div>\` : ''}
+      \${lead.tarefa_sdr ? \`<label>Tarefa do corretor</label><div>\${lead.tarefa_sdr}</div>\` : ''}
+      \${lead.notas_sdr ? \`<label>Notas</label><div style="white-space:pre-wrap;font-size:13px;">\${lead.notas_sdr}</div>\` : ''}
+      \${lead.buscando_sdr ? \`<label>O que está buscando</label><div style="white-space:pre-wrap;font-size:13px;">\${lead.buscando_sdr}</div>\` : ''}
+      <div class="modal-actions">
+        <button class="close-btn" id="modal-fechar">Fechar</button>
+        \${waLink ? \`<a class="wa-btn" href="\${waLink}" target="_blank">WhatsApp ↗</a>\` : ''}
+      </div>
+    \`;
+    document.getElementById('overlay').classList.add('show');
+    document.getElementById('modal-fechar').addEventListener('click', fecharModal);
+    return;
+  }
 
   document.getElementById('modal').innerHTML = \`
     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
@@ -778,6 +818,14 @@ function abrirModalLead(id) {
       \${COLUNAS.map(c => \`<option value="\${c}" \${statusDoLead(lead) === c ? 'selected' : ''}>\${c}</option>\`).join('')}
     </select>
     \${lead.status_corretor_alterado_em ? \`<div class="lead-meta" style="margin-top:4px;">Nessa etapa desde \${formatarData(lead.status_corretor_alterado_em)}</div>\` : ''}
+
+    \${ehCrmDaSdr() ? \`
+      <label>Transferir para corretor (atendimento inicial feito)</label>
+      <div style="display:flex;gap:6px;">
+        <select id="modal-transferir"><option value="">Escolha o corretor…</option>\${CORRETORES_DESTINO.map(c => \`<option value="\${c}">\${c}</option>\`).join('')}</select>
+        <button type="button" class="primary-btn" id="modal-transferir-btn" style="background:#f2941c;white-space:nowrap;">➡ Transferir</button>
+      </div>
+    \` : ''}
 
     <label>Tarefa</label>
     <input type="text" id="modal-tarefa" placeholder="Próximo passo, ex: ligar amanhã 14h" value="\${lead.tarefa_sdr || ''}">
@@ -829,6 +877,28 @@ function abrirModalLead(id) {
       salvarCampo(id, 'status_corretor', novoStatus, () => { render(); abrirModalLead(id); });
     });
   });
+  const btnTransferir = document.getElementById('modal-transferir-btn');
+  if (btnTransferir) {
+    btnTransferir.addEventListener('click', () => {
+      const para = document.getElementById('modal-transferir').value;
+      if (!para) { alert('Escolha pra qual corretor vai o lead.'); return; }
+      if (!confirm('Transferir "' + (lead.nome || 'esse lead') + '" para ' + para + '? Ele continua aparecendo pra você só pra acompanhar (sem editar) e o corretor é avisado no WhatsApp.')) return;
+      btnTransferir.disabled = true;
+      btnTransferir.textContent = 'Transferindo...';
+      salvarBlocoTexto(id, lead, () => {
+        fetch('/api/leads/' + id + '/transferir', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ para }) })
+          .then(r => r.json())
+          .then(data => {
+            if (!data.ok) { alert('Não transferiu: ' + (data.erro || 'erro')); btnTransferir.disabled = false; btnTransferir.textContent = '➡ Transferir'; return; }
+            fecharModal();
+            carregar();
+            mostrarFlashSalvoGrande();
+            if (!data.avisado) alert('Transferido para ' + data.para + ', mas não consegui avisar no WhatsApp. Avise manualmente.');
+          })
+          .catch(() => { alert('Não consegui transferir. Confere a internet e tenta de novo.'); btnTransferir.disabled = false; btnTransferir.textContent = '➡ Transferir'; });
+      });
+    });
+  }
   const btnTarefaConcluida = document.getElementById('modal-tarefa-concluida');
   if (btnTarefaConcluida) {
     btnTarefaConcluida.addEventListener('click', () => {
