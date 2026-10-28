@@ -245,6 +245,8 @@ async function initDb() {
       ADD COLUMN IF NOT EXISTS origem TEXT,
       ADD COLUMN IF NOT EXISTS entrada_via TEXT,
       ADD COLUMN IF NOT EXISTS reaquecido_sdr BOOLEAN DEFAULT false,
+      ADD COLUMN IF NOT EXISTS transferido_por TEXT,
+      ADD COLUMN IF NOT EXISTS transferido_em TIMESTAMPTZ,
       ADD COLUMN IF NOT EXISTS interesse TEXT,
       ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'Novo',
       ADD COLUMN IF NOT EXISTS ultimo_contato DATE,
@@ -2903,10 +2905,11 @@ app.get('/api/leads/meus', basicAuthAdminOuSdr, async (req, res) => {
       `SELECT id, whatsapp, nome, corretor, origem, imovel_desc, imovel_codigo, distribuido_em,
               notas_sdr, tarefa_sdr, tarefa_data,
               ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr,
-              status_corretor, status_corretor_alterado_em, tipo_lead, cliente_ouro,
+              status_corretor, status_corretor_alterado_em, tipo_lead, cliente_ouro, transferido_por, transferido_em,
               (status = 'Repassado ao corretor' OR reaquecido_em IS NOT NULL OR reaquecido_sdr IS TRUE) AS veio_sdr
        FROM leads
-       WHERE corretor = $1 AND (status_corretor_alterado_em IS NOT NULL OR carteira_sdr IS NOT TRUE)
+       WHERE (corretor = $1 AND (status_corretor_alterado_em IS NOT NULL OR carteira_sdr IS NOT TRUE))
+          OR transferido_por = $1
        ORDER BY COALESCE(status_corretor_alterado_em, distribuido_em) DESC`,
       [nomeCorretor]
     );
@@ -3563,6 +3566,69 @@ app.patch('/api/leads/:id/corrigir-whatsapp', basicAuth, async (req, res) => {
   }
 });
 
+// ─── ROTA: BRUNA SDR TRANSFERE UM LEAD (atendimento inicial feito) PARA OUTRO CORRETOR ──
+// Body: { para: 'Junior' }. O lead vai pra coluna "Reaquecido" do corretor com a marca "SDR",
+// continua na MESMA coluna, aparece só pra acompanhamento (somente leitura) no CRM da Bruna, e o corretor (e a supervisão) recebem aviso no WhatsApp.
+app.post('/api/leads/:id/transferir', basicAuthAdminOuSdr, async (req, res) => {
+  if (!process.env.DATABASE_URL) return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
+  if (req.authTipo === 'corretor') return res.status(403).json({ ok: false, erro: 'Sem permissão pra transferir' });
+  try {
+    const destino = TELEFONES_CORRETORES[normalizarTexto(String(req.body.para || ''))];
+    if (!destino || normalizarTexto(destino.nome) === normalizarTexto(CORRETOR_ABERTO_PELA_SDR)) {
+      return res.status(400).json({ ok: false, erro: 'Escolha um corretor válido (que não seja a própria Bruna).' });
+    }
+    const d = await pool.query('SELECT id, nome, whatsapp, corretor, imovel_desc, origem, notas_sdr, buscando_sdr FROM leads WHERE id = $1', [req.params.id]);
+    if (!d.rows.length) return res.status(404).json({ ok: false, erro: 'Lead não encontrado' });
+    const lead = d.rows[0];
+    // SDR só transfere lead que está no CRM da Bruna; admin/Juliane podem qualquer um.
+    if (req.authTipo === 'sdr' && String(lead.corretor || '').trim().toLowerCase() !== CORRETOR_ABERTO_PELA_SDR.toLowerCase()) {
+      return res.status(403).json({ ok: false, erro: 'A SDR só transfere leads do CRM da Bruna SDR.' });
+    }
+    await pool.query(
+      `UPDATE leads
+       SET corretor = $1,
+           outros_corretores = CASE
+             WHEN corretor IS NOT NULL AND corretor <> '' AND corretor <> $1
+                  AND (outros_corretores IS NULL OR position(corretor IN outros_corretores) = 0)
+             THEN COALESCE(outros_corretores || ', ', '') || corretor
+             ELSE outros_corretores
+           END,
+           carteira_sdr = false,
+           status_corretor = COALESCE(NULLIF(status_corretor, ''), 'Novo'),
+           reaquecido_sdr = true,
+           transferido_por = $3,
+           transferido_em = now(),
+           status_corretor_alterado_em = now()
+       WHERE id = $2`,
+      [destino.nome, lead.id, CORRETOR_ABERTO_PELA_SDR]
+    );
+    // Aviso no WhatsApp do corretor (e cópia pra supervisão). Falha no aviso não desfaz a transferência.
+    let avisado = false;
+    try {
+      const fone = String(lead.whatsapp || '').replace(/\D/g, '');
+      const texto = `🔁 Lead repassado pela SDR (Bruna)\n` +
+        `Nome: ${lead.nome || 'Sem nome'}\n` +
+        `WhatsApp: ${fone ? 'https://wa.me/' + fone : 'sem número'}\n` +
+        (lead.imovel_desc ? `Interesse: ${lead.imovel_desc}\n` : '') +
+        (lead.buscando_sdr ? `Buscando: ${String(lead.buscando_sdr).split('\n')[0]}\n` : '') +
+        (lead.notas_sdr ? `Notas da SDR: ${String(lead.notas_sdr).split('\n')[0]}\n` : '') +
+        `O atendimento inicial já foi feito. O card está no seu CRM, na mesma coluna em que estava.`;
+      const r1 = await enviarWhatsApp(destino.fone, texto);
+      avisado = !!r1._ok;
+      if (NUMERO_SUPERVISAO) {
+        await enviarWhatsApp(NUMERO_SUPERVISAO, `📋 Transferência da SDR: ${lead.nome || 'Sem nome'} → ${destino.nome}`);
+      }
+    } catch (e) {
+      console.error('Erro ao avisar sobre a transferência da SDR:', e.message);
+    }
+    console.log(`Transferência da SDR: ${lead.nome} (${lead.whatsapp}) ${lead.corretor || '—'} → ${destino.nome} [avisado=${avisado}]`);
+    res.json({ ok: true, para: destino.nome, avisado });
+  } catch (err) {
+    console.error('Erro ao transferir lead da SDR:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
 // ─── ROTA: EDITAR CAMPOS MANUAIS DO FUNIL ────────────────────
 // Body esperado: { campo: 'origem', valor: 'TikTok' }
 // campo precisa estar em CAMPOS_EDITAVEIS.
@@ -3584,6 +3650,13 @@ app.patch('/api/leads/:id', basicAuthAdminOuSdr, async (req, res) => {
       ehDaBruna = d.rows.length > 0 && String(d.rows[0].corretor || '').trim().toLowerCase() === CORRETOR_ABERTO_PELA_SDR.toLowerCase();
     }
     if (!ehDaBruna) return res.status(403).json({ ok: false, erro: `Login da SDR não pode editar o campo '${campo}'` });
+  }
+  if (req.authTipo === 'sdr') {
+    // Lead que a SDR já transferiu pra um corretor: ela só acompanha, não altera mais.
+    const tr = await pool.query('SELECT transferido_por FROM leads WHERE id = $1', [id]);
+    if (tr.rows.length && tr.rows[0].transferido_por) {
+      return res.status(403).json({ ok: false, erro: 'Esse lead já foi transferido pra um corretor — a SDR só acompanha, não edita mais.' });
+    }
   }
   if (req.authTipo === 'juliane' && !CAMPOS_EDITAVEIS_JULIANE.includes(campo)) {
     return res.status(403).json({ ok: false, erro: `Login da Juliane não pode editar o campo '${campo}'` });
