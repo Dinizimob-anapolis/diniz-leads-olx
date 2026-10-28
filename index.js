@@ -3577,7 +3577,7 @@ app.post('/api/leads/:id/transferir', basicAuthAdminOuSdr, async (req, res) => {
     if (!destino || normalizarTexto(destino.nome) === normalizarTexto(CORRETOR_ABERTO_PELA_SDR)) {
       return res.status(400).json({ ok: false, erro: 'Escolha um corretor válido (que não seja a própria Bruna).' });
     }
-    const d = await pool.query('SELECT id, nome, whatsapp, corretor, imovel_desc, origem, notas_sdr, buscando_sdr FROM leads WHERE id = $1', [req.params.id]);
+    const d = await pool.query('SELECT id, nome, whatsapp, email, corretor, imovel_desc, origem, notas_sdr, buscando_sdr, valor_imovel_sdr, tarefa_sdr, tarefa_data, status_corretor FROM leads WHERE id = $1', [req.params.id]);
     if (!d.rows.length) return res.status(404).json({ ok: false, erro: 'Lead não encontrado' });
     const lead = d.rows[0];
     // SDR só transfere lead que está no CRM da Bruna; admin/Juliane podem qualquer um.
@@ -3606,17 +3606,27 @@ app.post('/api/leads/:id/transferir', basicAuthAdminOuSdr, async (req, res) => {
     let avisado = false;
     try {
       const fone = String(lead.whatsapp || '').replace(/\D/g, '');
-      const texto = `🔁 Lead repassado pela SDR (Bruna)\n` +
-        `Nome: ${lead.nome || 'Sem nome'}\n` +
-        `WhatsApp: ${fone ? 'https://wa.me/' + fone : 'sem número'}\n` +
-        (lead.imovel_desc ? `Interesse: ${lead.imovel_desc}\n` : '') +
-        (lead.buscando_sdr ? `Buscando: ${String(lead.buscando_sdr).split('\n')[0]}\n` : '') +
-        (lead.notas_sdr ? `Notas da SDR: ${String(lead.notas_sdr).split('\n')[0]}\n` : '') +
-        `O atendimento inicial já foi feito. O card está no seu CRM, na mesma coluna em que estava.`;
+      const prazo = lead.tarefa_data ? ' (' + new Date(lead.tarefa_data).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) + ')' : '';
+      const blocos = [
+        `🔁 *LEAD REPASSADO PELA SDR*\n_Atendimento inicial feito pela Bruna_`,
+        lead.imovel_desc ? `🏠 *Imóvel / campanha*\n${lead.imovel_desc}` : null,
+        `👤 *Nome*\n${lead.nome || 'Sem nome'}`,
+        `📱 *WhatsApp*\n${fone ? '+' + fone : 'sem número'}`,
+        lead.email ? `✉️ *Email*\n${lead.email}` : null,
+        lead.origem ? `📣 *Origem*\n${lead.origem}` : null,
+        lead.valor_imovel_sdr ? `💰 *Valor do imóvel buscado*\n${lead.valor_imovel_sdr}` : null,
+        lead.buscando_sdr ? `🔎 *O que está buscando*\n${String(lead.buscando_sdr).trim()}` : null,
+        lead.notas_sdr ? `📝 *Notas da SDR*\n${String(lead.notas_sdr).trim()}` : null,
+        lead.tarefa_sdr ? `⏰ *Próximo passo*\n${lead.tarefa_sdr}${prazo}` : null,
+        `📌 *Coluna no seu CRM*\n${lead.status_corretor || 'Novo'}`,
+        `🙋 *Corretor*\n${destino.nome}`,
+      ].filter(Boolean);
+      const texto = blocos.join('\n\n');
       const r1 = await enviarWhatsApp(destino.fone, texto);
       avisado = !!r1._ok;
       if (NUMERO_SUPERVISAO) {
-        await enviarWhatsApp(NUMERO_SUPERVISAO, `📋 Transferência da SDR: ${lead.nome || 'Sem nome'} → ${destino.nome}`);
+        // Cópia completa pra supervisão, igual à chegada de lead novo.
+        await enviarWhatsApp(NUMERO_SUPERVISAO, texto);
       }
     } catch (e) {
       console.error('Erro ao avisar sobre a transferência da SDR:', e.message);
