@@ -520,10 +520,10 @@ async function initDb() {
     console.error('Erro ao corrigir grafia Michele:', err);
   }
 
-  // Nalcio e Thayná saíram da equipe: os leads que ainda estavam com eles vão pra Juliane redistribuir.
+  // Thayná saiu da equipe: os leads que ainda estavam com ela vão pra Juliane redistribuir. (Nalcio voltou em 28/10/2026.)
   try {
-    const fixN = await pool.query(`UPDATE leads SET corretor = 'Juliane' WHERE lower(trim(corretor)) IN ('nalcio','nálcio','nelson','thayna','thayná') RETURNING id`);
-    if (fixN.rowCount > 0) console.log(`✅ ${fixN.rowCount} lead(s) de ex-corretores (Nalcio/Thayná) passados para a Juliane.`);
+    const fixN = await pool.query(`UPDATE leads SET corretor = 'Juliane' WHERE lower(trim(corretor)) IN ('thayna','thayná') RETURNING id`);
+    if (fixN.rowCount > 0) console.log(`✅ ${fixN.rowCount} lead(s) de ex-corretores (Thayná) passados para a Juliane.`);
   } catch (err) {
     console.error('Erro ao reatribuir leads do Nalcio:', err);
   }
@@ -3907,6 +3907,48 @@ app.get('/api/admin/backups', basicAuth, async (req, res) => {
     res.json({ ok: true, backups: result.rows });
   } catch (err) {
     console.error('Erro ao listar backups:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
+// Devolve pro corretor os leads que foram passados pra Juliane quando ele saiu, usando os
+// backups diários. /api/admin/restaurar-corretor?nome=Nalcio  → só mostra (prévia)
+// /api/admin/restaurar-corretor?nome=Nalcio&aplicar=1       → aplica
+app.get('/api/admin/restaurar-corretor', basicAuthAdminOuSdr, semCorretor, async (req, res) => {
+  try {
+    const nome = String(req.query.nome || '').trim();
+    if (!nome) return res.status(400).json({ ok: false, erro: 'Informe ?nome=' });
+    const alvo = normalizarTexto(nome);
+    const aliases = alvo === 'nalcio' ? ['nalcio', 'nelson'] : [alvo];
+    const lista = await pool.query('SELECT id, criado_em FROM backups_leads ORDER BY criado_em DESC');
+    const achados = new Map(); // id do lead -> { backup }
+    for (const b of lista.rows) {
+      const r = await pool.query('SELECT dados FROM backups_leads WHERE id = $1', [b.id]);
+      const dados = r.rows[0] && r.rows[0].dados;
+      if (!Array.isArray(dados)) continue;
+      for (const l of dados) {
+        if (l.corretor && aliases.includes(normalizarTexto(l.corretor)) && !achados.has(l.id)) {
+          achados.set(l.id, new Date(b.criado_em).toISOString().slice(0, 10));
+        }
+      }
+    }
+    const ids = [...achados.keys()];
+    let candidatos = [];
+    if (ids.length) {
+      const atual = await pool.query(
+        `SELECT id, nome, whatsapp, corretor, status_corretor FROM leads WHERE id = ANY($1::int[]) AND corretor = 'Juliane' ORDER BY id`, [ids]);
+      candidatos = atual.rows.map(l => ({ ...l, backup_de: achados.get(l.id) }));
+    }
+    let restaurados = 0;
+    if (req.query.aplicar === '1' && candidatos.length) {
+      const up = await pool.query(`UPDATE leads SET corretor = $1 WHERE id = ANY($2::int[]) AND corretor = 'Juliane'`,
+        [nome, candidatos.map(c => c.id)]);
+      restaurados = up.rowCount;
+    }
+    res.json({ ok: true, backups_analisados: lista.rows.length, leads_dele_nos_backups: ids.length,
+      a_devolver: candidatos.length, restaurados, aplicado: req.query.aplicar === '1', leads: candidatos });
+  } catch (err) {
+    console.error('Erro ao restaurar corretor:', err);
     res.status(500).json({ ok: false, erro: err.message });
   }
 });
