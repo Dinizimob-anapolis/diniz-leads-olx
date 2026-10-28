@@ -901,7 +901,7 @@ function cardHtml(lead, corBorda, mostrarOrigemTriagem, mostrarStatusSdr) {
       \${seloReaquecido}\${seloCanal}
       \${dataEtapa ? \`<div class="lead-meta">Nessa etapa desde \${dataEtapa}</div>\` : ''}
       \${lead.origem ? \`<span class="badge origem\${lead.origem === 'Meta Ads' ? '-meta' : ''}">\${lead.origem === 'Meta Ads' ? '📣 ' : ''}\${lead.origem}</span>\` : ''}
-      \${lead.veio_sdr ? \`<span class="badge" style="background:#fff1e0;color:#c2700a;border:1px solid #f2941c;" title="Reaquecido pela SDR e repassado ao corretor">🔁 SDR</span>\` : ''}
+      \${lead.tipo_sdr === 'novo' ? \`<span class="badge" style="background:#e3f8ee;color:#0f7a4a;border:1px solid #17a34a;" title="Lead novo de campanha, atendido do zero pela Bruna (SDR)">🆕 SDR · Atendido do zero</span>\` : (lead.tipo_sdr === 'reaquecido' || lead.veio_sdr) ? \`<span class="badge" style="background:#fff1e0;color:#c2700a;border:1px solid #f2941c;" title="Lead antigo reaquecido pela SDR">🔁 SDR · Reaquecido</span>\` : ''}
       \${lead.origem === 'Meta Ads' && lead.distribuido_em ? \`<div class="lead-meta" style="color:#2a5bd7;">📥 chegou \${new Date(lead.distribuido_em).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</div>\` : ''}
       \${badgeImovel(lead)}
       \${lead.corretor ? \`<div><span class="chip-corretor" style="border-color:\${corDoCorretor(lead.corretor)};color:\${corDoCorretor(lead.corretor)};background:\${corDoCorretor(lead.corretor)}1a">\${lead.corretor}</span></div>\` : ''}
