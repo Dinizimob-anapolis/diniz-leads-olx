@@ -444,7 +444,7 @@ const CORRETOR_HTML = `<!DOCTYPE html>
 let TODOS_LEADS = [];
 
 // CRM da Bruna SDR: ela pode transferir o lead (depois do atendimento inicial) pra outro corretor.
-const CORRETORES_DESTINO = ['Junior', 'Laís', 'Patricia', 'Michelle', 'Renata', 'Cyda', 'Lucas', 'Rubens'];
+const CORRETORES_DESTINO = ['Junior', 'Laís', 'Patricia', 'Michelle', 'Renata', 'Cyda', 'Lucas', 'Rubens', 'Nalcio'];
 function ehCrmDaSdr() {
   const h = document.querySelector('h1');
   return !!h && h.textContent.toUpperCase().indexOf('BRUNA SDR') !== -1;
@@ -516,7 +516,7 @@ function statusDoLead(lead) {
 }
 
 const PALETA_CORES = ['#3b6cf0', '#e0453f', '#f2941c', '#12b76a', '#9b4de0', '#e8479e', '#0aa5c2', '#c9a20a'];
-const NOMES_OFICIAIS_CORRETORES = ['Junior', 'Laís', 'Patricia', 'Michelle', 'Renata', 'Bruno', 'Juliane', 'Amanda', 'Cyda', 'Bruna SDR', 'Lucas'];
+const NOMES_OFICIAIS_CORRETORES = ['Junior', 'Laís', 'Patricia', 'Michelle', 'Renata', 'Bruno', 'Juliane', 'Amanda', 'Cyda', 'Bruna SDR', 'Lucas', 'Nalcio'];
 function normalizarNomeCorretor(nomeDigitado) {
   const chave = (nomeDigitado || '').trim();
   if (!chave) return chave;
