@@ -244,6 +244,7 @@ async function initDb() {
     ALTER TABLE leads
       ADD COLUMN IF NOT EXISTS origem TEXT,
       ADD COLUMN IF NOT EXISTS entrada_via TEXT,
+      ADD COLUMN IF NOT EXISTS reaquecido_sdr BOOLEAN DEFAULT false,
       ADD COLUMN IF NOT EXISTS interesse TEXT,
       ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'Novo',
       ADD COLUMN IF NOT EXISTS ultimo_contato DATE,
@@ -304,6 +305,18 @@ async function initDb() {
   `);
   await pool.query(`ALTER TABLE leads_nao_identificados ADD COLUMN IF NOT EXISTS corretor TEXT;`);
   console.log('✅ Tabelas do lead router prontas (leads, leads_nao_identificados)');
+
+  // ─── Marca permanente "reaquecido pela SDR": todo card que chega na coluna Reaquecido do corretor.
+  // Backfill (uma vez): quem está hoje na coluna Reaquecido já vem da SDR.
+  try {
+    if (!(await lerConfig('backfill_reaquecido_sdr_aplicado'))) {
+      const bf = await pool.query(`UPDATE leads SET reaquecido_sdr = true WHERE status_corretor = 'Reaquecido' AND reaquecido_sdr IS NOT TRUE`);
+      console.log(`✅ Backfill reaquecido_sdr: ${bf.rowCount} lead(s) marcados`);
+      await salvarConfig('backfill_reaquecido_sdr_aplicado', 'true');
+    }
+  } catch (err) {
+    console.error('Erro no backfill reaquecido_sdr:', err);
+  }
 
   // ─── Correção pontual: reseta "Reaquecido" que foi marcado incorretamente
   // pela correção automática antiga (que "adivinhava" o corretor pelo
@@ -2733,7 +2746,8 @@ app.get('/api/leads/carteira-sdr', basicAuthAdminOuSdr, semCorretor, async (req,
     const result = await pool.query(
       `SELECT id, whatsapp, nome, corretor, origem, imovel_desc, imovel_codigo, status, distribuido_em,
               outros_corretores, notas_sdr, reaquecido_em, tarefa_sdr, corretores_repassados,
-              status_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr, tarefa_data, aprovado, visita, proposta, documentacao, venda, cliente_ouro, carteira_sdr
+              status_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr, tarefa_data, aprovado, visita, proposta, documentacao, venda, cliente_ouro, carteira_sdr,
+              (status = 'Repassado ao corretor' OR reaquecido_em IS NOT NULL OR reaquecido_sdr IS TRUE) AS veio_sdr
        FROM leads
        WHERE carteira_sdr = true OR status = 'Repassado ao corretor'
        ORDER BY COALESCE(status_alterado_em, distribuido_em) DESC`
@@ -2889,7 +2903,8 @@ app.get('/api/leads/meus', basicAuthAdminOuSdr, async (req, res) => {
       `SELECT id, whatsapp, nome, corretor, origem, imovel_desc, imovel_codigo, distribuido_em,
               notas_sdr, tarefa_sdr, tarefa_data,
               ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr,
-              status_corretor, status_corretor_alterado_em, tipo_lead, cliente_ouro
+              status_corretor, status_corretor_alterado_em, tipo_lead, cliente_ouro,
+              (status = 'Repassado ao corretor' OR reaquecido_em IS NOT NULL OR reaquecido_sdr IS TRUE) AS veio_sdr
        FROM leads
        WHERE corretor = $1 AND (status_corretor_alterado_em IS NOT NULL OR carteira_sdr IS NOT TRUE)
        ORDER BY COALESCE(status_corretor_alterado_em, distribuido_em) DESC`,
@@ -2913,7 +2928,8 @@ app.get('/api/leads/todos-resumo', basicAuthAdminOuSdr, semCorretor, async (req,
     const result = await pool.query(
       `SELECT id, whatsapp, nome, corretor, origem, imovel_desc, imovel_codigo, status, distribuido_em,
               outros_corretores, notas_sdr, reaquecido_em, tarefa_sdr, corretores_repassados,
-              status_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr, tarefa_data, aprovado, visita, proposta, documentacao, venda, carteira_sdr, carteira_juliane, cliente_ouro
+              status_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr, tarefa_data, aprovado, visita, proposta, documentacao, venda, carteira_sdr, carteira_juliane, cliente_ouro,
+              (status = 'Repassado ao corretor' OR reaquecido_em IS NOT NULL OR reaquecido_sdr IS TRUE) AS veio_sdr
        FROM leads
        WHERE ${COND_BOARD_JULIANE}
        ORDER BY COALESCE(status_alterado_em, distribuido_em) DESC
@@ -3666,7 +3682,8 @@ app.patch('/api/leads/:id', basicAuthAdminOuSdr, async (req, res) => {
              visita = visita OR $6,
              proposta = proposta OR $7,
              venda = venda OR $8,
-             sem_retorno = $9
+             sem_retorno = $9,
+             reaquecido_sdr = reaquecido_sdr OR ($1 = 'Reaquecido')
          WHERE id = $2`,
         [valorFinal, id, contatouFlag, documentacaoFlag, aprovadoFlag, visitaFlag, propostaFlag, vendaFlag, semRetornoFlag]
       );
@@ -3692,6 +3709,7 @@ app.patch('/api/leads/:id', basicAuthAdminOuSdr, async (req, res) => {
                END,
                carteira_sdr = false,
                status_corretor = 'Reaquecido',
+               reaquecido_sdr = true,
                status_corretor_alterado_em = now()
            WHERE id = $2`,
           [valorFinal, id]
