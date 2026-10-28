@@ -2748,10 +2748,13 @@ app.get('/api/leads/carteira-sdr', basicAuthAdminOuSdr, semCorretor, async (req,
     const result = await pool.query(
       `SELECT id, whatsapp, nome, corretor, origem, imovel_desc, imovel_codigo, status, distribuido_em,
               outros_corretores, notas_sdr, reaquecido_em, tarefa_sdr, corretores_repassados,
-              status_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr, tarefa_data, aprovado, visita, proposta, documentacao, venda, cliente_ouro, carteira_sdr,
-              (status = 'Repassado ao corretor' OR reaquecido_em IS NOT NULL OR reaquecido_sdr IS TRUE) AS veio_sdr
+              status_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr, tarefa_data, aprovado, visita, proposta, documentacao, venda, cliente_ouro, carteira_sdr, transferido_por, transferido_em,
+              (status = 'Repassado ao corretor' OR reaquecido_em IS NOT NULL OR reaquecido_sdr IS TRUE) AS veio_sdr,
+              CASE WHEN transferido_por = 'Bruna SDR' THEN 'novo'
+                   WHEN transferido_por = 'SDR Reaquecimento' OR status = 'Repassado ao corretor' OR reaquecido_em IS NOT NULL OR reaquecido_sdr IS TRUE THEN 'reaquecido'
+                   ELSE NULL END AS tipo_sdr
        FROM leads
-       WHERE carteira_sdr = true OR status = 'Repassado ao corretor'
+       WHERE carteira_sdr = true OR status = 'Repassado ao corretor' OR transferido_por = 'SDR Reaquecimento'
        ORDER BY COALESCE(status_alterado_em, distribuido_em) DESC`
     );
     res.json({ ok: true, leads: result.rows });
@@ -2906,7 +2909,10 @@ app.get('/api/leads/meus', basicAuthAdminOuSdr, async (req, res) => {
               notas_sdr, tarefa_sdr, tarefa_data,
               ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr,
               status_corretor, status_corretor_alterado_em, tipo_lead, cliente_ouro, transferido_por, transferido_em,
-              (status = 'Repassado ao corretor' OR reaquecido_em IS NOT NULL OR reaquecido_sdr IS TRUE) AS veio_sdr
+              (status = 'Repassado ao corretor' OR reaquecido_em IS NOT NULL OR reaquecido_sdr IS TRUE) AS veio_sdr,
+              CASE WHEN transferido_por = 'Bruna SDR' THEN 'novo'
+                   WHEN transferido_por = 'SDR Reaquecimento' OR status = 'Repassado ao corretor' OR reaquecido_em IS NOT NULL OR reaquecido_sdr IS TRUE THEN 'reaquecido'
+                   ELSE NULL END AS tipo_sdr
        FROM leads
        WHERE (corretor = $1 AND (status_corretor_alterado_em IS NOT NULL OR carteira_sdr IS NOT TRUE))
           OR transferido_por = $1
@@ -2932,7 +2938,10 @@ app.get('/api/leads/todos-resumo', basicAuthAdminOuSdr, semCorretor, async (req,
       `SELECT id, whatsapp, nome, corretor, origem, imovel_desc, imovel_codigo, status, distribuido_em,
               outros_corretores, notas_sdr, reaquecido_em, tarefa_sdr, corretores_repassados,
               status_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr, tarefa_data, aprovado, visita, proposta, documentacao, venda, carteira_sdr, carteira_juliane, cliente_ouro,
-              (status = 'Repassado ao corretor' OR reaquecido_em IS NOT NULL OR reaquecido_sdr IS TRUE) AS veio_sdr
+              (status = 'Repassado ao corretor' OR reaquecido_em IS NOT NULL OR reaquecido_sdr IS TRUE) AS veio_sdr,
+              CASE WHEN transferido_por = 'Bruna SDR' THEN 'novo'
+                   WHEN transferido_por = 'SDR Reaquecimento' OR status = 'Repassado ao corretor' OR reaquecido_em IS NOT NULL OR reaquecido_sdr IS TRUE THEN 'reaquecido'
+                   ELSE NULL END AS tipo_sdr
        FROM leads
        WHERE ${COND_BOARD_JULIANE}
        ORDER BY COALESCE(status_alterado_em, distribuido_em) DESC
@@ -3567,7 +3576,7 @@ app.patch('/api/leads/:id/corrigir-whatsapp', basicAuth, async (req, res) => {
 });
 
 // ─── ROTA: BRUNA SDR TRANSFERE UM LEAD (atendimento inicial feito) PARA OUTRO CORRETOR ──
-// Body: { para: 'Junior' }. O lead vai pra coluna "Reaquecido" do corretor com a marca "SDR",
+// Body: { para: 'Junior', modo: 'novo' | 'reaquecimento' }. O lead vai pra coluna "Reaquecido" do corretor com a marca "SDR",
 // continua na MESMA coluna, aparece só pra acompanhamento (somente leitura) no CRM da Bruna, e o corretor (e a supervisão) recebem aviso no WhatsApp.
 app.post('/api/leads/:id/transferir', basicAuthAdminOuSdr, async (req, res) => {
   if (!process.env.DATABASE_URL) return res.status(503).json({ ok: false, erro: 'DATABASE_URL não configurada' });
@@ -3577,13 +3586,20 @@ app.post('/api/leads/:id/transferir', basicAuthAdminOuSdr, async (req, res) => {
     if (!destino || normalizarTexto(destino.nome) === normalizarTexto(CORRETOR_ABERTO_PELA_SDR)) {
       return res.status(400).json({ ok: false, erro: 'Escolha um corretor válido (que não seja a própria Bruna).' });
     }
-    const d = await pool.query('SELECT id, nome, whatsapp, email, corretor, imovel_desc, origem, notas_sdr, buscando_sdr, valor_imovel_sdr, tarefa_sdr, tarefa_data, status_corretor FROM leads WHERE id = $1', [req.params.id]);
+    const d = await pool.query('SELECT id, nome, whatsapp, email, corretor, imovel_desc, origem, notas_sdr, buscando_sdr, valor_imovel_sdr, tarefa_sdr, tarefa_data, status_corretor, carteira_sdr, transferido_por FROM leads WHERE id = $1', [req.params.id]);
     if (!d.rows.length) return res.status(404).json({ ok: false, erro: 'Lead não encontrado' });
     const lead = d.rows[0];
-    // SDR só transfere lead que está no CRM da Bruna; admin/Juliane podem qualquer um.
-    if (req.authTipo === 'sdr' && String(lead.corretor || '').trim().toLowerCase() !== CORRETOR_ABERTO_PELA_SDR.toLowerCase()) {
-      return res.status(403).json({ ok: false, erro: 'A SDR só transfere leads do CRM da Bruna SDR.' });
+    const modo = req.body.modo === 'reaquecimento' ? 'reaquecimento' : 'novo';
+    if (lead.transferido_por) return res.status(409).json({ ok: false, erro: 'Esse lead já foi transferido.' });
+    // SDR só transfere o que é dela: lead do CRM da Bruna (modo novo) ou da carteira de reaquecimento; admin/Juliane podem qualquer um.
+    if (req.authTipo === 'sdr') {
+      const ehDaBruna = String(lead.corretor || '').trim().toLowerCase() === CORRETOR_ABERTO_PELA_SDR.toLowerCase();
+      if (modo === 'novo' ? !ehDaBruna : lead.carteira_sdr !== true) {
+        return res.status(403).json({ ok: false, erro: 'A SDR só transfere leads do próprio CRM.' });
+      }
     }
+    const marca = modo === 'reaquecimento' ? 'SDR Reaquecimento' : CORRETOR_ABERTO_PELA_SDR;
+    const colunaDestino = modo === 'reaquecimento' ? 'Reaquecido' : (lead.status_corretor || 'Novo');
     await pool.query(
       `UPDATE leads
        SET corretor = $1,
@@ -3594,13 +3610,15 @@ app.post('/api/leads/:id/transferir', basicAuthAdminOuSdr, async (req, res) => {
              ELSE outros_corretores
            END,
            carteira_sdr = false,
-           status_corretor = COALESCE(NULLIF(status_corretor, ''), 'Novo'),
+           status_corretor = $4,
+           status = CASE WHEN $5 = 'reaquecimento' THEN 'Repassado ao corretor' ELSE status END,
+           status_alterado_em = CASE WHEN $5 = 'reaquecimento' THEN now() ELSE status_alterado_em END,
            reaquecido_sdr = true,
            transferido_por = $3,
            transferido_em = now(),
            status_corretor_alterado_em = now()
        WHERE id = $2`,
-      [destino.nome, lead.id, CORRETOR_ABERTO_PELA_SDR]
+      [destino.nome, lead.id, marca, colunaDestino, modo]
     );
     // Aviso no WhatsApp do corretor (e cópia pra supervisão). Falha no aviso não desfaz a transferência.
     let avisado = false;
@@ -3608,7 +3626,7 @@ app.post('/api/leads/:id/transferir', basicAuthAdminOuSdr, async (req, res) => {
       const fone = String(lead.whatsapp || '').replace(/\D/g, '');
       const prazo = lead.tarefa_data ? ' (' + new Date(lead.tarefa_data).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) + ')' : '';
       const blocos = [
-        `🔁 *LEAD REPASSADO PELA SDR*\n_Atendimento inicial feito pela Bruna_`,
+        modo === 'reaquecimento' ? `🔁 *LEAD REAQUECIDO PELA SDR*\n_Reaquecimento feito pela Bruna_` : `🔁 *LEAD REPASSADO PELA SDR*\n_Atendimento inicial feito pela Bruna_`,
         lead.imovel_desc ? `🏠 *Imóvel / campanha*\n${lead.imovel_desc}` : null,
         `👤 *Nome*\n${lead.nome || 'Sem nome'}`,
         `📱 *WhatsApp*\n${fone ? '+' + fone : 'sem número'}`,
@@ -3618,7 +3636,7 @@ app.post('/api/leads/:id/transferir', basicAuthAdminOuSdr, async (req, res) => {
         lead.buscando_sdr ? `🔎 *O que está buscando*\n${String(lead.buscando_sdr).trim()}` : null,
         lead.notas_sdr ? `📝 *Notas da SDR*\n${String(lead.notas_sdr).trim()}` : null,
         lead.tarefa_sdr ? `⏰ *Próximo passo*\n${lead.tarefa_sdr}${prazo}` : null,
-        `📌 *Coluna no seu CRM*\n${lead.status_corretor || 'Novo'}`,
+        `📌 *Coluna no seu CRM*\n${colunaDestino}`,
         `🙋 *Corretor*\n${destino.nome}`,
       ].filter(Boolean);
       const texto = blocos.join('\n\n');
