@@ -437,7 +437,7 @@ const CRM_HTML = `<!DOCTYPE html>
 let TODOS_LEADS = [];
 
 // Opções de canal/origem pra quando alguém adiciona um contato manualmente.
-const ORIGENS = ['OLX/Canal Pro', 'Meta Ads', 'Patrocinado', 'TikTok', 'Instagram', 'Comentário', 'Indicação', 'SDR', 'Outro'];
+const ORIGENS = ['OLX/Canal Pro', 'Meta Ads', 'Facebook', 'Patrocinado', 'TikTok', 'Instagram', 'Comentário', 'Indicação', 'SDR', 'Outro'];
 let BUSCA = '';
 let LEAD_ARRASTADO = null;
 let SELECIONADOS = new Set(); // ids (string) dos cards marcados pra mover em lote
@@ -944,6 +944,7 @@ function cardHtml(lead, corBorda) {
       <div class="lead-meta">\${lead.whatsapp || 'sem WhatsApp'}</div>
       \${dataEtapa ? \`<div class="lead-meta">Nessa etapa desde \${dataEtapa}</div>\` : ''}
       \${lead.origem ? \`<span class="badge origem">\${lead.origem}</span>\` : ''}
+      \${lead.veio_sdr ? \`<span class="badge" style="background:#fff1e0;color:#c2700a;border:1px solid #f2941c;" title="Reaquecido pela SDR e repassado ao corretor">🔁 SDR</span>\` : ''}
       \${badgeImovel(lead)}
       \${duplicado ? \`<span class="badge warn">⚠️ \${envolvidos.length}: \${envolvidos.join(', ')}</span>\` : ''}
       \${lead.corretor ? \`<div><span class="chip-corretor" style="border-color:\${corDoCorretor(lead.corretor)};color:\${corDoCorretor(lead.corretor)};background:\${corDoCorretor(lead.corretor)}1a">\${lead.corretor}</span></div>\` : ''}
