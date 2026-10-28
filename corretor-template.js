@@ -444,7 +444,7 @@ const CORRETOR_HTML = `<!DOCTYPE html>
 let TODOS_LEADS = [];
 
 // Opções de canal/origem pra quando o corretor adiciona um contato.
-const ORIGENS = ['OLX/Canal Pro', 'Patrocinado', 'TikTok', 'Instagram', 'Comentário', 'Indicação', 'Outro'];
+const ORIGENS = ['OLX/Canal Pro', 'Facebook', 'Patrocinado', 'TikTok', 'Instagram', 'Comentário', 'Indicação', 'Outro'];
 let BUSCA = '';
 let LEAD_ARRASTADO = null;
 let ULTIMO_ADICIONADO_ID = null;
@@ -741,6 +741,7 @@ function cardHtml(lead, corBorda) {
       <div class="lead-meta">\${lead.whatsapp || 'sem WhatsApp'}</div>
       \${dataEtapa ? \`<div class="lead-meta">Nessa etapa desde \${dataEtapa}</div>\` : ''}
       \${lead.origem ? \`<span class="badge origem">\${lead.origem}</span>\` : ''}
+      \${lead.veio_sdr ? \`<span class="badge" style="background:#fff1e0;color:#c2700a;border:1px solid #f2941c;" title="Reaquecido pela SDR e repassado ao corretor">🔁 SDR</span>\` : ''}
       \${badgeImovel(lead)}
       \${lead.tipo_lead === 'Pessoal' ? \`<span class="badge" style="background:#fff3e0;color:#c96a12;border:1px solid #ffdca8;">👤 Lead pessoal</span>\` : \`<span class="badge" style="background:#e8f0fe;color:#1a56db;border:1px solid #c3d7fb;">🏢 Lead da imobiliária</span>\`}
       \${lead.tarefa_sdr ? \`<div class="tarefa-preview" style="\${tarefaAtrasada ? 'color:#e0453f;' : ''}">\${tarefaAtrasada ? '⏰ ATRASADO — ' : '📌 '}\${lead.tarefa_sdr}\${lead.tarefa_data ? \` (\${new Date(lead.tarefa_data).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })})\` : ''}</div>\` : ''}
