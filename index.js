@@ -3936,17 +3936,29 @@ app.get('/api/admin/restaurar-corretor', basicAuthAdminOuSdr, semCorretor, async
     let candidatos = [];
     if (ids.length) {
       const atual = await pool.query(
-        `SELECT id, nome, whatsapp, corretor, status_corretor FROM leads WHERE id = ANY($1::int[]) AND corretor = 'Juliane' ORDER BY id`, [ids]);
+        `SELECT id, nome, whatsapp, corretor, status_corretor,
+                (transferido_por IS NULL AND (reaquecido_em IS NOT NULL OR reaquecido_sdr IS TRUE OR status = 'Reaquecendo'
+                 OR status = 'Repassado ao corretor' OR status_corretor = 'Reaquecido')) AS reaquecido
+           FROM leads WHERE id = ANY($1::int[]) AND corretor IN ('Juliane', $2) ORDER BY id`, [ids, nome]);
       candidatos = atual.rows.map(l => ({ ...l, backup_de: achados.get(l.id) }));
     }
-    let restaurados = 0;
-    if (req.query.aplicar === '1' && candidatos.length) {
-      const up = await pool.query(`UPDATE leads SET corretor = $1 WHERE id = ANY($2::int[]) AND corretor = 'Juliane'`,
-        [nome, candidatos.map(c => c.id)]);
-      restaurados = up.rowCount;
+    // Reaquecidos NÃO voltam pro corretor: vão pra carteira da SDR (CRM - SDR REAQUECIMENTO).
+    const paraCorretor = candidatos.filter(c => !c.reaquecido);
+    const paraSdr = candidatos.filter(c => c.reaquecido);
+    let restaurados = 0, enviadosSdr = 0;
+    if (req.query.aplicar === '1') {
+      if (paraCorretor.length) {
+        const up = await pool.query(`UPDATE leads SET corretor = $1 WHERE id = ANY($2::int[])`, [nome, paraCorretor.map(c => c.id)]);
+        restaurados = up.rowCount;
+      }
+      if (paraSdr.length) {
+        const up2 = await pool.query(`UPDATE leads SET corretor = NULL, carteira_sdr = true WHERE id = ANY($1::int[])`, [paraSdr.map(c => c.id)]);
+        enviadosSdr = up2.rowCount;
+      }
     }
+    const candidatosFinal = candidatos;
     res.json({ ok: true, backups_analisados: lista.rows.length, leads_dele_nos_backups: ids.length,
-      a_devolver: candidatos.length, restaurados, aplicado: req.query.aplicar === '1', leads: candidatos });
+      a_devolver_ao_corretor: paraCorretor.length, reaquecidos_para_sdr: paraSdr.length, restaurados, enviados_para_sdr: enviadosSdr, aplicado: req.query.aplicar === '1', leads: candidatosFinal });
   } catch (err) {
     console.error('Erro ao restaurar corretor:', err);
     res.status(500).json({ ok: false, erro: err.message });
