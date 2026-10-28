@@ -494,6 +494,9 @@ const CORES_COLUNA = {
   'Venda efetuada':         { header: '#17a34a', accent: '#17a34a', texto: '#ffffff' },
 };
 
+// Lead já transferido a um corretor: a SDR só acompanha (somente leitura).
+function somenteLeitura(lead) { return lead.transferido_por === 'SDR Reaquecimento'; }
+
 function statusDoLead(lead) {
   return COLUNAS.includes(lead.status) ? lead.status : 'Novo';
 }
@@ -618,14 +621,17 @@ function exportarCSV() {
 
 function render() {
   const leads = leadsFiltrados();
-  const reaquecerCount = TODOS_LEADS.filter(temHistoricoDuplicado).length;
+  const MEUS = TODOS_LEADS.filter(l => !somenteLeitura(l));
+  const acompanhando = TODOS_LEADS.length - MEUS.length;
+  const reaquecerCount = MEUS.filter(temHistoricoDuplicado).length;
 
-  const vgvTotal = TODOS_LEADS.reduce((soma, lead) => soma + parseValorImovel(lead.valor_imovel_sdr), 0);
+  const vgvTotal = MEUS.reduce((soma, lead) => soma + parseValorImovel(lead.valor_imovel_sdr), 0);
 
   atualizarAlertaAtrasadas();
 
   document.getElementById('stats').innerHTML = \`
-    <div class="stat"><span class="num">\${TODOS_LEADS.length}</span>na carteira</div>
+    <div class="stat"><span class="num">\${MEUS.length}</span>na carteira</div>
+    \${acompanhando > 0 ? \`<div class="stat" style="color:#1a56db"><span class="num">\${acompanhando}</span>transferidos (só acompanhar)</div>\` : ''}
     <div class="stat" style="color:#b5720a"><span class="num">\${reaquecerCount}</span>pra reaquecer</div>
     \${vgvTotal > 0 ? \`<div class="stat" style="color:#17a34a"><span class="num">\${formatarReais(vgvTotal)}</span>VGV total</div>\` : ''}
   \`;
@@ -669,6 +675,8 @@ function render() {
 
   board.querySelectorAll('.lead').forEach(el => {
     el.addEventListener('dragstart', e => {
+      const ld = TODOS_LEADS.find(l => String(l.id) === String(el.dataset.id));
+      if (ld && somenteLeitura(ld)) { e.preventDefault(); return; }
       LEAD_ARRASTADO = el.dataset.id;
       el.classList.add('dragging');
       // Se o card arrastado está selecionado, todos os selecionados "vão junto".
@@ -936,15 +944,16 @@ function cardHtml(lead, corBorda) {
   const classeDestaque = \`\${tarefaAtrasada ? 'atrasado' : (duplicado ? 'reaquecer' : '')} \${lead.cliente_ouro ? 'cliente-ouro' : ''}\`.trim();
   const botaoOuro = \`<button class="btn-ouro modal-versao \${lead.cliente_ouro ? 'ativo' : ''}" onclick="event.stopPropagation();alternarClienteOuro('\${lead.id}', \${!lead.cliente_ouro})" title="\${lead.cliente_ouro ? 'Cliente Ouro — clique pra desmarcar' : 'Marcar como Cliente Ouro'}">⭐</button>\`;
   return \`
-    <div class="lead \${classeDestaque} \${SELECIONADOS.has(String(lead.id)) ? 'selecionado' : ''}" draggable="true" data-id="\${lead.id}" style="\${classeDestaque.includes('atrasado') || classeDestaque.includes('reaquecer') ? '' : \`border-left-color:\${corBorda}\`}">
+    <div class="lead \${classeDestaque} \${SELECIONADOS.has(String(lead.id)) ? 'selecionado' : ''}" draggable="\${somenteLeitura(lead) ? 'false' : 'true'}" data-id="\${lead.id}" style="\${classeDestaque.includes('atrasado') || classeDestaque.includes('reaquecer') ? '' : \`border-left-color:\${corBorda}\`}">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:6px;">
         <div class="lead-nome">\${lead.nome || 'Sem nome'}\${botaoOuro}</div>
         \${lead.valor_imovel_sdr ? \`<span style="font-size:10px;font-weight:700;color:#17a34a;white-space:nowrap;">💰 \${lead.valor_imovel_sdr}</span>\` : ''}
       </div>
       <div class="lead-meta">\${lead.whatsapp || 'sem WhatsApp'}</div>
       \${dataEtapa ? \`<div class="lead-meta">Nessa etapa desde \${dataEtapa}</div>\` : ''}
+      \${somenteLeitura(lead) ? \`<span class="badge" style="background:#e8f0fe;color:#1a56db;border:1px solid #c3d7fb;">➡ Transferido para \${lead.corretor}</span>\` : ''}
       \${lead.origem ? \`<span class="badge origem">\${lead.origem}</span>\` : ''}
-      \${lead.veio_sdr ? \`<span class="badge" style="background:#fff1e0;color:#c2700a;border:1px solid #f2941c;" title="Reaquecido pela SDR e repassado ao corretor">🔁 SDR</span>\` : ''}
+      \${lead.tipo_sdr === 'novo' ? \`<span class="badge" style="background:#e3f8ee;color:#0f7a4a;border:1px solid #17a34a;" title="Lead novo de campanha, atendido do zero pela Bruna (SDR)">🆕 SDR · Atendido do zero</span>\` : (lead.tipo_sdr === 'reaquecido' || lead.veio_sdr) ? \`<span class="badge" style="background:#fff1e0;color:#c2700a;border:1px solid #f2941c;" title="Lead antigo reaquecido pela SDR">🔁 SDR · Reaquecido</span>\` : ''}
       \${badgeImovel(lead)}
       \${duplicado ? \`<span class="badge warn">⚠️ \${envolvidos.length}: \${envolvidos.join(', ')}</span>\` : ''}
       \${lead.corretor ? \`<div><span class="chip-corretor" style="border-color:\${corDoCorretor(lead.corretor)};color:\${corDoCorretor(lead.corretor)};background:\${corDoCorretor(lead.corretor)}1a">\${lead.corretor}</span></div>\` : ''}
@@ -964,6 +973,26 @@ function abrirModalLead(id) {
   const envolvidos = corretoresEnvolvidos(lead);
   const data = lead.distribuido_em ? new Date(lead.distribuido_em).toLocaleDateString('pt-BR') : '—';
   const waLink = lead.whatsapp ? \`https://wa.me/\${lead.whatsapp}\` : null;
+
+  if (somenteLeitura(lead)) {
+    document.getElementById('modal').innerHTML = \`
+      <h2>\${lead.nome || 'Sem nome'}</h2>
+      <div class="lead-meta">\${lead.whatsapp || 'sem WhatsApp'} · chegou em \${data}</div>
+      <div class="aviso-modal ok" style="margin-top:10px;">➡ Transferido para <b>\${lead.corretor}</b>\${lead.transferido_em ? ' em ' + formatarData(lead.transferido_em) : ''}. Você só acompanha — quem altera agora é o corretor.</div>
+      \${lead.origem ? \`<span class="badge origem">\${lead.origem}</span>\` : ''}
+      \${badgeImovel(lead)}
+      \${lead.valor_imovel_sdr ? \`<label>Valor do imóvel buscado</label><div>\${lead.valor_imovel_sdr}</div>\` : ''}
+      \${lead.notas_sdr ? \`<label>Notas</label><div style="white-space:pre-wrap;font-size:13px;">\${lead.notas_sdr}</div>\` : ''}
+      \${lead.buscando_sdr ? \`<label>O que está buscando</label><div style="white-space:pre-wrap;font-size:13px;">\${lead.buscando_sdr}</div>\` : ''}
+      <div class="modal-actions">
+        <button class="close-btn" id="modal-fechar">Fechar</button>
+        \${waLink ? \`<a class="wa-btn" href="\${waLink}" target="_blank">WhatsApp ↗</a>\` : ''}
+      </div>
+    \`;
+    document.getElementById('overlay').classList.add('show');
+    document.getElementById('modal-fechar').addEventListener('click', fecharModal);
+    return;
+  }
 
   document.getElementById('modal').innerHTML = \`
     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
@@ -1041,6 +1070,27 @@ function abrirModalLead(id) {
   });
   document.getElementById('modal-corretor').addEventListener('change', e => {
     const novoCorretor = e.target.value;
+    // Card da carteira da SDR indo pra um corretor = transferência: avisa o corretor no WhatsApp
+    // (mesmo formato do CRM da Bruna) e o card fica aqui só pra acompanhar.
+    if (novoCorretor && lead.carteira_sdr) {
+      if (!confirm('Transferir "' + (lead.nome || 'esse lead') + '" para ' + novoCorretor + '? Ele continua aqui só pra você acompanhar (sem editar) e o corretor é avisado no WhatsApp.')) {
+        e.target.value = '';
+        return;
+      }
+      salvarBlocoTexto(id, lead, () => {
+        fetch('/api/leads/' + id + '/transferir', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ para: novoCorretor, modo: 'reaquecimento' }) })
+          .then(r => r.json())
+          .then(data => {
+            if (!data.ok) { alert('Não transferiu: ' + (data.erro || 'erro')); e.target.value = ''; return; }
+            fecharModal();
+            carregar();
+            mostrarFlashSalvoGrande();
+            if (!data.avisado) alert('Transferido para ' + data.para + ', mas não consegui avisar no WhatsApp. Avise manualmente.');
+          })
+          .catch(() => { alert('Não consegui transferir. Confere a internet e tenta de novo.'); e.target.value = ''; });
+      });
+      return;
+    }
     salvarBlocoTexto(id, lead, () => {
       salvarCampo(id, 'corretor', novoCorretor, () => { render(); abrirModalLead(id); });
     });
