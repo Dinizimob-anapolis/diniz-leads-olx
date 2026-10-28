@@ -464,6 +464,7 @@ const JULIANE_HTML = `<!DOCTYPE html>
     <option value="TikTok">TikTok</option>
     <option value="Patrocinado">Patrocinado</option>
     <option value="Instagram">Instagram</option>
+    <option value="Facebook">📘 Facebook</option>
   </select>
   <button class="add-contato-btn" id="btn-atualizar" style="background:#fff;color:var(--accent);border:1px solid var(--accent);box-shadow:none;">↻ Atualizar</button>
   <button class="add-contato-btn" id="btn-salvar-backup" style="background:#fff;color:#17a34a;border:1px solid #17a34a;box-shadow:none;">💾 Salvar backup</button>
@@ -546,7 +547,7 @@ const CORES_COLUNA_FUNIL = {
 const COLUNA_TRIAGEM = 'Novo Lead';
 
 // Opções de canal/origem — mesmas do /dashboard, pra bater com o que já existe.
-const ORIGENS = ['OLX/Canal Pro', 'Meta Ads', 'Patrocinado', 'TikTok', 'Instagram', 'Comentário', 'SDR', 'Juliane', 'Outro'];
+const ORIGENS = ['OLX/Canal Pro', 'Meta Ads', 'Facebook', 'Patrocinado', 'TikTok', 'Instagram', 'Comentário', 'SDR', 'Juliane', 'Outro'];
 
 // Quadro por corretor — usado na aba principal da Juliane. As colunas são
 // montadas na hora, com base em quem realmente tem lead no sistema.
@@ -900,6 +901,7 @@ function cardHtml(lead, corBorda, mostrarOrigemTriagem, mostrarStatusSdr) {
       \${seloReaquecido}\${seloCanal}
       \${dataEtapa ? \`<div class="lead-meta">Nessa etapa desde \${dataEtapa}</div>\` : ''}
       \${lead.origem ? \`<span class="badge origem\${lead.origem === 'Meta Ads' ? '-meta' : ''}">\${lead.origem === 'Meta Ads' ? '📣 ' : ''}\${lead.origem}</span>\` : ''}
+      \${lead.veio_sdr ? \`<span class="badge" style="background:#fff1e0;color:#c2700a;border:1px solid #f2941c;" title="Reaquecido pela SDR e repassado ao corretor">🔁 SDR</span>\` : ''}
       \${lead.origem === 'Meta Ads' && lead.distribuido_em ? \`<div class="lead-meta" style="color:#2a5bd7;">📥 chegou \${new Date(lead.distribuido_em).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</div>\` : ''}
       \${badgeImovel(lead)}
       \${lead.corretor ? \`<div><span class="chip-corretor" style="border-color:\${corDoCorretor(lead.corretor)};color:\${corDoCorretor(lead.corretor)};background:\${corDoCorretor(lead.corretor)}1a">\${lead.corretor}</span></div>\` : ''}
