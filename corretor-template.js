@@ -216,6 +216,8 @@ const CORRETOR_HTML = `<!DOCTYPE html>
     50% { box-shadow: 0 0 0 3px var(--warn-border); }
   }
   .alerta-atrasadas {
+    cursor: pointer;
+    user-select: none;
     background: #e0453f;
     color: #fff;
     font-weight: 800;
@@ -226,6 +228,7 @@ const CORRETOR_HTML = `<!DOCTYPE html>
     margin-bottom: 12px;
     animation: piscar-alerta 1.1s ease-in-out infinite;
   }
+  .alerta-atrasadas.filtrando { background: #fff; color: #e0453f; border: 2px solid #e0453f; animation: none; }
   @keyframes piscar-alerta {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.35; }
@@ -557,18 +560,28 @@ function comParamCorretor(url) {
 
 // Faixa vermelha piscando no topo — avisa quando tem tarefa atrasada, sem
 // precisar recarregar os dados (a data já está nos leads carregados).
+let SO_ATRASADAS = false;
+function leadEstaAtrasado(l) {
+  const agora = new Date();
+  return !!(!somenteLeitura(l) && l.tarefa_data && new Date(l.tarefa_data) <= agora);
+}
 function atualizarAlertaAtrasadas() {
   const el = document.getElementById('alerta-atrasadas');
   if (!el) return;
   const agora = new Date();
   const atrasadas = TODOS_LEADS.filter(l => !somenteLeitura(l) && l.tarefa_data && new Date(l.tarefa_data) <= agora).length;
+  if (atrasadas === 0) SO_ATRASADAS = false;
   if (atrasadas > 0) {
     el.style.display = 'block';
-    el.textContent = \`⏰ Você tem \${atrasadas} tarefa\${atrasadas > 1 ? 's' : ''} atrasada\${atrasadas > 1 ? 's' : ''}!\`;
+    el.classList.toggle('filtrando', SO_ATRASADAS);
+    el.textContent = SO_ATRASADAS
+      ? \`👁 Mostrando só as \${atrasadas} atrasada\${atrasadas > 1 ? 's' : ''} — clique aqui pra voltar ao normal\`
+      : \`⏰ Você tem \${atrasadas} tarefa\${atrasadas > 1 ? 's' : ''} atrasada\${atrasadas > 1 ? 's' : ''}! Clique pra ver só elas\`;
   } else {
     el.style.display = 'none';
   }
 }
+document.getElementById('alerta-atrasadas').addEventListener('click', () => { SO_ATRASADAS = !SO_ATRASADAS; render(); });
 setInterval(atualizarAlertaAtrasadas, 60000);
 
 async function carregar() {
@@ -583,9 +596,10 @@ async function carregar() {
 }
 
 function leadsFiltrados() {
-  if (!BUSCA) return TODOS_LEADS;
+  let lista = SO_ATRASADAS ? TODOS_LEADS.filter(leadEstaAtrasado) : TODOS_LEADS;
+  if (!BUSCA) return lista;
   const b = BUSCA.toLowerCase();
-  return TODOS_LEADS.filter(l => (l.nome || '').toLowerCase().includes(b) || (l.whatsapp || '').includes(b));
+  return lista.filter(l => (l.nome || '').toLowerCase().includes(b) || (l.whatsapp || '').includes(b));
 }
 
 // Monta o CSV só com o que está realmente visível na tela agora (busca +
@@ -614,6 +628,7 @@ function exportarCSV() {
 }
 
 function render() {
+  atualizarAlertaAtrasadas();
   const leads = leadsFiltrados();
   const MEUS = TODOS_LEADS.filter(l => !somenteLeitura(l));
   const acompanhando = TODOS_LEADS.length - MEUS.length;
