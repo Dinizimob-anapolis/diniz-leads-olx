@@ -3584,7 +3584,7 @@ app.post('/api/leads/:id/transferir', basicAuthAdminOuSdr, async (req, res) => {
   try {
     const destino = TELEFONES_CORRETORES[normalizarTexto(String(req.body.para || ''))];
     if (!destino || normalizarTexto(destino.nome) === normalizarTexto(CORRETOR_ABERTO_PELA_SDR)) {
-      return res.status(400).json({ ok: false, erro: 'Escolha um corretor válido (que não seja a própria Bruna).' });
+      return res.status(400).json({ ok: false, erro: 'Esse corretor (' + String(req.body.para || '') + ') não tem WhatsApp cadastrado pra receber o lead. Escolha outro.' });
     }
     const d = await pool.query('SELECT id, nome, whatsapp, email, corretor, imovel_desc, origem, notas_sdr, buscando_sdr, valor_imovel_sdr, tarefa_sdr, tarefa_data, status_corretor, carteira_sdr, status, reaquecido_em, transferido_por FROM leads WHERE id = $1', [req.params.id]);
     if (!d.rows.length) return res.status(404).json({ ok: false, erro: 'Lead não encontrado' });
