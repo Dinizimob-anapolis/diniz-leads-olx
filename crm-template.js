@@ -1165,6 +1165,26 @@ function ligarEventosChips(id, lead, chipsContainer) {
           return;
         }
         nome = nome.trim();
+        // Card da carteira da SDR indo pra um corretor = transferência (avisa o corretor no WhatsApp
+        // e o card fica aqui só pra acompanhar), igual ao campo Corretor.
+        if (lead.carteira_sdr) {
+          if (!confirm('Transferir "' + (lead.nome || 'esse lead') + '" para ' + nome + '? Ele continua aqui só pra você acompanhar (sem editar) e o corretor é avisado no WhatsApp.')) {
+            chipsContainer.innerHTML = renderChipsCorretores(lead);
+            ligarEventosChips(id, lead, chipsContainer);
+            return;
+          }
+          fetch('/api/leads/' + id + '/transferir', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ para: nome, modo: 'reaquecimento' }) })
+            .then(r => r.json())
+            .then(data => {
+              if (!data.ok) { alert('Não transferiu: ' + (data.erro || 'erro')); chipsContainer.innerHTML = renderChipsCorretores(lead); ligarEventosChips(id, lead, chipsContainer); return; }
+              fecharModal();
+              carregar();
+              mostrarFlashSalvoGrande();
+              if (!data.avisado) alert('Transferido para ' + data.para + ', mas não consegui avisar no WhatsApp. Avise manualmente.');
+            })
+            .catch(() => { alert('Não consegui transferir. Confere a internet e tenta de novo.'); });
+          return;
+        }
         const atual = corretoresRepassadosLista(lead);
         if (!atual.includes(nome)) atual.push(nome);
         const valorChips = atual.join(', ');
