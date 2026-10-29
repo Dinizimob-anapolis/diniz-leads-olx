@@ -954,6 +954,7 @@ function cardHtml(lead, corBorda) {
       <div class="lead-meta">\${lead.whatsapp || 'sem WhatsApp'}</div>
       \${dataEtapa ? \`<div class="lead-meta">Nessa etapa desde \${dataEtapa}</div>\` : ''}
       \${somenteLeitura(lead) ? \`<span class="badge" style="background:#e8f0fe;color:#1a56db;border:1px solid #c3d7fb;">➡ Transferido para \${lead.corretor}</span>\` : ''}
+      \${somenteLeitura(lead) ? \`<span class="badge" style="background:#f1f5ff;color:#3b4cca;border:1px solid #c3d7fb;">📌 Coluna do corretor: \${lead.status_corretor || 'Novo'}</span>\` : ''}
       \${lead.origem ? \`<span class="badge origem">\${lead.origem}</span>\` : ''}
       \${lead.tipo_sdr === 'novo' ? \`<span class="badge" style="background:#e3f8ee;color:#0f7a4a;border:1px solid #17a34a;" title="Lead novo de campanha, atendido do zero pela Bruna (SDR)">🆕 SDR · Atendido do zero</span>\` : (lead.tipo_sdr === 'reaquecido' || lead.veio_sdr) ? \`<span class="badge" style="background:#fff1e0;color:#c2700a;border:1px solid #f2941c;" title="Lead antigo reaquecido pela SDR">🔁 SDR · Reaquecido</span>\` : ''}
       \${badgeImovel(lead)}
@@ -983,6 +984,15 @@ function abrirModalLead(id) {
       <div class="aviso-modal ok" style="margin-top:10px;">➡ Transferido para <b>\${lead.corretor}</b>\${lead.transferido_em ? ' em ' + formatarData(lead.transferido_em) : ''}. Você só acompanha — quem altera agora é o corretor.</div>
       \${lead.origem ? \`<span class="badge origem">\${lead.origem}</span>\` : ''}
       \${badgeImovel(lead)}
+      <label>Situação no CRM do corretor</label>
+      <div style="font-size:13px;"><b>Coluna:</b> \${lead.status_corretor || 'Novo'}\${lead.status_corretor_alterado_em ? ' <span style="color:var(--muted);">(desde ' + formatarData(lead.status_corretor_alterado_em) + ')</span>' : ''}</div>
+      <div style="font-size:13px;"><b>Corretor:</b> \${lead.corretor}</div>
+      <div style="font-size:13px;"><b>Transferido:</b> \${lead.transferido_em ? formatarData(lead.transferido_em) : '—'} · por \${lead.transferido_por || '—'}</div>
+      \${lead.email ? \`<div style="font-size:13px;"><b>Email:</b> \${lead.email}</div>\` : ''}
+      \${lead.status ? \`<div style="font-size:13px;"><b>Status no reaquecimento:</b> \${lead.status}</div>\` : ''}
+      \${lead.ultima_atualizacao_sdr ? \`<div style="font-size:13px;"><b>Atualizado até:</b> \${formatarData(lead.ultima_atualizacao_sdr)}</div>\` : ''}
+      \${lead.tarefa_sdr ? \`<div style="font-size:13px;"><b>Última tarefa:</b> \${lead.tarefa_sdr}\${lead.tarefa_data ? ' (' + new Date(lead.tarefa_data).toLocaleString('pt-BR') + ')' : ''}</div>\` : ''}
+      \${envolvidos.length > 1 ? \`<div style="font-size:13px;"><b>Já passou por:</b> \${envolvidos.join(', ')}</div>\` : ''}
       \${lead.valor_imovel_sdr ? \`<label>Valor do imóvel buscado</label><div>\${lead.valor_imovel_sdr}</div>\` : ''}
       \${lead.notas_sdr ? \`<label>Notas</label><div style="white-space:pre-wrap;font-size:13px;">\${lead.notas_sdr}</div>\` : ''}
       \${lead.buscando_sdr ? \`<label>O que está buscando</label><div style="white-space:pre-wrap;font-size:13px;">\${lead.buscando_sdr}</div>\` : ''}
