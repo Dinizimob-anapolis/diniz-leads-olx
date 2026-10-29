@@ -2748,7 +2748,7 @@ app.get('/api/leads/carteira-sdr', basicAuthAdminOuSdr, semCorretor, async (req,
     const result = await pool.query(
       `SELECT id, whatsapp, nome, corretor, origem, imovel_desc, imovel_codigo, status, distribuido_em,
               outros_corretores, notas_sdr, reaquecido_em, tarefa_sdr, corretores_repassados,
-              status_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr, tarefa_data, aprovado, visita, proposta, documentacao, venda, cliente_ouro, carteira_sdr, transferido_por, transferido_em,
+              status_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr, tarefa_data, aprovado, visita, proposta, documentacao, venda, cliente_ouro, carteira_sdr, transferido_por, transferido_em, status_corretor, status_corretor_alterado_em, email,
               (status = 'Repassado ao corretor' OR reaquecido_em IS NOT NULL OR reaquecido_sdr IS TRUE) AS veio_sdr,
               CASE WHEN transferido_por = 'Bruna SDR' THEN 'novo'
                    WHEN transferido_por = 'SDR Reaquecimento' OR status = 'Repassado ao corretor' OR reaquecido_em IS NOT NULL OR reaquecido_sdr IS TRUE THEN 'reaquecido'
