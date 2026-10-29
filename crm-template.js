@@ -1072,7 +1072,7 @@ function abrirModalLead(id) {
     const novoCorretor = e.target.value;
     // Card da carteira da SDR indo pra um corretor = transferência: avisa o corretor no WhatsApp
     // (mesmo formato do CRM da Bruna) e o card fica aqui só pra acompanhar.
-    if (novoCorretor && lead.carteira_sdr) {
+    if (novoCorretor && !somenteLeitura(lead)) {
       if (!confirm('Transferir "' + (lead.nome || 'esse lead') + '" para ' + novoCorretor + '? Ele continua aqui só pra você acompanhar (sem editar) e o corretor é avisado no WhatsApp.')) {
         e.target.value = '';
         return;
@@ -1167,7 +1167,7 @@ function ligarEventosChips(id, lead, chipsContainer) {
         nome = nome.trim();
         // Card da carteira da SDR indo pra um corretor = transferência (avisa o corretor no WhatsApp
         // e o card fica aqui só pra acompanhar), igual ao campo Corretor.
-        if (lead.carteira_sdr) {
+        if (!somenteLeitura(lead)) {
           if (!confirm('Transferir "' + (lead.nome || 'esse lead') + '" para ' + nome + '? Ele continua aqui só pra você acompanhar (sem editar) e o corretor é avisado no WhatsApp.')) {
             chipsContainer.innerHTML = renderChipsCorretores(lead);
             ligarEventosChips(id, lead, chipsContainer);
