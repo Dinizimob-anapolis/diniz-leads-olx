@@ -517,6 +517,8 @@ function corretoresEnvolvidos(lead) {
 }
 
 const PALETA_CORES = ['#3b6cf0', '#e0453f', '#f2941c', '#12b76a', '#9b4de0', '#e8479e', '#0aa5c2', '#c9a20a'];
+// Só quem tem WhatsApp cadastrado pra receber o aviso da transferência.
+const DESTINOS_TRANSFERENCIA = ['Junior', 'Laís', 'Patricia', 'Michelle', 'Renata', 'Cyda', 'Lucas', 'Rubens'];
 const NOMES_OFICIAIS_CORRETORES = ['Junior', 'Laís', 'Patricia', 'Michelle', 'Renata', 'Bruno', 'Juliane', 'Amanda', 'Cyda', 'Bruna SDR', 'Lucas', 'Nalcio'];
 function normalizarNomeCorretor(nomeDigitado) {
   const chave = (nomeDigitado || '').trim();
@@ -1012,8 +1014,8 @@ function abrirModalLead(id) {
 
     <label>Corretor</label>
     <select id="modal-corretor">
-      <option value="" \${!lead.corretor ? 'selected' : ''}>— Repassado ao corretor (sem corretor ainda) —</option>
-      \${NOMES_OFICIAIS_CORRETORES.map(c => \`<option value="\${c}" \${lead.corretor === c ? 'selected' : ''}>\${c}</option>\`).join('')}
+      <option value="" selected>\${lead.corretor ? 'Atual: ' + lead.corretor + ' — escolha pra transferir' : '— Escolha o corretor pra transferir —'}</option>
+      \${DESTINOS_TRANSFERENCIA.filter(c => c !== lead.corretor).map(c => \`<option value="\${c}">\${c}</option>\`).join('')}
     </select>
     \${lead.corretor ? \`<div style="margin-top:6px;"><span class="chip-corretor" style="border-color:\${corDoCorretor(lead.corretor)};color:\${corDoCorretor(lead.corretor)};background:\${corDoCorretor(lead.corretor)}1a">\${lead.corretor}</span></div>\` : ''}
 
@@ -1148,8 +1150,7 @@ function ligarEventosChips(id, lead, chipsContainer) {
       select.style.borderRadius = '8px';
       select.style.border = '1px solid var(--card-border)';
       select.innerHTML = '<option value="">Escolher corretor...</option>' +
-        NOMES_OFICIAIS_CORRETORES.map(n => \`<option value="\${n}">\${n}</option>\`).join('') +
-        '<option value="__outro">Outro (digitar)...</option>';
+        DESTINOS_TRANSFERENCIA.map(n => \`<option value="\${n}">\${n}</option>\`).join('');
       addBtn.replaceWith(select);
       select.focus();
 
