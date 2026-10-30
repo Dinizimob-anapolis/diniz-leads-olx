@@ -846,7 +846,7 @@ function abrirModalLead(id) {
     <input type="text" id="modal-tarefa" placeholder="Próximo passo, ex: ligar amanhã 14h" value="\${lead.tarefa_sdr || ''}">
 
     <label>Prazo da tarefa</label>
-    <input type="datetime-local" id="modal-tarefa-data" value="\${lead.tarefa_data ? new Date(lead.tarefa_data).toISOString().slice(0, 16) : ''}">
+    <input type="datetime-local" id="modal-tarefa-data" value="\${lead.tarefa_data ? new Date(new Date(lead.tarefa_data).getTime() - new Date(lead.tarefa_data).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : ''}">
     \${lead.tarefa_sdr || lead.tarefa_data ? '<button type="button" class="close-btn" id="modal-tarefa-concluida" style="width:100%;margin-top:6px;color:#17a34a;border-color:#a8ecca;">✓ Tarefa concluída</button>' : ''}
 
     <div style="display:flex;gap:8px;">
