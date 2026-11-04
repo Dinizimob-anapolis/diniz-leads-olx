@@ -209,6 +209,12 @@ const JULIANE_HTML = `<!DOCTYPE html>
     cursor: pointer;
   }
   .btn-historico:hover { background: #e0e4ee; }
+  .visitas-box { display: flex; align-items: center; gap: 10px; margin-top: 4px; }
+  .vis-btn { width: 38px; height: 38px; border-radius: 10px; border: 1px solid var(--card-border, #d8dce6); background: #fff; font-size: 22px; font-weight: 700; line-height: 1; cursor: pointer; font-family: inherit; }
+  .vis-btn:hover { background: #f1f4fb; }
+  .vis-num { min-width: 34px; text-align: center; font-size: 26px; font-weight: 800; }
+  .vis-txt { font-size: 12.5px; color: #6b7280; }
+  .selo-visitas { display: inline-block; margin-top: 5px; font-size: 11px; font-weight: 700; color: #1a56db; background: #e8f0fe; border: 1px solid #c3d7fb; border-radius: 999px; padding: 2px 8px; }
   .btn-ouro {
     position: absolute;
     top: 8px;
@@ -719,11 +725,14 @@ function render() {
   const reaquecerCount = leadsBase.filter(temHistoricoDuplicado).length;
 
   const vgvTotal = leadsBase.reduce((soma, lead) => soma + parseValorImovel(lead.valor_imovel_sdr), 0);
+  const visitasTotal = leadsBase.reduce((soma, lead) => soma + (visitaContabilizada(lead) ? (parseInt(lead.visitas_qtd, 10) || 0) : 0), 0);
+  const clientesComVisita = leadsBase.filter(visitaContabilizada).length;
 
   document.getElementById('stats').innerHTML = \`
     <div class="stat"><span class="num">\${leadsBase.length}</span>\${ABA_CRM === 'sdr' ? 'na carteira' : 'no sistema'}</div>
     <div class="stat" style="color:#b5720a"><span class="num">\${reaquecerCount}</span>pra reaquecer</div>
     \${vgvTotal > 0 ? \`<div class="stat" style="color:#17a34a"><span class="num">\${formatarReais(vgvTotal)}</span>VGV total</div>\` : ''}
+    \${visitasTotal > 0 ? \`<div class="stat" style="color:#1a56db"><span class="num">\${visitasTotal}</span>visitas feitas (\${clientesComVisita} cliente\${clientesComVisita > 1 ? 's' : ''})</div>\` : ''}
     <button class="stat" id="btn-trocar-aba" style="cursor:pointer;border:1px solid var(--accent);color:var(--accent);font-weight:700;font-family:inherit;background:#fff;" onclick="trocarAba('\${ABA_CRM === 'sdr' ? 'juliane' : 'sdr'}')">\${ABA_CRM === 'sdr' ? '← Voltar pro quadro por corretor' : 'Ver CRM da SDR →'}</button>
   \`;
 
@@ -878,6 +887,9 @@ function cardHtml(lead, corBorda, mostrarOrigemTriagem, mostrarStatusSdr) {
   // mas discreto, sem chamar muita atenção — se a SDR reaqueceu esse
   // contato, é só uma informação a mais. Já o selo "Canal" (chegou puro,
   // sem corretor) só faz sentido mostrar na triagem.
+  const seloVisitas = (parseInt(lead.visitas_qtd, 10) || 0) > 0
+    ? \`<div class="selo-visitas" \${visitaContabilizada(lead) ? '' : 'style="color:#6b7280;background:#f1f3f7;border-color:#d8dce6;" title="Ainda não entra na contagem: precisa ficar mais de 10h na coluna Visita"'}>🏠 \${parseInt(lead.visitas_qtd, 10)} visita\${parseInt(lead.visitas_qtd, 10) > 1 ? 's' : ''}\${visitaContabilizada(lead) ? '' : ' · a confirmar'}</div>\`
+    : '';
   const seloReaquecido = lead.reaquecido_em
     ? \`<div style="color:#c96a12;font-weight:600;font-size:10.5px;margin-top:5px;">🔥 reaquecido</div>\`
     : '';
@@ -899,7 +911,7 @@ function cardHtml(lead, corBorda, mostrarOrigemTriagem, mostrarStatusSdr) {
         \${lead.valor_imovel_sdr ? \`<span style="font-size:10px;font-weight:700;color:#17a34a;white-space:nowrap;">💰 \${lead.valor_imovel_sdr}</span>\` : ''}
       </div>
       <div class="lead-meta">\${lead.whatsapp || 'sem WhatsApp'}</div>
-      \${seloReaquecido}\${seloCanal}
+      \${seloVisitas}\${seloReaquecido}\${seloCanal}
       \${dataEtapa ? \`<div class="lead-meta">Nessa etapa desde \${dataEtapa}</div>\` : ''}
       \${lead.origem ? \`<span class="badge origem\${lead.origem === 'Meta Ads' ? '-meta' : ''}">\${lead.origem === 'Meta Ads' ? '📣 ' : ''}\${lead.origem}</span>\` : ''}
       \${lead.tipo_sdr === 'novo' ? \`<span class="badge" style="background:#e3f8ee;color:#0f7a4a;border:1px solid #17a34a;" title="Lead novo de campanha, atendido do zero pela Bruna (SDR)">🆕 SDR · Atendido do zero</span>\` : (lead.tipo_sdr === 'reaquecido' || lead.veio_sdr) ? \`<span class="badge" style="background:#fff1e0;color:#c2700a;border:1px solid #f2941c;" title="Lead antigo reaquecido pela SDR">🔁 SDR · Reaquecido</span>\` : ''}
@@ -970,6 +982,17 @@ function abrirModalLead(id) {
         <input type="text" id="modal-valor-imovel" placeholder="Ex: R$ 350.000" value="\${lead.valor_imovel_sdr || ''}">
       </div>
     </div>
+
+    \${mostrarCampoVisitas(lead) ? \`
+    <label>Visitas com este cliente</label>
+    <div class="visitas-box">
+      <button type="button" class="vis-btn" onclick="ajustarVisitas('\${lead.id}', -1)" aria-label="Diminuir visitas">−</button>
+      <span class="vis-num" id="vis-num">\${parseInt(lead.visitas_qtd, 10) || 0}</span>
+      <button type="button" class="vis-btn" onclick="ajustarVisitas('\${lead.id}', 1)" aria-label="Aumentar visitas">+</button>
+      <span class="vis-txt" id="vis-txt">\${(parseInt(lead.visitas_qtd, 10) || 0) === 1 ? 'imóvel visitado com este cliente' : 'imóveis visitados com este cliente'}</span>
+    </div>
+
+    \` : ''}
 
     <label>Etapa da venda</label>
     <div class="etapas-venda" id="etapas-venda">
@@ -1294,6 +1317,41 @@ async function salvarUmCampoComRetry(id, campo, valor, tentativas = 3) {
 async function salvarCamposComRetry(id, campos) {
   const resultados = await Promise.all(campos.map(([campo, valor]) => salvarUmCampoComRetry(id, campo, valor)));
   if (resultados.some(ok => !ok)) throw new Error('Falha ao salvar um ou mais campos');
+}
+
+const LISTA_LEADS_VISITAS = { find: (fn) => leadsAtivos().find(fn) };
+// O campo de visitas aparece quando o card está na coluna Visita ou em qualquer
+// etapa depois dela (ou se já tem visita registrada, pra o número não sumir).
+const ETAPAS_DEPOIS_DA_VISITA = ['Aguardando documentação', 'Aguardando aprovação', 'Aprovado', 'Em negociação', 'Venda'];
+function mostrarCampoVisitas(lead) {
+  if ((parseInt(lead.visitas_qtd, 10) || 0) > 0) return true;
+  return lead.status_corretor === 'Visita' || ETAPAS_DEPOIS_DA_VISITA.includes(lead.status_corretor);
+}
+// Só CONTA no total depois de confirmada: o card precisa ter ficado mais de 10h
+// na coluna Visita (tempo da Juliane conferir se não foi engano) ou já ter
+// avançado pras etapas seguintes. Card movido por engano e desfeito não conta.
+function visitaContabilizada(lead) {
+  if ((parseInt(lead.visitas_qtd, 10) || 0) <= 0) return false;
+  if (ETAPAS_DEPOIS_DA_VISITA.includes(lead.status_corretor)) return true;
+  if (lead.status_corretor !== 'Visita' || !lead.status_corretor_alterado_em) return false;
+  const desde = new Date(lead.status_corretor_alterado_em).getTime();
+  return !isNaN(desde) && (Date.now() - desde) > 10 * 60 * 60 * 1000;
+}
+
+function ajustarVisitas(id, delta) {
+  const lead = LISTA_LEADS_VISITAS.find(l => String(l.id) === String(id));
+  if (!lead) return;
+  const novo = Math.max(0, Math.min(99, (parseInt(lead.visitas_qtd, 10) || 0) + delta));
+  if (novo === (parseInt(lead.visitas_qtd, 10) || 0)) return;
+  lead.visitas_qtd = novo;
+  if (novo > 0) lead.visita = true;
+  const chk = document.querySelector('#etapas-venda input[data-campo="visita"]');
+  if (chk && novo > 0) { chk.checked = true; const lb = chk.closest('.etapa-item'); if (lb) lb.classList.add('marcada'); }
+  const el = document.getElementById('vis-num');
+  if (el) el.textContent = novo;
+  const txt = document.getElementById('vis-txt');
+  if (txt) txt.textContent = novo === 1 ? 'imóvel visitado com este cliente' : 'imóveis visitados com este cliente';
+  salvarCampo(id, 'visitas_qtd', novo, () => { render(); });
 }
 
 function alternarClienteOuro(id, novoValor) {
