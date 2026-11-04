@@ -199,6 +199,11 @@ const CRM_HTML = `<!DOCTYPE html>
   .lead.reaquecer { border-color: var(--warn-border); background: linear-gradient(180deg, var(--warn-bg), var(--card) 32px); }
   .lead.atrasado { border-color: #e0453f !important; background: linear-gradient(180deg, #fdecec, var(--card) 32px); box-shadow: 0 0 0 2px #e0453f33; }
   .lead.cliente-ouro { border-color: #d4a017 !important; background: linear-gradient(180deg, #ffe58a, var(--card) 90px); box-shadow: 0 0 0 3px #f2c94c; }
+  .btn-editar-contato { font: inherit; font-size: 11.5px; font-weight: 700; margin-left: 8px; padding: 2px 9px; border-radius: 999px; border: 1px solid #c3d7fb; background: #e8f0fe; color: #1a56db; cursor: pointer; }
+  .painel-contato { display: none; margin-top: 8px; padding: 10px 12px; border: 1px dashed #c3d7fb; border-radius: 10px; background: #f7faff; }
+  .painel-contato .acoes-contato { display: flex; gap: 8px; margin-top: 8px; }
+  .painel-contato .aviso-contato { font-size: 12.5px; color: #c0392b; margin-top: 6px; min-height: 16px; }
+  .badge-select { display: inline-block; font-size: 11.5px; font-weight: 700; padding: 3px 6px; border-radius: 10px; margin-top: 6px; margin-right: 4px; background: #eef0f6; border: 1px solid #d8dce6; width: auto; }
   .btn-ouro {
     position: absolute;
     top: 8px;
@@ -1023,8 +1028,19 @@ function abrirModalLead(id) {
       <h2>\${lead.nome || 'Sem nome'}<button class="btn-ouro modal-versao \${lead.cliente_ouro ? 'ativo' : ''}" onclick="alternarClienteOuro('\${lead.id}', \${!lead.cliente_ouro})" title="\${lead.cliente_ouro ? 'Cliente Ouro — clique pra desmarcar' : 'Marcar como Cliente Ouro'}">⭐</button></h2>
       <span id="badge-valor-imovel">\${lead.valor_imovel_sdr ? \`<span class="badge" style="background:#eafcea;color:#17a34a;border:1px solid #a8ecca;white-space:nowrap;">💰 \${lead.valor_imovel_sdr}</span>\` : ''}</span>
     </div>
-    <div class="lead-meta">\${lead.whatsapp || 'sem WhatsApp'} · chegou em \${data}</div>
-    \${lead.origem ? \`<span class="badge origem">\${lead.origem}</span>\` : ''}
+    <div class="lead-meta">\${lead.whatsapp || 'sem WhatsApp'} · chegou em \${data}<button type="button" class="btn-editar-contato" onclick="abrirEdicaoContato()">✎ Corrigir contato</button></div>
+    <div class="painel-contato" id="painel-contato">
+      <label>Nome</label>
+      <input type="text" id="ed-nome" value="\${(lead.nome || '').replace(/"/g, '&quot;')}">
+      <label>WhatsApp (com DDD)</label>
+      <input type="text" id="ed-whats" inputmode="tel" placeholder="(62) 99999-9999" value="\${lead.whatsapp || ''}">
+      <div class="aviso-contato" id="ed-aviso"></div>
+      <div class="acoes-contato">
+        <button type="button" class="primary-btn" onclick="salvarContato('\${lead.id}')">Salvar contato</button>
+        <button type="button" class="close-btn" onclick="abrirEdicaoContato()">Cancelar</button>
+      </div>
+    </div>
+    <select id="modal-origem" class="badge-select"><option value="" \${!lead.origem ? 'selected' : ''}>— sem canal —</option>\${(ORIGENS.includes(lead.origem) || !lead.origem ? ORIGENS : [lead.origem, ...ORIGENS]).map(o => \`<option value="\${o}" \${lead.origem === o ? 'selected' : ''}>\${o}</option>\`).join('')}</select>
       \${badgeImovel(lead)}
     \${duplicado ? \`<span class="badge warn">⚠️ Já foi para \${envolvidos.length}: \${envolvidos.join(', ')} — não reenvie, reaqueça direto</span>\` : (lead.corretor ? \`<span class="badge origem">Corretor: \${lead.corretor}</span>\` : '')}
 
@@ -1084,6 +1100,13 @@ function abrirModalLead(id) {
     if (!confirm(\`Remover "\${lead.nome || 'esse contato'}" da sua carteira? Ele some do seu Kanban, mas continua no sistema.\`)) return;
     salvarCampo(id, 'carteira_sdr', false, () => { fecharModal(); carregar(); });
   });
+  const selectOrigem = document.getElementById('modal-origem');
+  if (selectOrigem) {
+    selectOrigem.addEventListener('change', e => {
+      lead.origem = e.target.value;
+      salvarCampo(id, 'origem', e.target.value, () => { render(); flashModal(); });
+    });
+  }
   document.getElementById('modal-status').addEventListener('change', e => {
     const novoStatus = e.target.value;
     // Salva primeiro o que estiver digitado (notas, tarefa etc.) antes de
@@ -1403,6 +1426,48 @@ async function salvarUmCampoComRetry(id, campo, valor, tentativas = 3) {
 async function salvarCamposComRetry(id, campos) {
   const resultados = await Promise.all(campos.map(([campo, valor]) => salvarUmCampoComRetry(id, campo, valor)));
   if (resultados.some(ok => !ok)) throw new Error('Falha ao salvar um ou mais campos');
+}
+
+const LEAD_POR_ID = (id) => TODOS_LEADS.find(l => String(l.id) === String(id));
+function abrirEdicaoContato() {
+  const p = document.getElementById('painel-contato');
+  if (p) p.style.display = p.style.display === 'block' ? 'none' : 'block';
+}
+
+async function patchLeadComErro(id, campo, valor) {
+  const res = await fetch(\`/api/leads/\${id}\`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ campo, valor }),
+  });
+  let data = {};
+  try { data = await res.json(); } catch (e) {}
+  if (!res.ok || data.ok === false) throw new Error(data.erro || 'Não consegui salvar.');
+  return data;
+}
+
+async function salvarContato(id) {
+  const lead = LEAD_POR_ID(id);
+  const aviso = document.getElementById('ed-aviso');
+  if (!lead || !aviso) return;
+  aviso.textContent = '';
+  const nome = document.getElementById('ed-nome').value.trim();
+  const whats = document.getElementById('ed-whats').value.trim();
+  try {
+    if (whats && whats !== String(lead.whatsapp || '')) {
+      const r = await patchLeadComErro(id, 'whatsapp', whats);
+      lead.whatsapp = r.whatsapp || whats;
+      lead.numero_invalido = false;
+    }
+    if (nome && nome !== (lead.nome || '')) {
+      await patchLeadComErro(id, 'nome', nome);
+      lead.nome = nome;
+    }
+    render();
+    abrirModalLead(id);
+  } catch (err) {
+    aviso.textContent = err.message || 'Não consegui salvar.';
+  }
 }
 
 function alternarClienteOuro(id, novoValor) {
