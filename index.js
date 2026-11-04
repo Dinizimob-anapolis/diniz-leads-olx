@@ -3753,24 +3753,24 @@ app.patch('/api/leads/:id', basicAuthAdminOuSdr, async (req, res) => {
       // falsos mesmo com o lead já avançado no board dele. Usa a ordem das
       // colunas do corretor pra saber até onde o lead já chegou (cada etapa
       // continua marcada nas seguintes, tipo um funil):
-      //   Aguardando documentação(2) < Aguardando aprovação(3) < Aprovado(4)
-      //   < Visita(5) < Em negociação/Proposta(6) < Venda(7)
+      //   Visita(2) < Aguardando documentação(3) < Aguardando aprovação(4)
+      //   < Aprovado(5) < Em negociação/Proposta(6) < Venda(7)
       // "Aprovado"/"Documentação"/"Visita"/"Proposta"/"Venda" são marco
       // alcançado (não desmarca sozinho se o corretor arrastar pra trás por
       // engano); sem_retorno reflete a coluna atual (some se ele sair dali).
       const RANK_STATUS_CORRETOR = {
-        'Aguardando documentação': 2,
-        'Aguardando aprovação': 3,
-        'Aprovado': 4,
-        'Visita': 5,
+        'Visita': 2,
+        'Aguardando documentação': 3,
+        'Aguardando aprovação': 4,
+        'Aprovado': 5,
         'Em negociação': 6,
         'Venda': 7,
       };
       const rank = RANK_STATUS_CORRETOR[valorFinal] || 0;
       const contatouFlag = valorFinal !== 'Novo';
-      const documentacaoFlag = rank >= 2;
-      const aprovadoFlag = rank >= 4;
-      const visitaFlag = rank >= 5;
+      const documentacaoFlag = rank >= 3;
+      const aprovadoFlag = rank >= 5;
+      const visitaFlag = rank >= 2;
       const propostaFlag = rank >= 6;
       const vendaFlag = rank >= 7;
       const semRetornoFlag = valorFinal === 'Sem retorno';
