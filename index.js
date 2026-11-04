@@ -216,7 +216,7 @@ async function carregarCorretoresExtra() {
 const THROTTLE_AVISO_MS = 6 * 60 * 60 * 1000; // 6 horas
 
 // Campos do funil que podem ser editados manualmente pelo dashboard
-const CAMPOS_EDITAVEIS = ['visitas_qtd', 'nome', 'origem', 'corretor', 'interesse', 'status', 'aprovado', 'visita', 'proposta', 'venda', 'imovel_desc', 'sem_retorno', 'em_andamento', 'notas_sdr', 'carteira_sdr', 'tarefa_sdr', 'tarefa_data', 'corretores_repassados', 'ultima_atualizacao_sdr', 'valor_imovel_sdr', 'carteira_juliane', 'buscando_sdr', 'documentacao', 'status_corretor', 'tipo_lead', 'cliente_ouro'];
+const CAMPOS_EDITAVEIS = ['whatsapp', 'visitas_qtd', 'nome', 'origem', 'corretor', 'interesse', 'status', 'aprovado', 'visita', 'proposta', 'venda', 'imovel_desc', 'sem_retorno', 'em_andamento', 'notas_sdr', 'carteira_sdr', 'tarefa_sdr', 'tarefa_data', 'corretores_repassados', 'ultima_atualizacao_sdr', 'valor_imovel_sdr', 'carteira_juliane', 'buscando_sdr', 'documentacao', 'status_corretor', 'tipo_lead', 'cliente_ouro'];
 
 async function initDb() {
   if (!process.env.DATABASE_URL) {
@@ -1992,8 +1992,8 @@ const CAMPOS_EDITAVEIS_CORRETOR = ['status_corretor', 'visitas_qtd', 'notas_sdr'
 
 // Campos que a SDR pode editar pelo CRM — o resto (aprovado, visita, proposta,
 // venda, corretor, origem etc.) continua só pra quem loga como admin.
-const CAMPOS_EDITAVEIS_SDR = ['status', 'notas_sdr', 'carteira_sdr', 'tarefa_sdr', 'tarefa_data', 'corretores_repassados', 'ultima_atualizacao_sdr', 'valor_imovel_sdr', 'buscando_sdr', 'aprovado', 'visita', 'proposta', 'documentacao', 'venda', 'corretor', 'cliente_ouro'];
-const CAMPOS_EDITAVEIS_JULIANE = ['status', 'visitas_qtd', 'notas_sdr', 'carteira_juliane', 'tarefa_sdr', 'tarefa_data', 'corretores_repassados', 'ultima_atualizacao_sdr', 'valor_imovel_sdr', 'buscando_sdr', 'corretor', 'aprovado', 'visita', 'proposta', 'documentacao', 'venda', 'origem', 'status_corretor', 'cliente_ouro'];
+const CAMPOS_EDITAVEIS_SDR = ['whatsapp', 'nome', 'origem', 'status', 'notas_sdr', 'carteira_sdr', 'tarefa_sdr', 'tarefa_data', 'corretores_repassados', 'ultima_atualizacao_sdr', 'valor_imovel_sdr', 'buscando_sdr', 'aprovado', 'visita', 'proposta', 'documentacao', 'venda', 'corretor', 'cliente_ouro'];
+const CAMPOS_EDITAVEIS_JULIANE = ['whatsapp', 'nome', 'status', 'visitas_qtd', 'notas_sdr', 'carteira_juliane', 'tarefa_sdr', 'tarefa_data', 'corretores_repassados', 'ultima_atualizacao_sdr', 'valor_imovel_sdr', 'buscando_sdr', 'corretor', 'aprovado', 'visita', 'proposta', 'documentacao', 'venda', 'origem', 'status_corretor', 'cliente_ouro'];
 
 // ─── ROTAS: CORRETORES ADICIONADOS PELO PAINEL ───────────────
 // Listar: admin/SDR/Juliane. Criar e remover: só Juliane ou admin.
@@ -3720,6 +3720,13 @@ app.patch('/api/leads/:id', basicAuthAdminOuSdr, async (req, res) => {
   if (campo === 'visitas_qtd') {
     valorFinal = Math.max(0, Math.min(99, parseInt(valor, 10) || 0));
   }
+  if (campo === 'nome') {
+    valorFinal = String(valor || '').trim().slice(0, 120);
+    if (!valorFinal) return res.status(400).json({ ok: false, erro: 'O nome não pode ficar vazio.' });
+  }
+  if (campo === 'origem') {
+    valorFinal = String(valor || '').trim().slice(0, 60) || null;
+  }
   const CAMPOS_DE_DATA = ['ultima_atualizacao_sdr', 'tarefa_data', 'ultimo_contato'];
   if (CAMPOS_DE_DATA.includes(campo) && valorFinal === '') {
     valorFinal = null;
@@ -3826,6 +3833,21 @@ app.patch('/api/leads/:id', basicAuthAdminOuSdr, async (req, res) => {
           [valorFinal, id]
         );
       }
+    } else if (campo === 'whatsapp') {
+      // Corrige o número do contato (ex.: card criado com número errado).
+      const novo = canonicalizarWhatsapp(valor);
+      if (!novo) {
+        return res.status(400).json({ ok: false, erro: 'Número inválido. Digite com DDD, por exemplo (62) 99999-9999.' });
+      }
+      const dup = await pool.query('SELECT id, nome FROM leads WHERE whatsapp = $1 AND id <> $2 LIMIT 1', [novo, id]);
+      if (dup.rows.length) {
+        return res.status(409).json({ ok: false, erro: `Esse número já está cadastrado em outro card: "${dup.rows[0].nome || 'sem nome'}" (#${dup.rows[0].id}).` });
+      }
+      await pool.query(
+        `UPDATE leads SET whatsapp = $1, numero_invalido = false, whatsapp_bruto = $2 WHERE id = $3`,
+        [novo, String(valor).slice(0, 40), id]
+      );
+      return res.json({ ok: true, whatsapp: novo });
     } else if (campo === 'visitas_qtd') {
       // Contou visita → a etapa "Visita" fica marcada junto (como no funil).
       await pool.query(
