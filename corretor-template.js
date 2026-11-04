@@ -497,7 +497,7 @@ function limparFiltroData(coluna) {
   render();
 }
 
-const COLUNAS = ['Novo', 'Reaquecido', 'Aguardando retorno', 'Aguardando documentação', 'Aguardando aprovação', 'Aprovado', 'Visita', 'Em negociação', 'Venda', 'Sem retorno'];
+const COLUNAS = ['Novo', 'Reaquecido', 'Aguardando retorno', 'Visita', 'Aguardando documentação', 'Aguardando aprovação', 'Aprovado', 'Em negociação', 'Venda', 'Sem retorno'];
 
 // Paleta viva, uma cor por coluna — usada no cabeçalho e na barrinha
 // lateral de cada cartão daquela coluna.
