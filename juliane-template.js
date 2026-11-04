@@ -215,6 +215,10 @@ const JULIANE_HTML = `<!DOCTYPE html>
   .vis-num { min-width: 34px; text-align: center; font-size: 26px; font-weight: 800; }
   .vis-txt { font-size: 12.5px; color: #6b7280; }
   .selo-visitas { display: inline-block; margin-top: 5px; font-size: 11px; font-weight: 700; color: #1a56db; background: #e8f0fe; border: 1px solid #c3d7fb; border-radius: 999px; padding: 2px 8px; }
+  .btn-editar-contato { font: inherit; font-size: 11.5px; font-weight: 700; margin-left: 8px; padding: 2px 9px; border-radius: 999px; border: 1px solid #c3d7fb; background: #e8f0fe; color: #1a56db; cursor: pointer; }
+  .painel-contato { display: none; margin-top: 8px; padding: 10px 12px; border: 1px dashed #c3d7fb; border-radius: 10px; background: #f7faff; }
+  .painel-contato .acoes-contato { display: flex; gap: 8px; margin-top: 8px; }
+  .painel-contato .aviso-contato { font-size: 12.5px; color: #c0392b; margin-top: 6px; min-height: 16px; }
   .btn-ouro {
     position: absolute;
     top: 8px;
@@ -938,10 +942,19 @@ function abrirModalLead(id) {
       <h2>\${lead.nome || 'Sem nome'}\${duplicado ? \`<button class="btn-historico modal-versao" onclick="mostrarHistoricoCorretor('\${lead.id}')" title="Ver histórico de corretores">H</button>\` : ''}<button class="btn-ouro modal-versao \${lead.cliente_ouro ? 'ativo' : ''}" onclick="alternarClienteOuro('\${lead.id}', \${!lead.cliente_ouro})" title="\${lead.cliente_ouro ? 'Cliente Ouro — clique pra desmarcar' : 'Marcar como Cliente Ouro'}">⭐</button></h2>
       <span id="badge-valor-imovel">\${lead.valor_imovel_sdr ? \`<span class="badge" style="background:#eafcea;color:#17a34a;border:1px solid #a8ecca;white-space:nowrap;">💰 \${lead.valor_imovel_sdr}</span>\` : ''}</span>
     </div>
-    <div class="lead-meta">\${lead.whatsapp || 'sem WhatsApp'} · chegou em \${data}</div>
-    \${ABA_CRM === 'sdr'
-      ? (lead.origem ? \`<span class="badge origem">\${lead.origem}</span>\` : '')
-      : \`<select id="modal-origem" class="badge-select"><option value="" \${!lead.origem ? 'selected' : ''}>— sem canal —</option>\${ORIGENS.map(o => \`<option value="\${o}" \${lead.origem === o ? 'selected' : ''}>\${o}</option>\`).join('')}</select>\`}
+    <div class="lead-meta">\${lead.whatsapp || 'sem WhatsApp'} · chegou em \${data}<button type="button" class="btn-editar-contato" onclick="abrirEdicaoContato()">✎ Corrigir contato</button></div>
+    <div class="painel-contato" id="painel-contato">
+      <label>Nome</label>
+      <input type="text" id="ed-nome" value="\${(lead.nome || '').replace(/"/g, '&quot;')}">
+      <label>WhatsApp (com DDD)</label>
+      <input type="text" id="ed-whats" inputmode="tel" placeholder="(62) 99999-9999" value="\${lead.whatsapp || ''}">
+      <div class="aviso-contato" id="ed-aviso"></div>
+      <div class="acoes-contato">
+        <button type="button" class="primary-btn" onclick="salvarContato('\${lead.id}')">Salvar contato</button>
+        <button type="button" class="close-btn" onclick="abrirEdicaoContato()">Cancelar</button>
+      </div>
+    </div>
+    <select id="modal-origem" class="badge-select"><option value="" \${!lead.origem ? 'selected' : ''}>— sem canal —</option>\${(ORIGENS.includes(lead.origem) || !lead.origem ? ORIGENS : [lead.origem, ...ORIGENS]).map(o => \`<option value="\${o}" \${lead.origem === o ? 'selected' : ''}>\${o}</option>\`).join('')}</select>
     \${badgeImovel(lead)}
 
     \${ABA_CRM === 'sdr' ? \`
@@ -1352,6 +1365,48 @@ function ajustarVisitas(id, delta) {
   const txt = document.getElementById('vis-txt');
   if (txt) txt.textContent = novo === 1 ? 'imóvel visitado com este cliente' : 'imóveis visitados com este cliente';
   salvarCampo(id, 'visitas_qtd', novo, () => { render(); });
+}
+
+const LEAD_POR_ID = (id) => leadsAtivos().find(l => String(l.id) === String(id));
+function abrirEdicaoContato() {
+  const p = document.getElementById('painel-contato');
+  if (p) p.style.display = p.style.display === 'block' ? 'none' : 'block';
+}
+
+async function patchLeadComErro(id, campo, valor) {
+  const res = await fetch(\`/api/leads/\${id}\`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ campo, valor }),
+  });
+  let data = {};
+  try { data = await res.json(); } catch (e) {}
+  if (!res.ok || data.ok === false) throw new Error(data.erro || 'Não consegui salvar.');
+  return data;
+}
+
+async function salvarContato(id) {
+  const lead = LEAD_POR_ID(id);
+  const aviso = document.getElementById('ed-aviso');
+  if (!lead || !aviso) return;
+  aviso.textContent = '';
+  const nome = document.getElementById('ed-nome').value.trim();
+  const whats = document.getElementById('ed-whats').value.trim();
+  try {
+    if (whats && whats !== String(lead.whatsapp || '')) {
+      const r = await patchLeadComErro(id, 'whatsapp', whats);
+      lead.whatsapp = r.whatsapp || whats;
+      lead.numero_invalido = false;
+    }
+    if (nome && nome !== (lead.nome || '')) {
+      await patchLeadComErro(id, 'nome', nome);
+      lead.nome = nome;
+    }
+    render();
+    abrirModalLead(id);
+  } catch (err) {
+    aviso.textContent = err.message || 'Não consegui salvar.';
+  }
 }
 
 function alternarClienteOuro(id, novoValor) {
