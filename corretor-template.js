@@ -191,6 +191,12 @@ const CORRETOR_HTML = `<!DOCTYPE html>
   .lead.reaquecer { border-color: var(--warn-border); background: linear-gradient(180deg, var(--warn-bg), var(--card) 32px); }
   .lead.atrasado { border-color: #e0453f !important; background: linear-gradient(180deg, #fdecec, var(--card) 32px); box-shadow: 0 0 0 2px #e0453f33; }
   .lead.cliente-ouro { border-color: #d4a017 !important; background: linear-gradient(180deg, #ffe58a, var(--card) 90px); box-shadow: 0 0 0 3px #f2c94c; }
+  .visitas-box { display: flex; align-items: center; gap: 10px; margin-top: 4px; }
+  .vis-btn { width: 38px; height: 38px; border-radius: 10px; border: 1px solid var(--card-border, #d8dce6); background: #fff; font-size: 22px; font-weight: 700; line-height: 1; cursor: pointer; font-family: inherit; }
+  .vis-btn:hover { background: #f1f4fb; }
+  .vis-num { min-width: 34px; text-align: center; font-size: 26px; font-weight: 800; }
+  .vis-txt { font-size: 12.5px; color: #6b7280; }
+  .selo-visitas { display: inline-block; margin-top: 5px; font-size: 11px; font-weight: 700; color: #1a56db; background: #e8f0fe; border: 1px solid #c3d7fb; border-radius: 999px; padding: 2px 8px; }
   .btn-ouro {
     position: absolute;
     top: 8px;
@@ -635,6 +641,8 @@ function render() {
   const reaquecerCount = MEUS.filter(l => statusDoLead(l) === 'Reaquecido').length;
 
   const vgvTotal = MEUS.reduce((soma, lead) => soma + parseValorImovel(lead.valor_imovel_sdr), 0);
+  const visitasTotal = MEUS.reduce((soma, lead) => soma + (visitaContabilizada(lead) ? (parseInt(lead.visitas_qtd, 10) || 0) : 0), 0);
+  const clientesComVisita = MEUS.filter(visitaContabilizada).length;
 
   atualizarAlertaAtrasadas();
 
@@ -643,6 +651,7 @@ function render() {
     \${acompanhando > 0 ? \`<div class="stat" style="color:#1a56db"><span class="num">\${acompanhando}</span>transferidos (só acompanhar)</div>\` : ''}
     <div class="stat" style="color:#b5720a"><span class="num">\${reaquecerCount}</span>pra reaquecer</div>
     \${vgvTotal > 0 ? \`<div class="stat" style="color:#17a34a"><span class="num">\${formatarReais(vgvTotal)}</span>VGV total</div>\` : ''}
+    \${visitasTotal > 0 ? \`<div class="stat" style="color:#1a56db"><span class="num">\${visitasTotal}</span>visitas feitas (\${clientesComVisita} cliente\${clientesComVisita > 1 ? 's' : ''})</div>\` : ''}
   \`;
 
   const board = document.getElementById('board');
@@ -770,6 +779,7 @@ function cardHtml(lead, corBorda) {
         \${lead.valor_imovel_sdr ? \`<span style="font-size:10px;font-weight:700;color:#17a34a;white-space:nowrap;">💰 \${lead.valor_imovel_sdr}</span>\` : ''}
       </div>
       <div class="lead-meta">\${lead.whatsapp || 'sem WhatsApp'}</div>
+      \${(parseInt(lead.visitas_qtd, 10) || 0) > 0 ? \`<div class="selo-visitas" \${visitaContabilizada(lead) ? '' : 'style="color:#6b7280;background:#f1f3f7;border-color:#d8dce6;" title="Ainda não entra na contagem: precisa ficar mais de 10h na coluna Visita"'}>🏠 \${parseInt(lead.visitas_qtd, 10)} visita\${parseInt(lead.visitas_qtd, 10) > 1 ? 's' : ''}\${visitaContabilizada(lead) ? '' : ' · a confirmar'}</div>\` : ''}
       \${dataEtapa ? \`<div class="lead-meta">Nessa etapa desde \${dataEtapa}</div>\` : ''}
       \${somenteLeitura(lead) ? \`<span class="badge" style="background:#e8f0fe;color:#1a56db;border:1px solid #c3d7fb;">➡ Transferido para \${lead.corretor}</span>\` : ''}
       \${lead.origem ? \`<span class="badge origem">\${lead.origem}</span>\` : ''}
@@ -840,6 +850,17 @@ function abrirModalLead(id) {
         <select id="modal-transferir"><option value="">Escolha o corretor…</option>\${CORRETORES_DESTINO.map(c => \`<option value="\${c}">\${c}</option>\`).join('')}</select>
         <button type="button" class="primary-btn" id="modal-transferir-btn" style="background:#f2941c;white-space:nowrap;">➡ Transferir</button>
       </div>
+    \` : ''}
+
+    \${mostrarCampoVisitas(lead) ? \`
+    <label>Visitas com este cliente</label>
+    <div class="visitas-box">
+      <button type="button" class="vis-btn" onclick="ajustarVisitas('\${lead.id}', -1)" aria-label="Diminuir visitas">−</button>
+      <span class="vis-num" id="vis-num">\${parseInt(lead.visitas_qtd, 10) || 0}</span>
+      <button type="button" class="vis-btn" onclick="ajustarVisitas('\${lead.id}', 1)" aria-label="Aumentar visitas">+</button>
+      <span class="vis-txt" id="vis-txt">\${(parseInt(lead.visitas_qtd, 10) || 0) === 1 ? 'imóvel visitado com este cliente' : 'imóveis visitados com este cliente'}</span>
+    </div>
+
     \` : ''}
 
     <label>Tarefa</label>
@@ -1109,6 +1130,41 @@ async function confirmarAdicionar() {
   } catch (err) {
     avisoEl.innerHTML = '<div class="aviso-modal warn">⚠️ Erro ao adicionar. Tenta de novo.</div>';
   }
+}
+
+const LISTA_LEADS_VISITAS = { find: (fn) => TODOS_LEADS.find(fn) };
+// O campo de visitas aparece quando o card está na coluna Visita ou em qualquer
+// etapa depois dela (ou se já tem visita registrada, pra o número não sumir).
+const ETAPAS_DEPOIS_DA_VISITA = ['Aguardando documentação', 'Aguardando aprovação', 'Aprovado', 'Em negociação', 'Venda'];
+function mostrarCampoVisitas(lead) {
+  if ((parseInt(lead.visitas_qtd, 10) || 0) > 0) return true;
+  return lead.status_corretor === 'Visita' || ETAPAS_DEPOIS_DA_VISITA.includes(lead.status_corretor);
+}
+// Só CONTA no total depois de confirmada: o card precisa ter ficado mais de 10h
+// na coluna Visita (tempo da Juliane conferir se não foi engano) ou já ter
+// avançado pras etapas seguintes. Card movido por engano e desfeito não conta.
+function visitaContabilizada(lead) {
+  if ((parseInt(lead.visitas_qtd, 10) || 0) <= 0) return false;
+  if (ETAPAS_DEPOIS_DA_VISITA.includes(lead.status_corretor)) return true;
+  if (lead.status_corretor !== 'Visita' || !lead.status_corretor_alterado_em) return false;
+  const desde = new Date(lead.status_corretor_alterado_em).getTime();
+  return !isNaN(desde) && (Date.now() - desde) > 10 * 60 * 60 * 1000;
+}
+
+function ajustarVisitas(id, delta) {
+  const lead = LISTA_LEADS_VISITAS.find(l => String(l.id) === String(id));
+  if (!lead) return;
+  const novo = Math.max(0, Math.min(99, (parseInt(lead.visitas_qtd, 10) || 0) + delta));
+  if (novo === (parseInt(lead.visitas_qtd, 10) || 0)) return;
+  lead.visitas_qtd = novo;
+  if (novo > 0) lead.visita = true;
+  const chk = document.querySelector('#etapas-venda input[data-campo="visita"]');
+  if (chk && novo > 0) { chk.checked = true; const lb = chk.closest('.etapa-item'); if (lb) lb.classList.add('marcada'); }
+  const el = document.getElementById('vis-num');
+  if (el) el.textContent = novo;
+  const txt = document.getElementById('vis-txt');
+  if (txt) txt.textContent = novo === 1 ? 'imóvel visitado com este cliente' : 'imóveis visitados com este cliente';
+  salvarCampo(id, 'visitas_qtd', novo, () => { render(); });
 }
 
 function alternarClienteOuro(id, novoValor) {
