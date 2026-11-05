@@ -8,6 +8,7 @@ const { CRM_HTML } = require('./crm-template');
 const { JULIANE_HTML } = require('./juliane-template');
 const { CORRETOR_HTML } = require('./corretor-template');
 const { ANALYTICS_HTML } = require('./analytics-template');
+const { RELATORIO_HTML, montarLinhasRelatorio } = require('./relatorio-mensal');
 const crypto = require('crypto');
 const { criarModuloImoveis } = require('./imoveis-grupo');
 const app = express();
@@ -476,7 +477,7 @@ async function initDb() {
         contatou = contatou OR (status_corretor IS NOT NULL AND status_corretor <> 'Novo'),
         documentacao = documentacao OR status_corretor IN ('Aguardando documentação', 'Aguardando aprovação', 'Aprovado', 'Visita', 'Em negociação', 'Venda'),
         aprovado = aprovado OR status_corretor IN ('Aprovado', 'Venda'),
-        visita = visita OR status_corretor IN ('Visita', 'Em negociação', 'Venda'),
+        visita = visita OR status_corretor = 'Visita',
         proposta = proposta OR status_corretor IN ('Em negociação', 'Venda'),
         venda = venda OR status_corretor = 'Venda',
         sem_retorno = CASE WHEN status_corretor = 'Sem retorno' THEN true ELSE sem_retorno END
@@ -3792,7 +3793,7 @@ app.patch('/api/leads/:id', basicAuthAdminOuSdr, async (req, res) => {
       const contatouFlag = valorFinal !== 'Novo';
       const documentacaoFlag = rank >= 3;
       const aprovadoFlag = valorFinal === 'Aprovado' || valorFinal === 'Venda';
-      const visitaFlag = rank >= 2;
+      const visitaFlag = valorFinal === 'Visita';
       const propostaFlag = rank >= 6;
       const vendaFlag = rank >= 7;
       const semRetornoFlag = valorFinal === 'Sem retorno';
@@ -5030,8 +5031,26 @@ app.get('/crm', basicAuthAdminOuSdr, (req, res) => {
 });
 
 // ─── ROTA: ANALYTICS (resultados e desempenho de todos os leads) ─
+// Só admin/Juliane veem o relatório completo de leads (a SDR e os corretores não).
+function podeVerRelatorioMensal(req) {
+  return req.authTipo === 'admin' || req.authTipo === 'juliane';
+}
+
 app.get('/analytics', basicAuthAdminOuSdr, (req, res) => {
   res.set('Cache-Control', 'no-store');
+  // Botão "Relatório do mês" no canto da Análise geral (não aparece na análise
+  // de um corretor só nem pra SDR/corretor).
+  if (podeVerRelatorioMensal(req) && !req.query.corretor) {
+    const enviarOriginal = res.send.bind(res);
+    res.send = (corpo) => {
+      if (typeof corpo === 'string' && corpo.includes('</body>')) {
+        const voltar = encodeURIComponent(req.originalUrl || '/analytics');
+        const botao = '<a href="/relatorio-mensal?voltar=' + voltar + '" style="position:fixed;right:16px;bottom:16px;z-index:9999;background:#c2410c;color:#fff;padding:12px 18px;border-radius:999px;font:600 14px system-ui,sans-serif;text-decoration:none;box-shadow:0 4px 14px rgba(0,0,0,.3)">📄 Relatório do mês</a>';
+        corpo = corpo.replace('</body>', botao + '</body>');
+      }
+      return enviarOriginal(corpo);
+    };
+  }
   // Corretor logado vê só os próprios números. Admin/Juliane também caem no
   // modo "de um corretor só" quando vêm com ?corretor=Nome na URL — é o que
   // acontece ao abrir /meu-crm?corretor=Nome e clicar em "Meus números" de
@@ -5085,6 +5104,41 @@ app.get('/analytics', basicAuthAdminOuSdr, (req, res) => {
     .split('{{VOLTAR_HREF}}').join('/crm')
     .split('{{VOLTAR_TEXTO}}').join('← Voltar pro CRM');
   res.send(html);
+});
+
+// ─── ROTA: RELATÓRIO MENSAL DE LEADS ──────────────────────────
+app.get('/relatorio-mensal', basicAuthAdminOuSdr, (req, res) => {
+  if (!podeVerRelatorioMensal(req)) return res.status(403).send('Sem acesso ao relatório.');
+  res.set('Cache-Control', 'no-store');
+  let voltar = String(req.query.voltar || '/analytics');
+  if (!/^\/analytics[A-Za-z0-9?=&%._-]*$/.test(voltar)) voltar = '/analytics';
+  res.send(RELATORIO_HTML.split('{{VOLTAR_HREF}}').join(voltar));
+});
+
+// Leads que chegaram no mês (horário de Brasília), sem leads de teste.
+app.get('/api/relatorio-mensal', basicAuthAdminOuSdr, async (req, res) => {
+  if (!podeVerRelatorioMensal(req)) return res.status(403).json({ ok: false, erro: 'Sem acesso' });
+  try {
+    const mes = String(req.query.mes || '');
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(mes)) return res.status(400).json({ ok: false, erro: 'Informe ?mes=AAAA-MM' });
+    const r = await pool.query(
+      `SELECT l.id, l.nome, l.whatsapp, l.origem, l.imovel_desc, l.corretor, l.status, l.status_corretor,
+              l.visitas_qtd, l.reaquecido_sdr, l.documentacao, l.sem_retorno, l.numero_invalido,
+              to_char(l.distribuido_em AT TIME ZONE 'America/Sao_Paulo', 'DD/MM') AS data_local,
+              to_char(l.distribuido_em AT TIME ZONE 'America/Sao_Paulo', 'HH24:MI') AS hora_local,
+              EXTRACT(day FROM l.distribuido_em AT TIME ZONE 'America/Sao_Paulo')::int AS dia_local,
+              EXISTS (SELECT 1 FROM lead_historico_status h WHERE h.lead_id = l.id AND h.status_corretor = 'Aprovado') AS passou_aprovado
+         FROM leads l
+        WHERE (l.distribuido_em AT TIME ZONE 'America/Sao_Paulo') >= ($1::text || '-01')::date
+          AND (l.distribuido_em AT TIME ZONE 'America/Sao_Paulo') < (($1::text || '-01')::date + interval '1 month')
+          AND COALESCE(l.nome, '') !~* '^\\s*teste\\s*$'
+          AND COALESCE(l.whatsapp, '') NOT LIKE 'SEMNUM%'
+        ORDER BY l.distribuido_em ASC`, [mes]);
+    res.json({ ok: true, mes, leads: montarLinhasRelatorio(r.rows) });
+  } catch (err) {
+    console.error('Erro no relatório mensal:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
 });
 
 // ─── ROTA: CRM DA JULIANE ─────────────────────────────────────
