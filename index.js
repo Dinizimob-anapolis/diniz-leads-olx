@@ -288,6 +288,17 @@ async function initDb() {
     );
   `);
 
+  // ─── Histórico de colunas do corretor (por quais colunas cada card já passou) ─
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS lead_historico_status (
+      id SERIAL PRIMARY KEY,
+      lead_id INTEGER NOT NULL,
+      status_corretor TEXT,
+      em TIMESTAMPTZ DEFAULT now()
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_lead_hist_lead ON lead_historico_status (lead_id)`);
+
   // ─── Configurações simples (guarda o refresh_token do Drive, entre outras) ─
   await pool.query(`
     CREATE TABLE IF NOT EXISTS config_sistema (
@@ -464,7 +475,7 @@ async function initDb() {
       UPDATE leads SET
         contatou = contatou OR (status_corretor IS NOT NULL AND status_corretor <> 'Novo'),
         documentacao = documentacao OR status_corretor IN ('Aguardando documentação', 'Aguardando aprovação', 'Aprovado', 'Visita', 'Em negociação', 'Venda'),
-        aprovado = aprovado OR status_corretor IN ('Aprovado', 'Visita', 'Em negociação', 'Venda'),
+        aprovado = aprovado OR status_corretor IN ('Aprovado', 'Venda'),
         visita = visita OR status_corretor IN ('Visita', 'Em negociação', 'Venda'),
         proposta = proposta OR status_corretor IN ('Em negociação', 'Venda'),
         venda = venda OR status_corretor = 'Venda',
@@ -3780,11 +3791,14 @@ app.patch('/api/leads/:id', basicAuthAdminOuSdr, async (req, res) => {
       const rank = RANK_STATUS_CORRETOR[valorFinal] || 0;
       const contatouFlag = valorFinal !== 'Novo';
       const documentacaoFlag = rank >= 3;
-      const aprovadoFlag = rank >= 5;
+      const aprovadoFlag = valorFinal === 'Aprovado' || valorFinal === 'Venda';
       const visitaFlag = rank >= 2;
       const propostaFlag = rank >= 6;
       const vendaFlag = rank >= 7;
       const semRetornoFlag = valorFinal === 'Sem retorno';
+      try {
+        await pool.query(`INSERT INTO lead_historico_status (lead_id, status_corretor) VALUES ($1, $2)`, [id, valorFinal]);
+      } catch (e) { console.error('Erro ao gravar histórico de coluna:', e.message); }
       await pool.query(
         `UPDATE leads
          SET status_corretor = $1,
@@ -3931,6 +3945,39 @@ app.get(GOOGLE_OAUTH_REDIRECT_PATH, basicAuth, async (req, res) => {
   } catch (err) {
     console.error('Erro ao trocar código por token:', err);
     res.status(500).send(`Erro ao autorizar: ${err.message}`);
+  }
+});
+
+// Quais cards já passaram por uma coluna do corretor em algum momento do mês.
+// /api/admin/passou-coluna?coluna=Aprovado&mes=2026-10
+// Junta: histórico novo (lead_historico_status) + fotos diárias dos backups + coluna atual.
+app.get('/api/admin/passou-coluna', basicAuthAdminOuSdr, semCorretor, async (req, res) => {
+  try {
+    const coluna = String(req.query.coluna || 'Aprovado').trim();
+    const mes = String(req.query.mes || '').trim();
+    const achados = new Map();
+    const marca = (id, quando, fonte) => { if (!achados.has(id)) achados.set(id, { quando, fonte }); };
+    const lista = await pool.query('SELECT id, criado_em FROM backups_leads ORDER BY criado_em ASC');
+    for (const b of lista.rows) {
+      const dia = new Date(b.criado_em).toISOString().slice(0, 10);
+      if (mes && !dia.startsWith(mes) && dia < mes + '-01') { /* antes do mês: ainda conta como histórico */ }
+      const r = await pool.query('SELECT dados FROM backups_leads WHERE id = $1', [b.id]);
+      const dados = r.rows[0] && r.rows[0].dados;
+      if (!Array.isArray(dados)) continue;
+      for (const l of dados) if (l.status_corretor === coluna) marca(l.id, dia, 'backup');
+    }
+    const h = await pool.query(`SELECT lead_id, MIN(em) AS em FROM lead_historico_status WHERE status_corretor = $1 GROUP BY lead_id`, [coluna]);
+    for (const x of h.rows) marca(x.lead_id, new Date(x.em).toISOString().slice(0, 10), 'historico');
+    const atual = await pool.query(`SELECT id, status_corretor_alterado_em FROM leads WHERE status_corretor = $1`, [coluna]);
+    for (const x of atual.rows) marca(x.id, x.status_corretor_alterado_em ? new Date(x.status_corretor_alterado_em).toISOString().slice(0, 10) : null, 'atual');
+    const ids = [...achados.keys()];
+    const leads = ids.length ? (await pool.query(
+      `SELECT id, nome, whatsapp, corretor, origem, status_corretor, distribuido_em FROM leads WHERE id = ANY($1::int[]) ORDER BY id`, [ids])).rows : [];
+    const out = leads.map(l => ({ ...l, visto_em: achados.get(l.id).quando, fonte: achados.get(l.id).fonte }));
+    res.json({ ok: true, coluna, total: out.length, leads: out });
+  } catch (err) {
+    console.error('Erro em passou-coluna:', err);
+    res.status(500).json({ ok: false, erro: err.message });
   }
 });
 
