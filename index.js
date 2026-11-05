@@ -3811,6 +3811,12 @@ app.patch('/api/leads/:id', basicAuthAdminOuSdr, async (req, res) => {
       // carimbar status_corretor_alterado_em (senão ele reaparece pra
       // Juliane sem corretor nenhum) nem mexer em carteira_sdr/histórico.
       if (valorFinal && valorFinal.trim()) {
+        // Quando a Juliane transfere pelo quadro DELA (não pela carteira da SDR), o
+        // pedido vem com a coluna de destino: o card chega nessa coluna (padrão "Novo")
+        // e NÃO é marcado como reaquecimento. Sem coluna = fluxo do reaquecimento.
+        const COLUNAS_DESTINO_JULIANE = ['Novo', 'Aguardando retorno', 'Visita', 'Aguardando documentação', 'Aguardando aprovação', 'Aprovado', 'Em negociação', 'Venda', 'Sem retorno'];
+        const colunaPedida = req.body && req.body.coluna;
+        const transferenciaDireta = req.authTipo !== 'sdr' && COLUNAS_DESTINO_JULIANE.includes(colunaPedida);
         await pool.query(
           `UPDATE leads
            SET corretor = $1,
@@ -3821,11 +3827,11 @@ app.patch('/api/leads/:id', basicAuthAdminOuSdr, async (req, res) => {
                  ELSE outros_corretores
                END,
                carteira_sdr = false,
-               status_corretor = 'Reaquecido',
-               reaquecido_sdr = true,
+               status_corretor = $3,
+               reaquecido_sdr = CASE WHEN $4 THEN reaquecido_sdr ELSE true END,
                status_corretor_alterado_em = now()
            WHERE id = $2`,
-          [valorFinal, id]
+          [valorFinal, id, transferenciaDireta ? colunaPedida : 'Reaquecido', transferenciaDireta]
         );
       } else {
         await pool.query(
@@ -3994,6 +4000,37 @@ app.get('/api/admin/restaurar-corretor', basicAuthAdminOuSdr, semCorretor, async
       a_devolver_ao_corretor: paraCorretor.length, reaquecidos_para_sdr: paraSdr.length, restaurados, enviados_para_sdr: enviadosSdr, aplicado: req.query.aplicar === '1', leads: candidatosFinal });
   } catch (err) {
     console.error('Erro ao restaurar corretor:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
+// Corrige cards que a Juliane criou manualmente e transferiu pra um corretor, e que
+// ficaram marcados como "Reaquecido pela SDR" sem ter sido. Só mexe em card criado
+// manualmente, sem transferência da SDR e sem passagem pelo reaquecimento.
+// /api/admin/corrigir-reaquecido?nome=Lenison           → só mostra (prévia)
+// /api/admin/corrigir-reaquecido?nome=Lenison&aplicar=1 → aplica (volta pra coluna Novo)
+app.get('/api/admin/corrigir-reaquecido', basicAuthAdminOuSdr, semCorretor, async (req, res) => {
+  try {
+    const nome = String(req.query.nome || '').trim();
+    if (!nome) return res.status(400).json({ ok: false, erro: 'Informe ?nome=' });
+    const alvo = normalizarTexto(nome);
+    const r = await pool.query(
+      `SELECT id, nome, whatsapp, corretor, status_corretor, entrada_via
+         FROM leads
+        WHERE entrada_via = 'manual' AND transferido_por IS NULL AND reaquecido_em IS NULL
+          AND (status_corretor = 'Reaquecido' OR reaquecido_sdr IS TRUE)
+          AND corretor IS NOT NULL ORDER BY id`);
+    const lista = r.rows.filter(l => normalizarTexto(l.corretor) === alvo);
+    let corrigidos = 0;
+    if (req.query.aplicar === '1' && lista.length) {
+      const up = await pool.query(
+        `UPDATE leads SET status_corretor = 'Novo', reaquecido_sdr = false, status_corretor_alterado_em = now()
+          WHERE id = ANY($1::int[])`, [lista.map(l => l.id)]);
+      corrigidos = up.rowCount;
+    }
+    res.json({ ok: true, encontrados: lista.length, corrigidos, aplicado: req.query.aplicar === '1', cards: lista });
+  } catch (err) {
+    console.error('Erro ao corrigir reaquecido:', err);
     res.status(500).json({ ok: false, erro: err.message });
   }
 });
