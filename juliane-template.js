@@ -821,7 +821,8 @@ function render() {
             ? \`Tem certeza que quer transferir "\${nomeLead}" para \${novoCorretor}?\`
             : \`Tem certeza que quer tirar "\${nomeLead}" de \${lead ? lead.corretor : 'o corretor atual'} e voltar pra "Novo Lead"?\`;
           if (confirm(mensagem)) {
-            salvarCampo(LEAD_ARRASTADO, 'corretor', novoCorretor, () => { render(); });
+            if (novoCorretor) transferirPelaJuliane(LEAD_ARRASTADO, novoCorretor, 'Novo', () => { render(); });
+            else salvarCampo(LEAD_ARRASTADO, 'corretor', novoCorretor, () => { render(); });
           } else {
             render();
           }
@@ -975,6 +976,10 @@ function abrirModalLead(id) {
         <option value="" \${!lead.corretor ? 'selected' : ''}>— Novo Lead (sem corretor ainda) —</option>
         \${colunasCorretorAtual().filter(c => c !== COLUNA_TRIAGEM).map(c => \`<option value="\${c}" \${lead.corretor === c ? 'selected' : ''}>\${c}</option>\`).join('')}
       </select>
+      <label>Ao transferir, enviar para a coluna</label>
+      <select id="modal-coluna-destino">
+        \${COLUNAS_DESTINO_CORRETOR.map(c => \`<option value="\${c}">\${c}</option>\`).join('')}
+      </select>
       \${lead.corretor ? \`<div style="margin-top:6px;"><span class="chip-corretor" style="border-color:\${corDoCorretor(lead.corretor)};color:\${corDoCorretor(lead.corretor)};background:\${corDoCorretor(lead.corretor)}1a">\${lead.corretor}</span></div>\` : ''}
     \`}
 
@@ -1074,7 +1079,12 @@ function abrirModalLead(id) {
     selectCorretor.addEventListener('change', e => {
       const novoCorretor = e.target.value;
       salvarBlocoTexto(id, lead, () => {
-        salvarCampo(id, 'corretor', novoCorretor, () => { render(); abrirModalLead(id); });
+        if (ABA_CRM !== 'sdr' && novoCorretor) {
+          const selCol = document.getElementById('modal-coluna-destino');
+          transferirPelaJuliane(id, novoCorretor, selCol ? selCol.value : 'Novo', () => { render(); abrirModalLead(id); });
+        } else {
+          salvarCampo(id, 'corretor', novoCorretor, () => { render(); abrirModalLead(id); });
+        }
       });
     });
   }
@@ -1406,6 +1416,27 @@ async function salvarContato(id) {
     abrirModalLead(id);
   } catch (err) {
     aviso.textContent = err.message || 'Não consegui salvar.';
+  }
+}
+
+// Transferência feita pela Juliane no quadro DELA: o card chega na coluna escolhida
+// (padrão "Novo") no CRM do corretor, sem virar "reaquecido pela SDR".
+const COLUNAS_DESTINO_CORRETOR = ['Novo', 'Aguardando retorno', 'Visita', 'Aguardando documentação', 'Aguardando aprovação', 'Aprovado', 'Em negociação', 'Venda', 'Sem retorno'];
+async function transferirPelaJuliane(id, novoCorretor, coluna, aoTerminar) {
+  try {
+    const res = await fetch('/api/leads/' + id, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ campo: 'corretor', valor: novoCorretor, coluna: coluna || 'Novo' }),
+    });
+    let data = {};
+    try { data = await res.json(); } catch (e) {}
+    if (!res.ok || data.ok === false) throw new Error(data.erro || 'Não consegui transferir.');
+    const lead = leadsAtivos().find(l => String(l.id) === String(id));
+    if (lead) { lead.corretor = novoCorretor; lead.status_corretor = coluna || 'Novo'; lead.status_corretor_alterado_em = new Date().toISOString(); }
+    if (aoTerminar) aoTerminar();
+  } catch (err) {
+    alert(err.message || 'Não consegui salvar. Confere sua internet e tenta de novo.');
   }
 }
 
