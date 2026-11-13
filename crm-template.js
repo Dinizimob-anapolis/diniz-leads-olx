@@ -1323,7 +1323,8 @@ function abrirModalLead(id) {
     salvarBlocoTexto(id, lead, () => {
       render();
       mostrarFlashSalvoGrande();
-      setTimeout(fecharModal, 650);
+      flashModal();
+      carregarTimeline(lead); // o card continua aberto: só atualiza a linha do tempo com o que acabou de ser salvo
     });
   });
 }
