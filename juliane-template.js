@@ -327,7 +327,7 @@ const JULIANE_HTML = `<!DOCTYPE html>
   .modal.modal-largo > .mcol-esq .saved-flash { display: none; }
   .modal.modal-largo > .mcol-esq .saved-flash.show { display: block; text-align: center; margin: 4px 0 0; }
   .tl-salvar .primary-btn { width: auto !important; margin: 0 !important; padding: 11px 34px; }
-  .perdido-bloco { margin-top: auto; flex: none; border-top: 1px dashed #d3d7e0; padding-top: 6px; }
+  .perdido-bloco { margin: auto -9px -9px; padding: 6px 9px 4px; flex: none; position: sticky; bottom: 0; z-index: 3; background: #fff; border-top: 1px dashed #d3d7e0; max-height: 50vh; overflow-y: auto; box-shadow: 0 -6px 8px -6px rgba(0,0,0,.12); }
   .perdido-bloco.dragover-p { outline: 2px dashed #b42318; outline-offset: 1px; background: #fdecea; border-radius: 8px; }
   .perdido-topo { display: flex; justify-content: space-between; align-items: center; padding: 6px 8px; font-size: 12px; font-weight: 800; color: #6b7280; cursor: pointer; user-select: none; border-radius: 8px; }
   .perdido-topo:hover { background: #f1f2f5; }
