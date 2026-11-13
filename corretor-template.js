@@ -290,12 +290,13 @@ const CORRETOR_HTML = `<!DOCTYPE html>
   .modal.modal-largo > .mcol-esq .saved-flash { display: none; }
   .modal.modal-largo > .mcol-esq .saved-flash.show { display: block; text-align: center; margin: 4px 0 0; }
   .tl-salvar .primary-btn { width: auto !important; margin: 0 !important; padding: 11px 34px; }
-  .perdido-bloco { margin: auto -9px -9px; padding: 6px 9px 4px; flex: none; position: sticky; bottom: 0; z-index: 3; background: #fff; border-top: 1px dashed #d3d7e0; max-height: 50vh; overflow-y: auto; box-shadow: 0 -6px 8px -6px rgba(0,0,0,.12); }
+  .perdido-bloco { flex: none; background: #fff; border-top: 1px solid #dfe2ea; border-radius: 0 0 var(--radius) var(--radius); max-height: 48vh; overflow-y: auto; position: relative; }
+  .column-cards.tem-perdido { border-radius: 0; }
   .perdido-bloco.dragover-p { outline: 2px dashed #b42318; outline-offset: 1px; background: #fdecea; border-radius: 8px; }
-  .perdido-topo { display: flex; justify-content: space-between; align-items: center; padding: 6px 8px; font-size: 12px; font-weight: 800; color: #6b7280; cursor: pointer; user-select: none; border-radius: 8px; }
-  .perdido-topo:hover { background: #f1f2f5; }
+  .perdido-topo { position: sticky; top: 0; z-index: 2; display: flex; justify-content: space-between; align-items: center; padding: 11px 14px; font-size: 13px; font-weight: 800; color: #4b5160; background: #eceef3; cursor: pointer; user-select: none; }
+  .perdido-topo:hover { background: #e3e6ee; }
   .perdido-topo .perdido-n { background: #e3e6ee; color: #4b5160; border-radius: 99px; padding: 1px 9px; font-size: 11px; }
-  .perdido-cards { padding: 6px 0 2px; display: flex; flex-direction: column; gap: 9px; }
+  .perdido-cards { padding: 9px; display: flex; flex-direction: column; gap: 9px; }
   .perdido-cards .lead { opacity: 0.78; }
   .tag-perdido-antigo { font-size: 10px; color: #b42318; font-weight: 700; margin: 0 0 -5px 4px; }
   .tag-funil-perdido { font-size: 10px; color: #b42318; font-weight: 700; margin: 0 0 -5px 4px; }
@@ -800,14 +801,14 @@ function render() {
             \${filtroAtivo ? \`<button class="limpar-filtro-btn" onclick="limparFiltroData('\${coluna}')">Limpar</button>\` : ''}
           </div>
         \` : ''}
-        <div class="column-cards" data-coluna="\${coluna}">
+        <div class="column-cards tem-perdido" data-coluna="\${coluna}">
           \${leadsColuna.map(lead => cardHtml(lead, cor.accent)).join('') || (leadsColunaSemFiltro.length > 0 ? '<div style="text-align:center;color:var(--muted);font-size:12px;padding:12px;">Nenhum nesse período</div>' : '')}
+        </div>
         <div class="perdido-bloco" data-coluna="\${coluna}">
           <div class="perdido-topo" onclick="alternarPerdido('\${coluna}')" title="Arraste um card pra cá pra marcar como perdido nessa etapa">
             <span>\${perdidoAberto ? '▾' : '▸'} Perdidos</span><span class="perdido-n">\${perdidosColuna.length}</span>
           </div>
           \${perdidoAberto ? \`<div class="perdido-cards">\${perdidosColuna.map(lead => (lead.status_corretor === 'Sem retorno' ? '<div class="tag-perdido-antigo">Sem retorno (antes da mudança)</div>' : '') + cardHtml(lead, '#9aa0ae')).join('') || '<div style="text-align:center;color:var(--muted);font-size:12px;padding:8px;">Nenhum perdido aqui</div>'}</div>\` : ''}
-        </div>
         </div>
       </div>
     \`;
