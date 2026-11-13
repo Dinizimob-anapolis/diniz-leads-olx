@@ -277,6 +277,84 @@ const JULIANE_HTML = `<!DOCTYPE html>
     cursor: pointer;
   }
 
+  /* Linha do tempo do card */
+  .tl-lista { display: flex; flex-direction: column; gap: 8px; max-height: 270px; overflow-y: auto; padding: 10px; background: #dde1ec; border: 1px solid #c5cbdb; border-radius: 10px; }
+  .tl-post { background: #fff; border: 1px solid #e3e6ee; border-radius: 10px; padding: 8px 10px; }
+  .tl-post.tl-legado { background: #fbf6ea; border-color: #eadfc4; }
+  .tl-cab { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; margin-bottom: 3px; }
+  .tl-cab span { color: #767c8c; }
+  .tl-txt { white-space: pre-wrap; font-size: 13px; overflow-wrap: anywhere; }
+  .tl-sis { font-size: 11.5px; color: #767c8c; padding: 0 4px; overflow-wrap: anywhere; }
+  .tl-sis span { opacity: .8; }
+  .tl-vazio { font-size: 12.5px; color: #767c8c; text-align: center; padding: 8px; }
+  .tl-novo-box { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+  .tl-aviso { font-size: 11px; color: #767c8c; }
+  .tl-novo-box label { margin-top: 4px; }
+  /* Card aberto em 2 colunas: dados à esquerda, linha do tempo no centro */
+  .modal.modal-largo:has(> #tl-wrap) { max-width: 1060px; display: grid; grid-template-columns: 350px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); gap: 22px; max-height: 92vh; overflow: hidden; align-items: stretch; }
+  .modal.modal-largo > .mcol-esq { overflow-y: auto; padding-right: 8px; min-height: 0; }
+  .modal.modal-largo > #tl-wrap { display: flex; flex-direction: column; min-height: 0; border-left: 1px solid #e3e6ee; padding-left: 22px; }
+  .modal.modal-largo #tl-wrap .tl-lista { flex: 1; max-height: none; min-height: 110px; font-size: 14px; }
+  .modal.modal-largo > .mcol-esq label { margin: 9px 0 3px; }
+  .flash-salvo-grande {
+    position: fixed;
+    top: 22px;
+    left: 50%;
+    transform: translateX(-50%) translateY(-16px);
+    background: #17a34a;
+    color: #fff;
+    font-weight: 800;
+    font-size: 16px;
+    padding: 14px 28px;
+    border-radius: 12px;
+    box-shadow: 0 10px 28px rgba(23,163,74,0.4);
+    z-index: 200;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease, transform 0.2s ease;
+  }
+  .flash-salvo-grande.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .tl-salvar { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; }
+  .tl-salvar .close-btn { width: auto; margin: 0; padding: 11px 30px; }
+  .faixa-perdido { background: #b42318; color: #fff; border-radius: 10px; padding: 10px 14px; margin: 0 0 12px; display: flex; flex-direction: column; gap: 2px; align-items: center; text-align: center; }
+  .faixa-perdido b { font-size: 14px; letter-spacing: 0.4px; }
+  .faixa-perdido span { font-size: 12px; opacity: 0.95; font-weight: 700; }
+  .modal.lead-perdido { border-top: 6px solid #b42318; }
+  .modal.modal-largo > .mcol-esq .modal-actions { display: block; margin-top: 14px; }
+  .modal.modal-largo > .mcol-esq .modal-actions > div { width: 100%; }
+  .modal.modal-largo > .mcol-esq .wa-btn,
+  .modal.modal-largo > .mcol-esq > .close-btn { display: flex; align-items: center; justify-content: center; width: 100%; box-sizing: border-box; height: 42px; margin: 8px 0 0; padding: 0 14px; }
+  .modal.modal-largo > .mcol-esq .saved-flash { display: none; }
+  .modal.modal-largo > .mcol-esq .saved-flash.show { display: block; text-align: center; margin: 4px 0 0; }
+  .tl-salvar .primary-btn { width: auto !important; margin: 0 !important; padding: 11px 34px; }
+  .perdido-bloco { margin-top: auto; flex: none; border-top: 1px dashed #d3d7e0; padding-top: 6px; }
+  .perdido-bloco.dragover-p { outline: 2px dashed #b42318; outline-offset: 1px; background: #fdecea; border-radius: 8px; }
+  .perdido-topo { display: flex; justify-content: space-between; align-items: center; padding: 6px 8px; font-size: 12px; font-weight: 800; color: #6b7280; cursor: pointer; user-select: none; border-radius: 8px; }
+  .perdido-topo:hover { background: #f1f2f5; }
+  .perdido-topo .perdido-n { background: #e3e6ee; color: #4b5160; border-radius: 99px; padding: 1px 9px; font-size: 11px; }
+  .perdido-cards { padding: 6px 0 2px; display: flex; flex-direction: column; gap: 9px; }
+  .perdido-cards .lead { opacity: 0.78; }
+  .tag-perdido-antigo { font-size: 10px; color: #b42318; font-weight: 700; margin: 0 0 -5px 4px; }
+  .tag-funil-perdido { font-size: 10px; color: #b42318; font-weight: 700; margin: 0 0 -5px 4px; }
+  .resumo-perdidos { flex-basis: 100%; background: #fff; border: 1px solid #f0c6c1; border-radius: var(--radius); padding: 10px 14px; font-size: 13px; color: #4b5160; }
+  .resumo-perdidos b { color: #b42318; }
+  .modal.modal-largo #tl-wrap .tl-txt { font-size: 14px; }
+  .modal.modal-largo #tl-wrap #tl-novo { min-height: 84px; max-height: 34vh; resize: none; overflow-y: auto; flex: none; }
+  .modal.modal-largo > #tl-wrap { overflow-y: auto; }
+  .modal.modal-largo .tl-salvar { position: sticky; bottom: 0; background: #fff; padding: 8px 0 2px; z-index: 2; flex: none; }
+  @media (max-width: 860px) {
+    .toolbar { flex-wrap: wrap; }
+    .toolbar input[type="text"] { flex: 1 1 100%; }
+    .toolbar select { flex: 1 1 100%; }
+    .modal.modal-largo:has(> #tl-wrap) { display: block; height: auto; max-height: 90vh; overflow-y: auto; max-width: 440px; }
+    .modal.modal-largo > .mcol-esq { overflow: visible; padding-right: 0; }
+    .modal.modal-largo > #tl-wrap { border-left: 0; padding-left: 0; overflow: visible; display: contents; }
+    .modal.modal-largo > .mcol-esq div[style*="flex:1"] { min-width: 0; }
+    .modal.modal-largo > .mcol-esq input { min-width: 0; max-width: 100%; }
+    .modal.modal-largo #tl-wrap .tl-lista { max-height: 300px; flex: none; }
+  }
+
+
   .lead-notas {
     margin-top: 8px;
     font-size: 11px;
@@ -537,7 +615,63 @@ function leadsAtivos() {
   return ABA_CRM === 'sdr' ? LEADS_SDR : LEADS_JULIANE;
 }
 
-const COLUNAS_FUNIL = ['Novo', 'Reaquecendo', 'Aguardando retorno', 'Repassado ao corretor', 'Visita agendada', 'Compra futura', 'Já comprou', 'Venda efetuada', 'Sem retorno'];
+// ─── PERDIDOS: cada coluna tem uma aba retrátil "Perdidos" ─────────
+// Na visão da SDR o "funil" é a coluna da SDR (campo status); na visão por corretor o "funil"
+// é a etapa do corretor (status_corretor) do lead.
+const ESTAGIOS_CORRETOR = ['Novo', 'Reaquecido', 'Aguardando retorno', 'Visita', 'Aguardando documentação', 'Aguardando aprovação', 'Aprovado', 'Em negociação', 'Venda'];
+const PERDIDO_ABERTO = new Set();
+let RESUMO_PERDIDOS_ABERTO = false;
+function estagioCorretorDoLead(l) { return ESTAGIOS_CORRETOR.includes(l.status_corretor) ? l.status_corretor : 'Novo'; }
+// O lead antigo da coluna "Sem retorno" (que não existe mais) conta como perdido.
+function ehPerdido(l) {
+  return ABA_CRM === 'sdr' ? (l.perdido === true || l.status === 'Sem retorno') : (l.perdido_corretor === true || l.status_corretor === 'Sem retorno');
+}
+function ehPerdidoLegado(l) { return ABA_CRM === 'sdr' ? l.status === 'Sem retorno' : l.status_corretor === 'Sem retorno'; }
+function funilDoPerdido(l) {
+  if (ABA_CRM === 'sdr') return l.perdido_funil || (l.status === 'Sem retorno' ? 'Sem retorno (antes da mudança)' : statusDoLead(l));
+  return l.perdido_corretor_funil || (l.status_corretor === 'Sem retorno' ? 'Sem retorno (antes da mudança)' : estagioCorretorDoLead(l));
+}
+async function postarPerdido(id, perdido, funil) {
+  const res = await fetch('/api/leads/' + id + '/perdido', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ perdido: perdido, funil: funil, board: ABA_CRM === 'sdr' ? 'sdr' : 'corretor' }),
+  });
+  let data = {};
+  try { data = await res.json(); } catch (e) {}
+  if (!res.ok || data.ok === false) throw new Error(data.erro || 'Não consegui salvar.');
+  return data;
+}
+function limparPerdidoLocal(l, board) {
+  if (board === 'sdr') { l.perdido = false; l.perdido_funil = null; l.perdido_em = null; }
+  else { l.perdido_corretor = false; l.perdido_corretor_funil = null; l.perdido_corretor_em = null; }
+}
+// colunaTela = a coluna onde o card está/foi solto (na visão por corretor é a coluna do corretor).
+async function marcarPerdidoIds(ids, colunaTela) {
+  const falhas = [];
+  for (const id of ids) {
+    try {
+      const lead = leadsAtivos().find(x => String(x.id) === String(id));
+      const funil = ABA_CRM === 'sdr' ? colunaTela : (lead ? estagioCorretorDoLead(lead) : 'Novo');
+      await postarPerdido(id, true, funil);
+    } catch (e) { falhas.push(e.message); }
+  }
+  PERDIDO_ABERTO.add(colunaTela);
+  await carregar();
+  if (falhas.length) alert('Não consegui marcar ' + falhas.length + ' card(s) como perdido: ' + falhas[0]);
+}
+async function reativarLead(id) {
+  await postarPerdido(id, false);
+  await carregar();
+}
+function alternarPerdido(coluna) {
+  if (PERDIDO_ABERTO.has(coluna)) PERDIDO_ABERTO.delete(coluna); else PERDIDO_ABERTO.add(coluna);
+  render();
+}
+function alternarResumoPerdidos() { RESUMO_PERDIDOS_ABERTO = !RESUMO_PERDIDOS_ABERTO; render(); }
+
+
+const COLUNAS_FUNIL = ['Novo', 'Reaquecendo', 'Aguardando retorno', 'Repassado ao corretor', 'Visita agendada', 'Compra futura', 'Já comprou', 'Venda efetuada'];
 
 // Paleta viva, uma cor por coluna — usada no cabeçalho e na barrinha
 // lateral de cada cartão daquela coluna. (Quadro em formato de funil — usado na aba "CRM da SDR")
@@ -702,13 +836,15 @@ function leadsFiltrados() {
 function exportarCSV() {
   const funcaoColuna = ABA_CRM === 'sdr' ? statusDoLead : colunaCorretorDoLead;
   const leads = leadsFiltrados().filter(l => leadPassaNoFiltroDeData(l, funcaoColuna(l)));
-  const cabecalho = ['Nome', 'WhatsApp', 'Coluna', 'Origem', 'Corretor', 'Status SDR', 'Valor do imóvel', 'Tarefa', 'Prazo da tarefa', 'Notas', 'Buscando', 'Chegou em'];
+  const cabecalho = ['Nome', 'WhatsApp', 'Coluna', 'Origem', 'Corretor', 'Status SDR', 'Valor do imóvel', 'Tarefa', 'Prazo da tarefa', 'Notas', 'Buscando', 'Chegou em', 'Perdido?', 'Funil onde foi perdido', 'Perdido em'];
   const linhas = leads.map(l => [
     l.nome || '', l.whatsapp || '', funcaoColuna(l), l.origem || '', l.corretor || '', l.status || '',
     l.valor_imovel_sdr || '', l.tarefa_sdr || '',
     l.tarefa_data ? new Date(l.tarefa_data).toLocaleString('pt-BR') : '',
     (l.notas_sdr || '').replace(/\\n/g, ' '), (l.buscando_sdr || '').replace(/\\n/g, ' '),
-    l.distribuido_em ? new Date(l.distribuido_em).toLocaleDateString('pt-BR') : ''
+    l.distribuido_em ? new Date(l.distribuido_em).toLocaleDateString('pt-BR') : '',
+    ehPerdido(l) ? 'Sim' : '', ehPerdido(l) ? funilDoPerdido(l) : '',
+    (ABA_CRM === 'sdr' ? l.perdido_em : l.perdido_corretor_em) ? new Date(ABA_CRM === 'sdr' ? l.perdido_em : l.perdido_corretor_em).toLocaleDateString('pt-BR') : ''
   ]);
   const escapar = v => \`"\${String(v).replace(/"/g, '""')}"\`;
   const csv = [cabecalho, ...linhas].map(linha => linha.map(escapar).join(';')).join('\\r\\n');
@@ -728,15 +864,21 @@ function render() {
   const leads = leadsFiltrados();
   const reaquecerCount = leadsBase.filter(temHistoricoDuplicado).length;
 
-  const vgvTotal = leadsBase.reduce((soma, lead) => soma + parseValorImovel(lead.valor_imovel_sdr), 0);
+  const vgvTotal = leadsBase.filter(l => !ehPerdido(l)).reduce((soma, lead) => soma + parseValorImovel(lead.valor_imovel_sdr), 0);
+  const PERDIDOS = leadsBase.filter(ehPerdido);
+  const contagemFunil = {};
+  PERDIDOS.forEach(l => { const f = funilDoPerdido(l); contagemFunil[f] = (contagemFunil[f] || 0) + 1; });
+  const ordemFunis = Object.keys(contagemFunil);
   const visitasTotal = leadsBase.reduce((soma, lead) => soma + (visitaContabilizada(lead) ? (parseInt(lead.visitas_qtd, 10) || 0) : 0), 0);
   const clientesComVisita = leadsBase.filter(visitaContabilizada).length;
 
   document.getElementById('stats').innerHTML = \`
-    <div class="stat"><span class="num">\${leadsBase.length}</span>\${ABA_CRM === 'sdr' ? 'na carteira' : 'no sistema'}</div>
+    <div class="stat"><span class="num">\${leadsBase.length - PERDIDOS.length}</span>\${ABA_CRM === 'sdr' ? 'na carteira' : 'no sistema'}</div>
+    \${PERDIDOS.length > 0 ? \`<div class="stat" style="color:#b42318;cursor:pointer;" title="Clique pra ver em qual funil foram perdidos" onclick="alternarResumoPerdidos()"><span class="num">\${PERDIDOS.length}</span>perdidos \${RESUMO_PERDIDOS_ABERTO ? '▴' : '▾'}</div>\` : ''}
     <div class="stat" style="color:#b5720a"><span class="num">\${reaquecerCount}</span>pra reaquecer</div>
     \${vgvTotal > 0 ? \`<div class="stat" style="color:#17a34a"><span class="num">\${formatarReais(vgvTotal)}</span>VGV total</div>\` : ''}
     \${visitasTotal > 0 ? \`<div class="stat" style="color:#1a56db"><span class="num">\${visitasTotal}</span>visitas feitas (\${clientesComVisita} cliente\${clientesComVisita > 1 ? 's' : ''})</div>\` : ''}
+    \${RESUMO_PERDIDOS_ABERTO && PERDIDOS.length > 0 ? \`<div class="resumo-perdidos"><b>Perdidos por funil:</b> \${ordemFunis.map(f => f + ' <b>' + contagemFunil[f] + '</b>').join(' · ')}</div>\` : ''}
     <button class="stat" id="btn-trocar-aba" style="cursor:pointer;border:1px solid var(--accent);color:var(--accent);font-weight:700;font-family:inherit;background:#fff;" onclick="trocarAba('\${ABA_CRM === 'sdr' ? 'juliane' : 'sdr'}')">\${ABA_CRM === 'sdr' ? '← Voltar pro quadro por corretor' : 'Ver CRM da SDR →'}</button>
   \`;
 
@@ -746,8 +888,10 @@ function render() {
 
   const board = document.getElementById('board');
   board.innerHTML = colunasAtuais.map(coluna => {
-    const leadsColunaSemFiltro = leads.filter(l => funcaoColuna(l) === coluna);
+    const leadsColunaSemFiltro = leads.filter(l => funcaoColuna(l) === coluna && !ehPerdido(l));
     const leadsColuna = leadsColunaSemFiltro.filter(l => leadPassaNoFiltroDeData(l, coluna));
+    const perdidosColuna = leads.filter(l => funcaoColuna(l) === coluna && ehPerdido(l) && leadPassaNoFiltroDeData(l, coluna));
+    const perdidoAberto = PERDIDO_ABERTO.has(coluna);
     const cor = funcaoCor(coluna);
     const vgvColuna = leadsColuna.reduce((soma, lead) => soma + parseValorImovel(lead.valor_imovel_sdr), 0);
     const filtroAtivo = FILTROS_DATA_COLUNA[coluna] && (FILTROS_DATA_COLUNA[coluna].de || FILTROS_DATA_COLUNA[coluna].ate);
@@ -782,6 +926,12 @@ function render() {
         \` : ''}
         <div class="column-cards" data-coluna="\${coluna}">
           \${leadsColuna.map(lead => cardHtml(lead, cor.accent, coluna === COLUNA_TRIAGEM && ABA_CRM !== 'sdr', coluna !== COLUNA_TRIAGEM && ABA_CRM !== 'sdr')).join('') || (leadsColunaSemFiltro.length > 0 ? '<div style="text-align:center;color:var(--muted);font-size:12px;padding:12px;">Nenhum nesse período</div>' : '')}
+        <div class="perdido-bloco" data-coluna="\${coluna}">
+          <div class="perdido-topo" onclick="alternarPerdido('\${coluna}')" title="Arraste um card pra cá pra marcar como perdido">
+            <span>\${perdidoAberto ? '▾' : '▸'} Perdidos</span><span class="perdido-n">\${perdidosColuna.length}</span>
+          </div>
+          \${perdidoAberto ? \`<div class="perdido-cards">\${perdidosColuna.map(lead => (ehPerdidoLegado(lead) ? '<div class="tag-perdido-antigo">Sem retorno (antes da mudança)</div>' : (ABA_CRM !== 'sdr' ? '<div class="tag-funil-perdido">Perdido em: ' + funilDoPerdido(lead) + '</div>' : '')) + cardHtml(lead, '#9aa0ae', coluna === COLUNA_TRIAGEM && ABA_CRM !== 'sdr', coluna !== COLUNA_TRIAGEM && ABA_CRM !== 'sdr')).join('') || '<div style="text-align:center;color:var(--muted);font-size:12px;padding:8px;">Nenhum perdido aqui</div>'}</div>\` : ''}
+        </div>
         </div>
       </div>
     \`;
@@ -816,6 +966,12 @@ function render() {
           // soltar sem querer, pede confirmação antes de valer de verdade.
           const novoCorretor = colunaDestino === COLUNA_TRIAGEM ? '' : colunaDestino;
           const lead = leadsAtivos().find(l => String(l.id) === String(LEAD_ARRASTADO));
+          if (lead && ehPerdido(lead) && colunaCorretorDoLead(lead) === colunaDestino) {
+            const idReativar = LEAD_ARRASTADO;
+            LEAD_ARRASTADO = null;
+            reativarLead(idReativar).catch(e => alert(e.message));
+            return;
+          }
           const nomeLead = lead ? (lead.nome || 'esse contato') : 'esse contato';
           const mensagem = novoCorretor
             ? \`Tem certeza que quer transferir "\${nomeLead}" para \${novoCorretor}?\`
@@ -829,6 +985,28 @@ function render() {
         }
         LEAD_ARRASTADO = null;
       }
+    });
+  });
+
+  board.querySelectorAll('.perdido-bloco').forEach(bl => {
+    bl.addEventListener('dragover', e => { e.preventDefault(); e.stopPropagation(); bl.classList.add('dragover-p'); });
+    bl.addEventListener('dragleave', () => bl.classList.remove('dragover-p'));
+    bl.addEventListener('drop', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      bl.classList.remove('dragover-p');
+      if (!LEAD_ARRASTADO) return;
+      const coluna = bl.dataset.coluna;
+      const idPerdido = LEAD_ARRASTADO;
+      LEAD_ARRASTADO = null;
+      if (ABA_CRM !== 'sdr') {
+        const ld = leadsAtivos().find(l => String(l.id) === String(idPerdido));
+        if (ld && colunaCorretorDoLead(ld) !== coluna) {
+          alert('Solte o card no "Perdidos" da coluna do corretor atual dele (' + colunaCorretorDoLead(ld) + ').');
+          return;
+        }
+      }
+      marcarPerdidoIds([idPerdido], coluna);
     });
   });
 
@@ -939,6 +1117,7 @@ function abrirModalLead(id) {
   const waLink = lead.whatsapp ? \`https://wa.me/\${lead.whatsapp}\` : null;
 
   document.getElementById('modal').innerHTML = \`
+    \${ehPerdido(lead) ? '<div class="faixa-perdido"><b>❌ LEAD PERDIDO</b><span>Funil: ' + funilDoPerdido(lead) + '</span></div>' : ''}
     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
       <h2>\${lead.nome || 'Sem nome'}\${duplicado ? \`<button class="btn-historico modal-versao" onclick="mostrarHistoricoCorretor('\${lead.id}')" title="Ver histórico de corretores">H</button>\` : ''}<button class="btn-ouro modal-versao \${lead.cliente_ouro ? 'ativo' : ''}" onclick="alternarClienteOuro('\${lead.id}', \${!lead.cliente_ouro})" title="\${lead.cliente_ouro ? 'Cliente Ouro — clique pra desmarcar' : 'Marcar como Cliente Ouro'}">⭐</button></h2>
       <span id="badge-valor-imovel">\${lead.valor_imovel_sdr ? \`<span class="badge" style="background:#eafcea;color:#17a34a;border:1px solid #a8ecca;white-space:nowrap;">💰 \${lead.valor_imovel_sdr}</span>\` : ''}</span>
@@ -1021,8 +1200,15 @@ function abrirModalLead(id) {
       <label class="etapa-item \${lead.venda ? 'marcada' : ''}"><input type="checkbox" data-campo="venda" \${lead.venda ? 'checked' : ''}> Venda</label>
     </div>
 
-    <label>Notas</label>
-    <textarea id="modal-notas" placeholder="O que já foi conversado, quando retomar...">\${lead.notas_sdr || ''}</textarea>
+    <div id="tl-wrap">
+      <label>Linha do tempo</label>
+      <div class="tl-lista" id="tl-lista">Carregando…</div>
+      <div class="tl-novo-box">
+        <label for="tl-novo">Última atualização</label>
+        <textarea id="tl-novo" placeholder="O que aconteceu agora? Escreva aqui e clique em Salvar: vira um post na linha do tempo."></textarea>
+        <div class="tl-aviso">Ao clicar em Salvar, o que você escreveu aqui e qualquer alteração feita ao lado viram posts. Depois de salvos, não podem ser editados nem apagados.</div>
+      </div>
+    </div>
 
     <label>O que está buscando</label>
     <textarea id="modal-buscando" placeholder="Ex: apartamento 2 quartos, até R$ 300 mil, região X...">\${lead.buscando_sdr || ''}</textarea>
@@ -1034,6 +1220,7 @@ function abrirModalLead(id) {
         <span class="saved-flash" id="modal-flash">✅ Salvo!</span>
       </div>
     </div>
+    <button class="close-btn" id="modal-perdido" style="width:100%;margin-top:8px;color:#b42318;border-color:#f0c6c1;">\${ehPerdido(lead) ? '↩ Reativar lead (sai de Perdidos)' : '❌ Marcar como perdido'}</button>
     <button class="primary-btn" id="modal-salvar" style="width:100%;margin-top:10px;">💾 Salvar</button>
     \${ABA_CRM === 'sdr'
       ? '<button class="close-btn" id="modal-remover" style="width:100%;margin-top:8px;color:#b5720a;border-color:var(--warn-border);">Remover da carteira</button>'
@@ -1041,7 +1228,22 @@ function abrirModalLead(id) {
   \`;
 
   document.getElementById('overlay').classList.add('show');
+  document.getElementById('modal').classList.toggle('lead-perdido', ehPerdido(lead));
+  ligarTimeline(lead);
   document.getElementById('modal-fechar').addEventListener('click', fecharModal);
+  document.getElementById('modal-perdido').addEventListener('click', async () => {
+    try {
+      if (ehPerdido(lead)) {
+        await reativarLead(id);
+      } else {
+        const colunaTela = ABA_CRM === 'sdr' ? statusDoLead(lead) : colunaCorretorDoLead(lead);
+        const funilTxt = ABA_CRM === 'sdr' ? statusDoLead(lead) : estagioCorretorDoLead(lead);
+        if (!confirm('Marcar "' + (lead.nome || 'esse contato') + '" como perdido no funil "' + funilTxt + '"?')) return;
+        await marcarPerdidoIds([id], colunaTela);
+      }
+      fecharModal();
+    } catch (e) { alert(e.message); }
+  });
   const btnRemover = document.getElementById('modal-remover');
   if (btnRemover) {
     btnRemover.addEventListener('click', () => {
@@ -1117,8 +1319,9 @@ function abrirModalLead(id) {
   document.getElementById('modal-salvar').addEventListener('click', () => {
     salvarBlocoTexto(id, lead, () => {
       render();
+      mostrarFlashSalvoGrande();
       flashModal();
-      setTimeout(fecharModal, 650);
+      carregarTimeline(lead); // o card continua aberto: só atualiza a linha do tempo
     });
   });
 
@@ -1264,11 +1467,110 @@ async function confirmarAdicionar() {
   }
 }
 
+// Popup verde grande no topo da tela, confirmando o salvamento.
+function mostrarFlashSalvoGrande() {
+  let el = document.getElementById('flash-salvo-grande');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'flash-salvo-grande';
+    el.className = 'flash-salvo-grande';
+    el.textContent = '✅ Salvo!';
+    document.body.appendChild(el);
+  }
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 1100);
+}
+
 function flashModal() {
   const flash = document.getElementById('modal-flash');
   if (!flash) return;
   flash.classList.add('show');
   setTimeout(() => flash.classList.remove('show'), 1600);
+}
+
+// ── Linha do tempo do card: posts que depois de publicados não podem ser editados ──
+function tlEscapar(t) { return String(t == null ? '' : t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function tlQuando(iso) {
+  try { return new Date(iso).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }); }
+  catch (e) { return ''; }
+}
+function tlRender(box, d) {
+  let h = '';
+  if (d.legado && String(d.legado).trim()) {
+    h += '<div class="tl-post tl-legado"><div class="tl-cab"><b>Anotações anteriores</b></div><div class="tl-txt">' + tlEscapar(d.legado) + '</div></div>';
+  }
+  (d.posts || []).forEach(function (p) {
+    if (p.tipo === 'nota') {
+      h += '<div class="tl-post"><div class="tl-cab"><b>' + tlEscapar(p.autor || '') + '</b><span>' + tlQuando(p.criado_em) + '</span></div><div class="tl-txt">' + tlEscapar(p.texto) + '</div></div>';
+    } else {
+      h += '<div class="tl-sis"><span>' + tlQuando(p.criado_em) + '</span> · ' + tlEscapar(p.autor || '') + ': ' + tlEscapar(p.texto) + '</div>';
+    }
+  });
+  if (!h) h = '<div class="tl-vazio">Nenhuma atualização ainda. Escreva a primeira abaixo.</div>';
+  box.innerHTML = h;
+  box.scrollTop = box.scrollHeight;
+}
+async function carregarTimeline(lead) {
+  const box = document.getElementById('tl-lista');
+  if (!box) return;
+  try {
+    const res = await fetch('/api/leads/' + lead.id + '/timeline', { cache: 'no-store' });
+    const d = await res.json();
+    if (!res.ok || d.ok === false) throw new Error(d.erro || 'erro');
+    if (document.getElementById('tl-lista') === box) tlRender(box, d);
+  } catch (e) {
+    box.textContent = 'Não consegui carregar a linha do tempo. Feche e abra o card de novo.';
+  }
+}
+async function publicarTimeline(lead) {
+  const ta = document.getElementById('tl-novo');
+  if (!ta) return false;
+  const texto = ta.value.trim();
+  if (!texto) return false;
+  const btn = document.getElementById('tl-pub');
+  if (btn) btn.disabled = true;
+  try {
+    const res = await fetch('/api/leads/' + lead.id + '/timeline', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ texto: texto }) });
+    const d = await res.json();
+    if (!res.ok || d.ok === false) throw new Error(d.erro || 'Não consegui publicar.');
+    ta.value = '';
+    lead.notas_sdr = '[' + tlQuando(d.post.criado_em) + ' ' + (d.post.autor || '') + '] ' + texto + (lead.notas_sdr ? String.fromCharCode(10) + lead.notas_sdr : '');
+    await carregarTimeline(lead);
+    return true;
+  } catch (e) {
+    alert('⚠️ ' + (e.message || 'Não consegui publicar.') + ' O texto continua na caixa — tente de novo.');
+    return false;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+function montarModalLargo() {
+  const m = document.getElementById('modal');
+  const tl = document.getElementById('tl-wrap');
+  if (!m || !tl || tl.parentNode !== m) return;
+  const esq = document.createElement('div');
+  esq.className = 'mcol-esq';
+  Array.from(m.children).forEach(function (c) { if (c !== tl) esq.appendChild(c); });
+  m.insertBefore(esq, tl);
+  m.classList.add('modal-largo');
+  // Um único botão Salvar, no canto direito, embaixo da linha do tempo.
+  const sv = document.getElementById('modal-salvar');
+  if (sv) {
+    const cx = document.createElement('div');
+    cx.className = 'tl-salvar';
+    const fc = document.getElementById('modal-fechar');
+    if (fc) cx.appendChild(fc);
+    cx.appendChild(sv);
+    tl.appendChild(cx);
+  }
+}
+function ligarTimeline(lead) {
+  montarModalLargo();
+  const b = document.getElementById('tl-pub');
+  if (b) b.addEventListener('click', () => publicarTimeline(lead));
+  const t = document.getElementById('tl-novo');
+  if (t) t.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); const s = document.getElementById('modal-salvar'); if (s) s.click(); } });
+  carregarTimeline(lead);
 }
 
 // Junta tudo que está digitado nos campos de texto do modal (notas, o que
@@ -1277,9 +1579,10 @@ function flashModal() {
 // se digitou algo e mudou a coluna sem clicar em Salvar antes, o que foi
 // digitado não se perde mais.
 function salvarBlocoTexto(id, lead, aoTerminar) {
-  const notasEl = document.getElementById('modal-notas');
-  if (!notasEl) { if (aoTerminar) aoTerminar(); return; }
-  const notas = notasEl.value;
+  if (!document.getElementById('modal-buscando')) { if (aoTerminar) aoTerminar(); return; }
+  // O que estiver digitado na linha do tempo e ainda não publicado vai junto (não se perde ao trocar de coluna).
+  const tlPendente = document.getElementById('tl-novo');
+  const pubP = (tlPendente && tlPendente.value.trim()) ? publicarTimeline(lead) : Promise.resolve(true);
   const buscando = document.getElementById('modal-buscando').value;
   const tarefa = document.getElementById('modal-tarefa').value;
   const tarefaData = document.getElementById('modal-tarefa-data').value;
@@ -1290,7 +1593,6 @@ function salvarBlocoTexto(id, lead, aoTerminar) {
   const campoValorEl = document.getElementById('modal-valor-imovel');
   if (campoValorEl) campoValorEl.value = valorFormatado;
 
-  lead.notas_sdr = notas;
   lead.buscando_sdr = buscando;
   lead.tarefa_sdr = tarefa;
   lead.tarefa_data = tarefaData ? new Date(tarefaData).toISOString() : null;
@@ -1298,7 +1600,6 @@ function salvarBlocoTexto(id, lead, aoTerminar) {
   lead.valor_imovel_sdr = valorFormatado;
 
   const campos = [
-    ['notas_sdr', notas],
     ['buscando_sdr', buscando],
     ['tarefa_sdr', tarefa],
     ['tarefa_data', lead.tarefa_data],
@@ -1306,7 +1607,8 @@ function salvarBlocoTexto(id, lead, aoTerminar) {
     ['valor_imovel_sdr', valorFormatado],
   ];
 
-  salvarCamposComRetry(id, campos).then(() => {
+  Promise.all([pubP, salvarCamposComRetry(id, campos)]).then((r) => {
+    if (r[0] === false) return; // não conseguiu publicar a atualização: mantém o card aberto com o texto na caixa
     if (aoTerminar) aoTerminar(valorFormatado);
   }).catch(() => {
     alert('⚠️ Não consegui confirmar que salvou (rede instável). NÃO troque de status/coluna agora — tenta de novo até aparecer "Salvo ✓".');
@@ -1421,7 +1723,7 @@ async function salvarContato(id) {
 
 // Transferência feita pela Juliane no quadro DELA: o card chega na coluna escolhida
 // (padrão "Novo") no CRM do corretor, sem virar "reaquecido pela SDR".
-const COLUNAS_DESTINO_CORRETOR = ['Novo', 'Aguardando retorno', 'Visita', 'Aguardando documentação', 'Aguardando aprovação', 'Aprovado', 'Em negociação', 'Venda', 'Sem retorno'];
+const COLUNAS_DESTINO_CORRETOR = ['Novo', 'Aguardando retorno', 'Visita', 'Aguardando documentação', 'Aguardando aprovação', 'Aprovado', 'Em negociação', 'Venda'];
 async function transferirPelaJuliane(id, novoCorretor, coluna, aoTerminar) {
   try {
     const res = await fetch('/api/leads/' + id, {
@@ -1619,6 +1921,8 @@ async function salvarCampo(id, campo, valor, aoTerminar) {
     });
     const lead = leadsAtivos().find(l => String(l.id) === String(id));
     if (lead) lead[campo] = valor;
+    if (lead && campo === 'status') limparPerdidoLocal(lead, 'sdr');
+    if (lead && (campo === 'status_corretor' || campo === 'corretor')) limparPerdidoLocal(lead, 'corretor');
     if (aoTerminar) aoTerminar();
   } catch (err) {
     alert('Não consegui salvar. Confere sua internet e tenta de novo.');

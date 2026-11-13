@@ -268,6 +268,9 @@ async function initDb() {
       ADD COLUMN IF NOT EXISTS perdido BOOLEAN DEFAULT false,
       ADD COLUMN IF NOT EXISTS perdido_funil TEXT,
       ADD COLUMN IF NOT EXISTS perdido_em TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS perdido_corretor BOOLEAN DEFAULT false,
+      ADD COLUMN IF NOT EXISTS perdido_corretor_funil TEXT,
+      ADD COLUMN IF NOT EXISTS perdido_corretor_em TIMESTAMPTZ,
       ADD COLUMN IF NOT EXISTS em_andamento BOOLEAN DEFAULT false,
       ADD COLUMN IF NOT EXISTS notas_sdr TEXT,
       ADD COLUMN IF NOT EXISTS reaquecido_em TIMESTAMPTZ,
@@ -2972,6 +2975,7 @@ app.get('/api/leads/meus', basicAuthAdminOuSdr, async (req, res) => {
       `SELECT id, whatsapp, nome, corretor, origem, imovel_desc, imovel_codigo, distribuido_em,
               notas_sdr, tarefa_sdr, tarefa_data,
               ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr,
+              perdido_corretor, perdido_corretor_funil, perdido_corretor_em,
               status_corretor, status_corretor_alterado_em, tipo_lead, cliente_ouro, visitas_qtd, transferido_por, transferido_em,
               (status = 'Repassado ao corretor' OR reaquecido_em IS NOT NULL OR reaquecido_sdr IS TRUE) AS veio_sdr,
               CASE WHEN transferido_por = 'Bruna SDR' THEN 'novo'
@@ -3001,6 +3005,7 @@ app.get('/api/leads/todos-resumo', basicAuthAdminOuSdr, semCorretor, async (req,
     const result = await pool.query(
       `SELECT id, whatsapp, nome, corretor, origem, imovel_desc, imovel_codigo, status, distribuido_em,
               outros_corretores, notas_sdr, reaquecido_em, tarefa_sdr, corretores_repassados,
+              status_corretor, perdido, perdido_funil, perdido_em, perdido_corretor, perdido_corretor_funil, perdido_corretor_em,
               status_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr, tarefa_data, aprovado, visita, proposta, documentacao, venda, carteira_sdr, carteira_juliane, cliente_ouro, visitas_qtd,
               (status = 'Repassado ao corretor' OR reaquecido_em IS NOT NULL OR reaquecido_sdr IS TRUE) AS veio_sdr,
               CASE WHEN transferido_por = 'Bruna SDR' THEN 'novo'
@@ -3682,7 +3687,8 @@ app.post('/api/leads/:id/transferir', basicAuthAdminOuSdr, async (req, res) => {
            reaquecido_sdr = true,
            transferido_por = $3,
            transferido_em = now(),
-           status_corretor_alterado_em = now()
+           status_corretor_alterado_em = now(),
+           perdido_corretor = false, perdido_corretor_funil = NULL, perdido_corretor_em = NULL
        WHERE id = $2`,
       [destino.nome, lead.id, marca, colunaDestino, modo]
     );
@@ -3788,6 +3794,13 @@ app.patch('/api/leads/:id', basicAuthAdminOuSdr, async (req, res) => {
     res.on('finish', () => {
       if (res.statusCode >= 400) return;
       pool.query('UPDATE leads SET perdido = false, perdido_funil = NULL, perdido_em = NULL WHERE id = $1 AND perdido IS TRUE', [id]).catch(() => {});
+    });
+  }
+  // Mudou de coluna do corretor (ou de corretor) = saiu da área "Perdidos" do funil do corretor.
+  if (campo === 'status_corretor' || campo === 'corretor') {
+    res.on('finish', () => {
+      if (res.statusCode >= 400) return;
+      pool.query('UPDATE leads SET perdido_corretor = false, perdido_corretor_funil = NULL, perdido_corretor_em = NULL WHERE id = $1 AND perdido_corretor IS TRUE', [id]).catch(() => {});
     });
   }
 
@@ -4068,6 +4081,62 @@ app.get('/api/admin/backups', basicAuth, async (req, res) => {
     res.json({ ok: true, backups: result.rows });
   } catch (err) {
     console.error('Erro ao listar backups:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
+// Restaura a coluna de origem dos leads que estavam em "Sem retorno" (antes da mudança para Perdidos).
+// /api/admin/restaurar-sem-retorno            → só mostra a prévia
+// /api/admin/restaurar-sem-retorno?aplicar=1  → aplica
+// Origem: histórico de colunas do corretor + backups diários. Sem registro → continua em Novo → Perdidos.
+app.get('/api/admin/restaurar-sem-retorno', basicAuthAdminOuSdr, semCorretor, async (req, res) => {
+  try {
+    if (req.authTipo === 'sdr') return res.status(403).json({ ok: false, erro: 'Só admin.' });
+    const aplicar = String(req.query.aplicar || '') === '1';
+    const SR = 'Sem retorno';
+    const sdrIds = (await pool.query(`SELECT id FROM leads WHERE status = $1 AND COALESCE(perdido,false) = false`, [SR])).rows.map(x => x.id);
+    const corIds = (await pool.query(`SELECT id FROM leads WHERE status_corretor = $1 AND COALESCE(perdido_corretor,false) = false`, [SR])).rows.map(x => x.id);
+    const ultimoSdr = new Map(); const ultimoCor = new Map();
+    const lista = await pool.query('SELECT id FROM backups_leads ORDER BY criado_em ASC');
+    for (const b of lista.rows) {
+      const r = await pool.query('SELECT dados FROM backups_leads WHERE id = $1', [b.id]);
+      const dados = r.rows[0] && r.rows[0].dados;
+      if (!Array.isArray(dados)) continue;
+      for (const l of dados) {
+        if (l.status && l.status !== SR) ultimoSdr.set(l.id, l.status);
+        if (l.status_corretor && l.status_corretor !== SR) ultimoCor.set(l.id, l.status_corretor);
+      }
+    }
+    const hist = new Map();
+    if (corIds.length) {
+      const h = await pool.query(`SELECT lead_id, status_corretor FROM lead_historico_status WHERE lead_id = ANY($1::int[]) AND status_corretor IS NOT NULL AND status_corretor <> $2 ORDER BY em ASC`, [corIds, SR]);
+      for (const x of h.rows) hist.set(x.lead_id, x.status_corretor);
+    }
+    const plano = { sdr: [], corretor: [] };
+    const resumo = { sdr: {}, corretor: {}, sem_origem_sdr: 0, sem_origem_corretor: 0 };
+    for (const id of sdrIds) {
+      const o = ultimoSdr.get(id);
+      if (o && FUNIS_PERDIDO.includes(o)) { plano.sdr.push({ id, funil: o }); resumo.sdr[o] = (resumo.sdr[o] || 0) + 1; }
+      else resumo.sem_origem_sdr++;
+    }
+    for (const id of corIds) {
+      const o = hist.get(id) || ultimoCor.get(id);
+      if (o && FUNIS_PERDIDO_CORRETOR.includes(o)) { plano.corretor.push({ id, funil: o }); resumo.corretor[o] = (resumo.corretor[o] || 0) + 1; }
+      else resumo.sem_origem_corretor++;
+    }
+    if (aplicar) {
+      for (const p of plano.sdr) {
+        await pool.query(`UPDATE leads SET status = $1, perdido = true, perdido_funil = $1, perdido_em = now() WHERE id = $2 AND status = $3`, [p.funil, p.id, SR]);
+        await registrarPostTimeline(p.id, 'sistema', 'Restaurado de "Sem retorno": perdido no funil ' + p.funil, 'sistema').catch(() => {});
+      }
+      for (const p of plano.corretor) {
+        await pool.query(`UPDATE leads SET status_corretor = $1, perdido_corretor = true, perdido_corretor_funil = $1, perdido_corretor_em = now(), sem_retorno = true WHERE id = $2 AND status_corretor = $3`, [p.funil, p.id, SR]);
+        await registrarPostTimeline(p.id, 'sistema', 'Restaurado de "Sem retorno": perdido no funil do corretor ' + p.funil, 'sistema').catch(() => {});
+      }
+    }
+    res.json({ ok: true, aplicado: aplicar, total_sdr: sdrIds.length, total_corretor: corIds.length, restauraveis_sdr: plano.sdr.length, restauraveis_corretor: plano.corretor.length, resumo });
+  } catch (err) {
+    console.error('Erro em restaurar-sem-retorno:', err);
     res.status(500).json({ ok: false, erro: err.message });
   }
 });
@@ -5305,22 +5374,54 @@ app.post('/api/leads/:id/timeline', basicAuthAdminOuSdr, async (req, res) => {
   }
 });
 
-// ─── ROTA: PERDIDO (cada coluna tem uma área "Perdido") ─────────
+// ─── ROTA: PERDIDOS (cada coluna tem uma aba "Perdidos") ─────────
 // O lead continua na coluna (funil) em que estava e fica marcado como perdido — assim dá pra
 // levantar em qual funil cada lead foi perdido. Reativar devolve o lead pra coluna.
+// board 'sdr' = funil da SDR (campo status); board 'corretor' = funil do corretor (status_corretor).
 const FUNIS_PERDIDO = ['Novo', 'Reaquecendo', 'Aguardando retorno', 'Repassado ao corretor', 'Visita agendada', 'Compra futura', 'Já comprou', 'Venda efetuada'];
-app.post('/api/leads/:id/perdido', basicAuthAdminOuSdr, semCorretor, async (req, res) => {
+const FUNIS_PERDIDO_CORRETOR = ['Novo', 'Reaquecido', 'Aguardando retorno', 'Visita', 'Aguardando documentação', 'Aguardando aprovação', 'Aprovado', 'Em negociação', 'Venda'];
+app.post('/api/leads/:id/perdido', basicAuthAdminOuSdr, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
     if (!id) return res.status(400).json({ ok: false, erro: 'Lead inválido' });
     const perdido = !!(req.body && req.body.perdido);
-    const r = await pool.query('SELECT id, status, perdido, transferido_por FROM leads WHERE id = $1', [id]);
+    const board = (req.body && req.body.board) === 'corretor' ? 'corretor' : 'sdr';
+    const r = await pool.query('SELECT id, corretor, status, status_corretor, perdido, perdido_corretor, transferido_por FROM leads WHERE id = $1', [id]);
     if (!r.rows.length) return res.status(404).json({ ok: false, erro: 'Lead não encontrado' });
     const lead = r.rows[0];
-    if (req.authTipo === 'sdr' && lead.transferido_por) {
-      return res.status(403).json({ ok: false, erro: 'Esse lead já foi transferido pra um corretor — a SDR só acompanha.' });
+    if (req.authTipo === 'corretor') {
+      if (board !== 'corretor') return res.status(403).json({ ok: false, erro: 'Sem permissão.' });
+      if (normalizarNomeCorretor(lead.corretor) !== req.corretorNome) return res.status(403).json({ ok: false, erro: 'Esse lead não é seu' });
+    }
+    if (req.authTipo === 'sdr') {
+      if (board === 'corretor') {
+        if (String(lead.corretor || '').trim().toLowerCase() !== CORRETOR_ABERTO_PELA_SDR.toLowerCase()) return res.status(403).json({ ok: false, erro: 'Login da SDR só mexe nos leads da Bruna SDR.' });
+      } else if (lead.transferido_por) {
+        return res.status(403).json({ ok: false, erro: 'Esse lead já foi transferido pra um corretor — a SDR só acompanha.' });
+      }
     }
     const autor = autorTimeline(req);
+    if (board === 'corretor') {
+      if (perdido) {
+        let funil = String((req.body && req.body.funil) || '').trim();
+        if (!FUNIS_PERDIDO_CORRETOR.includes(funil)) funil = FUNIS_PERDIDO_CORRETOR.includes(lead.status_corretor) ? lead.status_corretor : 'Novo';
+        await pool.query(
+          `UPDATE leads SET status_corretor = $1, perdido_corretor = true, perdido_corretor_funil = $1, perdido_corretor_em = now(),
+                  status_corretor_alterado_em = now(), sem_retorno = true WHERE id = $2`,
+          [funil, id]);
+        await registrarPostTimeline(id, 'sistema', 'Marcado como perdido no funil do corretor: ' + funil, autor);
+        return res.json({ ok: true, perdido: true, funil });
+      }
+      const eraC = lead.perdido_corretor ? lead.status_corretor : null;
+      await pool.query(
+        `UPDATE leads SET perdido_corretor = false, perdido_corretor_funil = NULL, perdido_corretor_em = NULL, sem_retorno = false,
+                status_corretor = CASE WHEN status_corretor = 'Sem retorno' THEN 'Novo' ELSE status_corretor END WHERE id = $1`,
+        [id]);
+      if (lead.perdido_corretor || lead.status_corretor === 'Sem retorno') {
+        await registrarPostTimeline(id, 'sistema', 'Reativado (saiu de Perdidos)' + (eraC ? ' — voltou para: ' + eraC : ''), autor);
+      }
+      return res.json({ ok: true, perdido: false });
+    }
     if (perdido) {
       let funil = String((req.body && req.body.funil) || '').trim();
       if (!FUNIS_PERDIDO.includes(funil)) funil = FUNIS_PERDIDO.includes(lead.status) ? lead.status : 'Novo';
@@ -5335,7 +5436,7 @@ app.post('/api/leads/:id/perdido', basicAuthAdminOuSdr, semCorretor, async (req,
       `UPDATE leads SET perdido = false, perdido_funil = NULL, perdido_em = NULL, status = CASE WHEN status = 'Sem retorno' THEN 'Novo' ELSE status END WHERE id = $1`,
       [id]);
     if (lead.perdido || lead.status === 'Sem retorno') {
-      await registrarPostTimeline(id, 'sistema', 'Reativado (saiu de Perdido)' + (era ? ' — voltou para: ' + era : ''), autor);
+      await registrarPostTimeline(id, 'sistema', 'Reativado (saiu de Perdidos)' + (era ? ' — voltou para: ' + era : ''), autor);
     }
     res.json({ ok: true, perdido: false });
   } catch (err) {
