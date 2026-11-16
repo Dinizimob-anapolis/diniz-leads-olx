@@ -176,13 +176,12 @@ const CRM_HTML = `<!DOCTYPE html>
     border-radius: 0 0 var(--radius) var(--radius);
   }
 
-  .perdido-bloco { flex: none; background: #fff; border-top: 1px solid #dfe2ea; border-radius: 0 0 var(--radius) var(--radius); max-height: 48vh; overflow-y: auto; position: relative; }
-  .column-cards.tem-perdido { border-radius: 0; }
+  .perdido-bloco { margin: auto -9px -9px; padding: 6px 9px 4px; flex: none; position: sticky; bottom: 0; z-index: 3; background: #fff; border-top: 1px dashed #d3d7e0; max-height: 50vh; overflow-y: auto; box-shadow: 0 -6px 8px -6px rgba(0,0,0,.12); }
   .perdido-bloco.dragover-p { outline: 2px dashed #b42318; outline-offset: 1px; background: #fdecea; border-radius: 8px; }
-  .perdido-topo { position: sticky; top: 0; z-index: 2; display: flex; justify-content: space-between; align-items: center; padding: 11px 14px; font-size: 13px; font-weight: 800; color: #4b5160; background: #eceef3; cursor: pointer; user-select: none; }
-  .perdido-topo:hover { background: #e3e6ee; }
+  .perdido-topo { display: flex; justify-content: space-between; align-items: center; padding: 6px 8px; font-size: 12px; font-weight: 800; color: #6b7280; cursor: pointer; user-select: none; border-radius: 8px; }
+  .perdido-topo:hover { background: #f1f2f5; }
   .perdido-topo .perdido-n { background: #e3e6ee; color: #4b5160; border-radius: 99px; padding: 1px 9px; font-size: 11px; }
-  .perdido-cards { padding: 9px; display: flex; flex-direction: column; gap: 9px; }
+  .perdido-cards { padding: 6px 0 2px; display: flex; flex-direction: column; gap: 9px; }
   .perdido-cards .lead { opacity: 0.78; }
   .tag-perdido-antigo { font-size: 10px; color: #b42318; font-weight: 700; margin: 0 0 -5px 4px; }
   .resumo-perdidos { flex-basis: 100%; background: #fff; border: 1px solid #f0c6c1; border-radius: var(--radius); padding: 10px 14px; font-size: 13px; color: #4b5160; }
@@ -312,7 +311,7 @@ const CRM_HTML = `<!DOCTYPE html>
     .modal.modal-largo > .mcol-esq div[style*="flex:1"] { min-width: 0; }
     .modal.modal-largo > .mcol-esq input { min-width: 0; max-width: 100%; }
     .toolbar input[type="text"] { flex: 1 1 100%; }
-    .toolbar select { flex: 1 1 100%; }
+    .toolbar select { flex: 1 1 100%; max-width: none !important; }
     .modal.modal-largo:has(> #tl-wrap) { display: block; height: auto; max-height: 90vh; overflow-y: auto; max-width: 440px; }
     .modal.modal-largo > .mcol-esq { overflow: visible; padding-right: 0; }
     .modal.modal-largo > #tl-wrap { border-left: 0; padding-left: 0; overflow: visible; display: contents; }
@@ -485,6 +484,9 @@ const CRM_HTML = `<!DOCTYPE html>
 
 <div class="toolbar">
   <input type="text" id="busca" placeholder="Buscar por nome ou WhatsApp...">
+  <select id="filtro-campanha" title="Filtrar por campanha" style="padding:8px 10px;border-radius:8px;border:1px solid var(--card-border);background:var(--card, #fff);color:inherit;font-size:13px;max-width:260px;">
+    <option value="">Todas as campanhas</option>
+  </select>
   <button class="add-contato-btn" id="btn-atualizar" style="background:#fff;color:var(--accent);border:1px solid var(--accent);box-shadow:none;">↻ Atualizar</button>
   <button class="add-contato-btn" id="btn-salvar-backup" style="background:#fff;color:#17a34a;border:1px solid #17a34a;box-shadow:none;">💾 Salvar backup</button>
   <button class="add-contato-btn" id="btn-baixar-csv" style="background:#fff;color:#3b6cf0;border:1px solid #3b6cf0;box-shadow:none;">⬇️ Baixar planilha</button>
@@ -710,8 +712,36 @@ async function carregar() {
   }
 }
 
+
+// ─── Filtro por campanha (usa o nome da campanha/imóvel do lead) ───
+let FILTRO_CAMPANHA = '';
+function nomeCampanhaDoLead(l) { return String((l && l.imovel_desc) || '').trim() || '(sem campanha)'; }
+function atualizarOpcoesCampanha(base) {
+  const sel = document.getElementById('filtro-campanha');
+  if (!sel) return;
+  const cont = {};
+  (base || []).forEach(l => { const c = nomeCampanhaDoLead(l); cont[c] = (cont[c] || 0) + 1; });
+  const nomes = Object.keys(cont).sort((a, b) => cont[b] - cont[a] || a.localeCompare(b));
+  const assinatura = nomes.map(n => n + '|' + cont[n]).join(';');
+  if (sel.dataset.assinatura !== assinatura) {
+    sel.innerHTML = '';
+    const todas = document.createElement('option');
+    todas.value = ''; todas.textContent = 'Todas as campanhas';
+    sel.appendChild(todas);
+    nomes.forEach(n => {
+      const o = document.createElement('option');
+      o.value = n; o.title = n;
+      o.textContent = (n.length > 42 ? n.slice(0, 41) + '…' : n) + ' (' + cont[n] + ')';
+      sel.appendChild(o);
+    });
+    sel.dataset.assinatura = assinatura;
+  }
+  if (FILTRO_CAMPANHA && !cont[FILTRO_CAMPANHA]) FILTRO_CAMPANHA = '';
+  sel.value = FILTRO_CAMPANHA;
+}
+function filtrarPorCampanha(lista) { return FILTRO_CAMPANHA ? lista.filter(l => nomeCampanhaDoLead(l) === FILTRO_CAMPANHA) : lista; }
 function leadsFiltrados() {
-  let lista = SO_ATRASADAS ? TODOS_LEADS.filter(leadEstaAtrasado) : TODOS_LEADS;
+  let lista = filtrarPorCampanha(SO_ATRASADAS ? TODOS_LEADS.filter(leadEstaAtrasado) : TODOS_LEADS);
   if (!BUSCA) return lista;
   const b = BUSCA.toLowerCase();
   return lista.filter(l => (l.nome || '').toLowerCase().includes(b) || (l.whatsapp || '').includes(b));
@@ -744,6 +774,7 @@ function exportarCSV() {
 }
 
 function render() {
+  atualizarOpcoesCampanha(TODOS_LEADS);
   atualizarAlertaAtrasadas();
   const leads = leadsFiltrados();
   const MEUS = TODOS_LEADS.filter(l => !somenteLeitura(l));
@@ -799,14 +830,14 @@ function render() {
             \${filtroAtivo ? \`<button class="limpar-filtro-btn" onclick="limparFiltroData('\${coluna}')">Limpar</button>\` : ''}
           </div>
         \` : ''}
-        <div class="column-cards tem-perdido" data-coluna="\${coluna}">
+        <div class="column-cards" data-coluna="\${coluna}">
           \${leadsColuna.map(lead => cardHtml(lead, cor.accent)).join('') || (leadsColunaSemFiltro.length > 0 ? '<div style="text-align:center;color:var(--muted);font-size:12px;padding:12px;">Nenhum nesse período</div>' : '')}
-        </div>
         <div class="perdido-bloco" data-coluna="\${coluna}">
           <div class="perdido-topo" onclick="alternarPerdido('\${coluna}')" title="Arraste um card pra cá pra marcar como perdido nessa etapa">
             <span>\${perdidoAberto ? '▾' : '▸'} Perdidos</span><span class="perdido-n">\${perdidosColuna.length}</span>
           </div>
           \${perdidoAberto ? \`<div class="perdido-cards">\${perdidosColuna.map(lead => (lead.status === 'Sem retorno' ? '<div class="tag-perdido-antigo">Sem retorno (antes da mudança)</div>' : '') + cardHtml(lead, '#9aa0ae')).join('') || '<div style="text-align:center;color:var(--muted);font-size:12px;padding:8px;">Nenhum perdido aqui</div>'}</div>\` : ''}
+        </div>
         </div>
       </div>
     \`;
@@ -1772,6 +1803,7 @@ async function salvarCampo(id, campo, valor, aoTerminar) {
 }
 
 document.getElementById('busca').addEventListener('input', e => { BUSCA = e.target.value; render(); });
+document.getElementById('filtro-campanha').addEventListener('change', e => { FILTRO_CAMPANHA = e.target.value; render(); });
 
 carregar();
 setInterval(carregar, 60000); // atualiza sozinho a cada 1 min
