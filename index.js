@@ -3060,7 +3060,7 @@ app.get('/api/leads/todos-resumo', basicAuthAdminOuSdr, semCorretor, async (req,
       `SELECT id, whatsapp, nome, corretor, origem, imovel_desc, imovel_codigo, status, distribuido_em,
               outros_corretores, notas_sdr, reaquecido_em, tarefa_sdr, corretores_repassados,
               status_corretor, perdido, perdido_funil, perdido_em, perdido_corretor, perdido_corretor_funil, perdido_corretor_em,
-              status_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr, tarefa_data, aprovado, visita, proposta, documentacao, venda, carteira_sdr, carteira_juliane, cliente_ouro, visitas_qtd,
+              status_alterado_em, status_corretor_alterado_em, ultima_atualizacao_sdr, valor_imovel_sdr, buscando_sdr, tarefa_data, aprovado, visita, proposta, documentacao, venda, carteira_sdr, carteira_juliane, cliente_ouro, visitas_qtd,
               (status = 'Repassado ao corretor' OR reaquecido_em IS NOT NULL OR reaquecido_sdr IS TRUE) AS veio_sdr,
               CASE WHEN transferido_por = 'Bruna SDR' THEN 'novo'
                    WHEN transferido_por = 'SDR Reaquecimento' OR status = 'Repassado ao corretor' OR reaquecido_em IS NOT NULL OR reaquecido_sdr IS TRUE THEN 'reaquecido'
