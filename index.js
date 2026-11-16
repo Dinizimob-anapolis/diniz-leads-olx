@@ -94,6 +94,22 @@ const CORRETORES_META = [
   // de campanhas com [Patricia] no nome).
 ];
 
+// A Bruna SDR NÃO recebe leads do Meta todo dia das 17:00 às 08:30 e o fim de semana inteiro (horário de Brasília):
+// nesse período os leads dela vão pro rodízio dos outros corretores.
+const REDIRECIONAR_BRUNA_PARA = ['Michelle', 'Renata', 'Rubens', 'Junior'];
+// Só a campanha "Apartamentos BP" é redirecionada fora do horário da Bruna; as demais campanhas seguem o rodízio normal.
+function campanhaApartamentosBP(texto) {
+  const n = normalizarTexto(texto);
+  return /apartamento/.test(n) && /(^|[^a-z])bp([^a-z]|$)/.test(n);
+}
+function brunaForaDoHorario(agora) {
+  const partes = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Sao_Paulo', weekday: 'short', hour: 'numeric', minute: 'numeric', hourCycle: 'h23' }).formatToParts(agora || new Date());
+  const dia = (partes.find(x => x.type === 'weekday') || {}).value;
+  const min = (parseInt((partes.find(x => x.type === 'hour') || {}).value, 10) || 0) * 60 + (parseInt((partes.find(x => x.type === 'minute') || {}).value, 10) || 0);
+  if (dia === 'Sat' || dia === 'Sun') return true;
+  return min < 8 * 60 + 30 || min >= 17 * 60; // segunda a sexta: das 17:00 às 08:30 (sexta à noite segue direto pelo fim de semana até segunda 08:30)
+}
+
 // Nomes extras que aparecem como opção no dropdown de corretor do dashboard,
 // mas NÃO entram na fila de distribuição automática (round-robin) do Canal Pro
 // — pra isso precisaria do telefone de cada um, cadastrado em CORRETORES acima.
@@ -1551,6 +1567,20 @@ async function processarLeadMeta(leadgenId, simulado = null) {
     await salvarConfig(chaveIndice, String((idx + 1) % CORRETORES_META.length));
   }
 
+  // Lead da campanha Apartamentos BP que seria da Bruna SDR todo dia das 17:00 às 08:30 e no fim de semana inteiro: vai pra Michelle, Renata, Rubens e Junior, em rodízio entre eles
+  // (vale também com [Bruna] no nome). Leads de outras campanhas seguem o rodízio normal, inclusive com a Bruna.
+  if (corretor && normalizarTexto(corretor.nome) === normalizarTexto(CORRETOR_ABERTO_PELA_SDR) && campanhaApartamentosBP(todosNomes) && brunaForaDoHorario(simulado && simulado.agora ? new Date(simulado.agora) : new Date())) {
+    const destinos = REDIRECIONAR_BRUNA_PARA.map(n => TELEFONES_CORRETORES[normalizarTexto(n)]).filter(c => c && c.fone);
+    if (destinos.length) {
+      const idxR = parseInt(await lerConfig('indice_redirect_bruna'), 10) || 0;
+      corretor = destinos[idxR % destinos.length];
+      await salvarConfig('indice_redirect_bruna', String((idxR + 1) % destinos.length));
+      console.log('[Meta] Lead da Bruna SDR fora do horário → redirecionado pra ' + corretor.nome);
+    } else {
+      console.error('[Meta] Redirecionamento da Bruna: nenhum destino com telefone — o lead ficou com ela.');
+    }
+  }
+
   const texto =
     `Segue um novo lead interessado ${imovelDesc || 'Meta Ads'}\n` +
     `nome: ${nome}\n` +
@@ -1603,7 +1633,7 @@ app.all('/api/admin/testar-meta-lead', basicAuth, async (req, res) => {
         { name: 'email', values: [String(q.email || 'teste@teste.com')] },
       ] };
       const quem = await processarLeadMeta('teste-' + Date.now() + '-' + i, {
-        lead, nomeConjunto: String(q.campanha || ''), real, debug,
+        lead, nomeConjunto: String(q.campanha || ''), real, debug, agora: q.agora || undefined,
       });
       sequencia.push(`${nome} → ${quem}`);
     }
