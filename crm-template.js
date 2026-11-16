@@ -40,7 +40,11 @@ const CRM_HTML = `<!DOCTYPE html>
   .toolbar select { flex: 0 0 auto; width: auto; }
   .topo-linha { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 10px 16px; margin-bottom: 12px; }
   .topo-linha .stats { flex: 1 1 auto; margin-bottom: 0; }
-  .acoes-topo { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: flex-end; margin-left: auto; }
+  .acoes-topo { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: flex-end; margin-left: auto; }
+  .acoes-topo .add-contato-btn { padding: 7px 11px; font-size: 12.5px; }
+  .topo-linha .stats { gap: 6px; }
+  .topo-linha .stat { padding: 6px 10px; }
+  .topo-linha .stat .num { font-size: 15px; margin-right: 3px; }
   .toolbar input[type="text"] { min-width: 200px; }
   input[type="text"] {
     background: #fff;
