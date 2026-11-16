@@ -31,7 +31,7 @@ function montarLinhasRelatorio(rows) {
     const reaq = !!l.reaquecido_sdr;
     const tipo = l.origem === 'SDR' ? 'Base SDR' : (reaq ? 'Reaquecido' : 'Novo');
     const etapa = (l.corretor ? l.status_corretor : l.status) || '—';
-    const aprov = !!l.passou_aprovado || l.status_corretor === 'Aprovado' || l.status_corretor === 'Venda' || l.status === 'Venda efetuada';
+    const aprov = !!l.passou_aprovado || l.status_corretor === 'Aprovado' || l.status_corretor === 'Fechamento' || l.status_corretor === 'Venda' || l.status === 'Venda efetuada';
     return {
       id: l.id, nome: titulo(l.nome), fone: formatarFone(l.whatsapp), origem: l.origem || '—',
       camp, emp: empreendimentoDe(camp), corretor: l.corretor || 'Sem corretor (SDR)',
