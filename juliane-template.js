@@ -619,10 +619,26 @@ function leadsAtivos() {
 // ─── PERDIDOS: cada coluna tem uma aba retrátil "Perdidos" ─────────
 // Na visão da SDR o "funil" é a coluna da SDR (campo status); na visão por corretor o "funil"
 // é a etapa do corretor (status_corretor) do lead.
-const ESTAGIOS_CORRETOR = ['Novo', 'Reaquecido', 'Aguardando retorno', 'Visita', 'Aguardando documentação', 'Aguardando aprovação', 'Aprovado', 'Em negociação', 'Venda'];
+const ETAPAS_NOVAS = ['Novo', 'Conexão', 'Qualificação', 'Atendimento', 'Visita', 'Aprovação / Proposta', 'Fechamento', 'Venda'];
+const ETAPAS_ANTIGAS = ['Novo', 'Reaquecido', 'Aguardando retorno', 'Visita', 'Aguardando documentação', 'Aguardando aprovação', 'Aprovado', 'Em negociação', 'Venda'];
+const CORRETORES_FUNIL_ANTIGO = ['cyda', 'cida'];
+const MAPA_ETAPA_ANTIGA_NOVA = { 'Reaquecido': 'Conexão', 'Aguardando retorno': 'Conexão', 'Aguardando documentação': 'Aprovação / Proposta', 'Aguardando aprovação': 'Aprovação / Proposta', 'Aprovado': 'Fechamento', 'Em negociação': 'Fechamento' };
+const ROTULOS_ETAPA_NOVA = { 'Novo': 'Novo / Triagem', 'Visita': 'Visita / Apresentação', 'Venda': 'Venda!' };
+function funilAntigoDe(nome) {
+  const n = String(nome || '').trim().toLowerCase().normalize('NFD').replace(/[^a-z]/g, '');
+  return CORRETORES_FUNIL_ANTIGO.includes(n);
+}
+function rotuloEtapa(etapa, nomeCorretor) { return funilAntigoDe(nomeCorretor) ? etapa : (ROTULOS_ETAPA_NOVA[etapa] || etapa); }
+function etapaNoFunil(etapa, nomeCorretor) {
+  const lista = funilAntigoDe(nomeCorretor) ? ETAPAS_ANTIGAS : ETAPAS_NOVAS;
+  if (lista.includes(etapa)) return etapa;
+  if (!funilAntigoDe(nomeCorretor) && MAPA_ETAPA_ANTIGA_NOVA[etapa]) return MAPA_ETAPA_ANTIGA_NOVA[etapa];
+  return 'Novo';
+}
 const PERDIDO_ABERTO = new Set();
 let RESUMO_PERDIDOS_ABERTO = false;
-function estagioCorretorDoLead(l) { return ESTAGIOS_CORRETOR.includes(l.status_corretor) ? l.status_corretor : 'Novo'; }
+function estagioCorretorDoLead(l) { return etapaNoFunil(l.status_corretor, l.corretor); }
+function rotuloEstagioDoLead(l) { return rotuloEtapa(estagioCorretorDoLead(l), l.corretor); }
 // O lead antigo da coluna "Sem retorno" (que não existe mais) conta como perdido.
 function ehPerdido(l) {
   return ABA_CRM === 'sdr' ? (l.perdido === true || l.status === 'Sem retorno') : (l.perdido_corretor === true || l.status_corretor === 'Sem retorno');
@@ -630,8 +646,10 @@ function ehPerdido(l) {
 function ehPerdidoLegado(l) { return ABA_CRM === 'sdr' ? l.status === 'Sem retorno' : l.status_corretor === 'Sem retorno'; }
 function funilDoPerdido(l) {
   if (ABA_CRM === 'sdr') return l.perdido_funil || (l.status === 'Sem retorno' ? 'Sem retorno (antes da mudança)' : statusDoLead(l));
-  return l.perdido_corretor_funil || (l.status_corretor === 'Sem retorno' ? 'Sem retorno (antes da mudança)' : estagioCorretorDoLead(l));
+  return l.perdido_corretor_funil ? etapaNoFunil(l.perdido_corretor_funil, l.corretor) : (l.status_corretor === 'Sem retorno' ? 'Sem retorno (antes da mudança)' : estagioCorretorDoLead(l));
 }
+// Nome da etapa como aparece na tela (ex.: Novo → "Novo / Triagem").
+function rotuloFunilDoPerdido(l) { const f = funilDoPerdido(l); return ABA_CRM === 'sdr' ? f : rotuloEtapa(f, l.corretor); }
 async function postarPerdido(id, perdido, funil) {
   const res = await fetch('/api/leads/' + id + '/perdido', {
     method: 'POST',
@@ -844,7 +862,7 @@ function exportarCSV() {
     l.tarefa_data ? new Date(l.tarefa_data).toLocaleString('pt-BR') : '',
     (l.notas_sdr || '').replace(/\\n/g, ' '), (l.buscando_sdr || '').replace(/\\n/g, ' '),
     l.distribuido_em ? new Date(l.distribuido_em).toLocaleDateString('pt-BR') : '',
-    ehPerdido(l) ? 'Sim' : '', ehPerdido(l) ? funilDoPerdido(l) : '',
+    ehPerdido(l) ? 'Sim' : '', ehPerdido(l) ? rotuloFunilDoPerdido(l) : '',
     (ABA_CRM === 'sdr' ? l.perdido_em : l.perdido_corretor_em) ? new Date(ABA_CRM === 'sdr' ? l.perdido_em : l.perdido_corretor_em).toLocaleDateString('pt-BR') : ''
   ]);
   const escapar = v => \`"\${String(v).replace(/"/g, '""')}"\`;
@@ -868,7 +886,7 @@ function render() {
   const vgvTotal = leadsBase.filter(l => !ehPerdido(l)).reduce((soma, lead) => soma + parseValorImovel(lead.valor_imovel_sdr), 0);
   const PERDIDOS = leadsBase.filter(ehPerdido);
   const contagemFunil = {};
-  PERDIDOS.forEach(l => { const f = funilDoPerdido(l); contagemFunil[f] = (contagemFunil[f] || 0) + 1; });
+  PERDIDOS.forEach(l => { const f = rotuloFunilDoPerdido(l); contagemFunil[f] = (contagemFunil[f] || 0) + 1; });
   const ordemFunis = Object.keys(contagemFunil);
   const visitasTotal = leadsBase.reduce((soma, lead) => soma + (visitaContabilizada(lead) ? (parseInt(lead.visitas_qtd, 10) || 0) : 0), 0);
   const clientesComVisita = leadsBase.filter(visitaContabilizada).length;
@@ -932,7 +950,7 @@ function render() {
           <div class="perdido-topo" onclick="alternarPerdido('\${coluna}')" title="Arraste um card pra cá pra marcar como perdido">
             <span>\${perdidoAberto ? '▾' : '▸'} Perdidos</span><span class="perdido-n">\${perdidosColuna.length}</span>
           </div>
-          \${perdidoAberto ? \`<div class="perdido-cards">\${perdidosColuna.map(lead => (ehPerdidoLegado(lead) ? '<div class="tag-perdido-antigo">Sem retorno (antes da mudança)</div>' : (ABA_CRM !== 'sdr' ? '<div class="tag-funil-perdido">Perdido em: ' + funilDoPerdido(lead) + '</div>' : '')) + cardHtml(lead, '#9aa0ae', coluna === COLUNA_TRIAGEM && ABA_CRM !== 'sdr', coluna !== COLUNA_TRIAGEM && ABA_CRM !== 'sdr')).join('') || '<div style="text-align:center;color:var(--muted);font-size:12px;padding:8px;">Nenhum perdido aqui</div>'}</div>\` : ''}
+          \${perdidoAberto ? \`<div class="perdido-cards">\${perdidosColuna.map(lead => (ehPerdidoLegado(lead) ? '<div class="tag-perdido-antigo">Sem retorno (antes da mudança)</div>' : (ABA_CRM !== 'sdr' ? '<div class="tag-funil-perdido">Perdido em: ' + rotuloFunilDoPerdido(lead) + '</div>' : '')) + cardHtml(lead, '#9aa0ae', coluna === COLUNA_TRIAGEM && ABA_CRM !== 'sdr', coluna !== COLUNA_TRIAGEM && ABA_CRM !== 'sdr')).join('') || '<div style="text-align:center;color:var(--muted);font-size:12px;padding:8px;">Nenhum perdido aqui</div>'}</div>\` : ''}
         </div>
       </div>
     \`;
@@ -1118,7 +1136,7 @@ function abrirModalLead(id) {
   const waLink = lead.whatsapp ? \`https://wa.me/\${lead.whatsapp}\` : null;
 
   document.getElementById('modal').innerHTML = \`
-    \${ehPerdido(lead) ? '<div class="faixa-perdido"><b>❌ LEAD PERDIDO</b><span>Funil: ' + funilDoPerdido(lead) + '</span></div>' : ''}
+    \${ehPerdido(lead) ? '<div class="faixa-perdido"><b>❌ LEAD PERDIDO</b><span>Funil: ' + rotuloFunilDoPerdido(lead) + '</span></div>' : ''}
     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
       <h2>\${lead.nome || 'Sem nome'}\${duplicado ? \`<button class="btn-historico modal-versao" onclick="mostrarHistoricoCorretor('\${lead.id}')" title="Ver histórico de corretores">H</button>\` : ''}<button class="btn-ouro modal-versao \${lead.cliente_ouro ? 'ativo' : ''}" onclick="alternarClienteOuro('\${lead.id}', \${!lead.cliente_ouro})" title="\${lead.cliente_ouro ? 'Cliente Ouro — clique pra desmarcar' : 'Marcar como Cliente Ouro'}">⭐</button></h2>
       <span id="badge-valor-imovel">\${lead.valor_imovel_sdr ? \`<span class="badge" style="background:#eafcea;color:#17a34a;border:1px solid #a8ecca;white-space:nowrap;">💰 \${lead.valor_imovel_sdr}</span>\` : ''}</span>
@@ -1158,7 +1176,7 @@ function abrirModalLead(id) {
       </select>
       <label>Ao transferir, enviar para a coluna</label>
       <select id="modal-coluna-destino">
-        \${COLUNAS_DESTINO_CORRETOR.map(c => \`<option value="\${c}">\${c}</option>\`).join('')}
+        \${COLUNAS_DESTINO_CORRETOR.map(c => \`<option value="\${c}">\${rotuloEtapa(c, '')}</option>\`).join('')}
       </select>
       \${lead.corretor ? \`<div style="margin-top:6px;"><span class="chip-corretor" style="border-color:\${corDoCorretor(lead.corretor)};color:\${corDoCorretor(lead.corretor)};background:\${corDoCorretor(lead.corretor)}1a">\${lead.corretor}</span></div>\` : ''}
     \`}
@@ -1238,7 +1256,7 @@ function abrirModalLead(id) {
         await reativarLead(id);
       } else {
         const colunaTela = ABA_CRM === 'sdr' ? statusDoLead(lead) : colunaCorretorDoLead(lead);
-        const funilTxt = ABA_CRM === 'sdr' ? statusDoLead(lead) : estagioCorretorDoLead(lead);
+        const funilTxt = ABA_CRM === 'sdr' ? statusDoLead(lead) : rotuloEstagioDoLead(lead);
         if (!confirm('Marcar "' + (lead.nome || 'esse contato') + '" como perdido no funil "' + funilTxt + '"?')) return;
         await marcarPerdidoIds([id], colunaTela);
       }
@@ -1648,7 +1666,7 @@ async function salvarCamposComRetry(id, campos) {
 const LISTA_LEADS_VISITAS = { find: (fn) => leadsAtivos().find(fn) };
 // O campo de visitas aparece quando o card está na coluna Visita ou em qualquer
 // etapa depois dela (ou se já tem visita registrada, pra o número não sumir).
-const ETAPAS_DEPOIS_DA_VISITA = ['Aguardando documentação', 'Aguardando aprovação', 'Aprovado', 'Em negociação', 'Venda'];
+const ETAPAS_DEPOIS_DA_VISITA = ['Aguardando documentação', 'Aguardando aprovação', 'Aprovado', 'Em negociação', 'Venda', 'Aprovação / Proposta', 'Fechamento'];
 function mostrarCampoVisitas(lead) {
   if ((parseInt(lead.visitas_qtd, 10) || 0) > 0) return true;
   return lead.status_corretor === 'Visita' || ETAPAS_DEPOIS_DA_VISITA.includes(lead.status_corretor);
@@ -1724,7 +1742,7 @@ async function salvarContato(id) {
 
 // Transferência feita pela Juliane no quadro DELA: o card chega na coluna escolhida
 // (padrão "Novo") no CRM do corretor, sem virar "reaquecido pela SDR".
-const COLUNAS_DESTINO_CORRETOR = ['Novo', 'Aguardando retorno', 'Visita', 'Aguardando documentação', 'Aguardando aprovação', 'Aprovado', 'Em negociação', 'Venda'];
+const COLUNAS_DESTINO_CORRETOR = ['Novo', 'Conexão', 'Qualificação', 'Atendimento', 'Visita', 'Aprovação / Proposta', 'Fechamento', 'Venda'];
 async function transferirPelaJuliane(id, novoCorretor, coluna, aoTerminar) {
   try {
     const res = await fetch('/api/leads/' + id, {
