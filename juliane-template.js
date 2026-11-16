@@ -559,10 +559,10 @@ const JULIANE_HTML = `<!DOCTYPE html>
 <div class="stats" id="stats"></div>
 <div class="acoes-topo">
   <button class="add-contato-btn" id="btn-atualizar" style="background:#fff;color:var(--accent);border:1px solid var(--accent);box-shadow:none;">↻ Atualizar</button>
-  <button class="add-contato-btn" id="btn-salvar-backup" style="background:#fff;color:#17a34a;border:1px solid #17a34a;box-shadow:none;">💾 Salvar backup</button>
-  <button class="add-contato-btn" id="btn-baixar-csv" style="background:#fff;color:#3b6cf0;border:1px solid #3b6cf0;box-shadow:none;">⬇️ Baixar planilha</button>
+  <button class="add-contato-btn" id="btn-salvar-backup" style="background:#fff;color:#17a34a;border:1px solid #17a34a;box-shadow:none;" title="Salvar backup">💾 Backup</button>
+  <button class="add-contato-btn" id="btn-baixar-csv" style="background:#fff;color:#3b6cf0;border:1px solid #3b6cf0;box-shadow:none;" title="Baixar planilha">⬇️ Planilha</button>
   <button class="add-contato-btn" id="btn-analytics" onclick="window.location.href='/analytics?origem=juliane'" style="background:#fff;color:#7c5cff;border:1px solid #7c5cff;box-shadow:none;">📊 Análise</button>
-  <button class="add-contato-btn" id="btn-novo-corretor" style="background:#fff;color:#12b76a;border:1px solid #12b76a;box-shadow:none;">👤 Adicionar corretor</button>
+  <button class="add-contato-btn" id="btn-novo-corretor" style="background:#fff;color:#12b76a;border:1px solid #12b76a;box-shadow:none;" title="Adicionar corretor">👤 + Corretor</button>
   <button class="add-contato-btn" id="btn-adicionar">+ Adicionar contato</button>
 </div>
 </div>
