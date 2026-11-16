@@ -474,6 +474,7 @@ const CORRETOR_HTML = `<!DOCTYPE html>
     body { padding: 12px; }
     .toolbar { flex-wrap: wrap; }
     .toolbar input[type="text"] { flex: 1 1 100%; }
+    .toolbar select { flex: 1 1 100%; max-width: none !important; }
     .add-contato-btn {
       padding: 11px 16px;
       font-size: 14.5px;
@@ -499,6 +500,9 @@ const CORRETOR_HTML = `<!DOCTYPE html>
 
 <div class="toolbar">
   <input type="text" id="busca" placeholder="Buscar por nome ou WhatsApp...">
+  <select id="filtro-campanha" title="Filtrar por campanha" style="padding:8px 10px;border-radius:8px;border:1px solid var(--card-border);background:var(--card, #fff);color:inherit;font-size:13px;max-width:260px;">
+    <option value="">Todas as campanhas</option>
+  </select>
   <button class="add-contato-btn" id="btn-adicionar">+ Adicionar contato</button>
   <button class="add-contato-btn" id="btn-atualizar" style="background:#fff;color:var(--accent);border:1px solid var(--accent);box-shadow:none;">↻ Atualizar</button>
   <button class="add-contato-btn" id="btn-salvar-backup" style="background:#fff;color:#17a34a;border:1px solid #17a34a;box-shadow:none;">💾 Salvar backup</button>
@@ -734,8 +738,36 @@ async function carregar() {
   }
 }
 
+
+// ─── Filtro por campanha (usa o nome da campanha/imóvel do lead) ───
+let FILTRO_CAMPANHA = '';
+function nomeCampanhaDoLead(l) { return String((l && l.imovel_desc) || '').trim() || '(sem campanha)'; }
+function atualizarOpcoesCampanha(base) {
+  const sel = document.getElementById('filtro-campanha');
+  if (!sel) return;
+  const cont = {};
+  (base || []).forEach(l => { const c = nomeCampanhaDoLead(l); cont[c] = (cont[c] || 0) + 1; });
+  const nomes = Object.keys(cont).sort((a, b) => cont[b] - cont[a] || a.localeCompare(b));
+  const assinatura = nomes.map(n => n + '|' + cont[n]).join(';');
+  if (sel.dataset.assinatura !== assinatura) {
+    sel.innerHTML = '';
+    const todas = document.createElement('option');
+    todas.value = ''; todas.textContent = 'Todas as campanhas';
+    sel.appendChild(todas);
+    nomes.forEach(n => {
+      const o = document.createElement('option');
+      o.value = n; o.title = n;
+      o.textContent = (n.length > 42 ? n.slice(0, 41) + '…' : n) + ' (' + cont[n] + ')';
+      sel.appendChild(o);
+    });
+    sel.dataset.assinatura = assinatura;
+  }
+  if (FILTRO_CAMPANHA && !cont[FILTRO_CAMPANHA]) FILTRO_CAMPANHA = '';
+  sel.value = FILTRO_CAMPANHA;
+}
+function filtrarPorCampanha(lista) { return FILTRO_CAMPANHA ? lista.filter(l => nomeCampanhaDoLead(l) === FILTRO_CAMPANHA) : lista; }
 function leadsFiltrados() {
-  let lista = SO_ATRASADAS ? TODOS_LEADS.filter(leadEstaAtrasado) : TODOS_LEADS;
+  let lista = filtrarPorCampanha(SO_ATRASADAS ? TODOS_LEADS.filter(leadEstaAtrasado) : TODOS_LEADS);
   if (!BUSCA) return lista;
   const b = BUSCA.toLowerCase();
   return lista.filter(l => (l.nome || '').toLowerCase().includes(b) || (l.whatsapp || '').includes(b));
@@ -768,6 +800,7 @@ function exportarCSV() {
 }
 
 function render() {
+  atualizarOpcoesCampanha(TODOS_LEADS);
   atualizarAlertaAtrasadas();
   const leads = leadsFiltrados();
   const MEUS = TODOS_LEADS.filter(l => !somenteLeitura(l));
@@ -1558,6 +1591,7 @@ async function salvarCampo(id, campo, valor, aoTerminar) {
 }
 
 document.getElementById('busca').addEventListener('input', e => { BUSCA = e.target.value; render(); });
+document.getElementById('filtro-campanha').addEventListener('change', e => { FILTRO_CAMPANHA = e.target.value; render(); });
 
 carregar();
 setInterval(carregar, 60000); // atualiza sozinho a cada 1 min
