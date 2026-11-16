@@ -115,6 +115,30 @@ function brunaForaDoHorario(agora) {
 // — pra isso precisaria do telefone de cada um, cadastrado em CORRETORES acima.
 const CORRETORES_EXTRA_DASHBOARD = ['Amanda', 'Juliane', 'Bruno', 'Patricia', 'Michelle', 'Cyda', 'Bruna SDR'];
 
+// ─── Funil de vendas do corretor (nov/2026): 8 etapas novas. Quem está em CORRETORES_FUNIL_ANTIGO (Cyda) continua com as etapas antigas.
+// Valores guardados: 'Novo' (exibido "Novo / Triagem"), 'Conexão', 'Qualificação', 'Atendimento', 'Visita' (exibido "Visita / Apresentação"),
+// 'Aprovação / Proposta', 'Fechamento', 'Venda'.
+const CORRETORES_FUNIL_ANTIGO = ['cyda', 'cida'];
+const MAPA_ETAPA_ANTIGA_NOVA = {
+  'Reaquecido': 'Conexão', 'Aguardando retorno': 'Conexão',
+  'Aguardando documentação': 'Aprovação / Proposta', 'Aguardando aprovação': 'Aprovação / Proposta',
+  'Aprovado': 'Fechamento', 'Em negociação': 'Fechamento',
+};
+const MAPA_ETAPA_NOVA_ANTIGA = {
+  'Conexão': 'Reaquecido', 'Qualificação': 'Aguardando retorno', 'Atendimento': 'Aguardando retorno',
+  'Aprovação / Proposta': 'Aguardando aprovação', 'Fechamento': 'Em negociação',
+};
+function funilAntigoDoCorretor(nome) {
+  const n = String(nome || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  return CORRETORES_FUNIL_ANTIGO.includes(n);
+}
+// Converte o nome da etapa pro funil do corretor de destino (novo ou antigo).
+function etapaParaCorretor(nomeCorretor, etapa) {
+  if (!etapa) return etapa;
+  return funilAntigoDoCorretor(nomeCorretor) ? (MAPA_ETAPA_NOVA_ANTIGA[etapa] || etapa) : (MAPA_ETAPA_ANTIGA_NOVA[etapa] || etapa);
+}
+
+
 // Critério de quem aparece no board da Juliane (/crm-juliane via
 // /api/leads/todos-resumo). Extraído como constante pra não duplicar essa
 // lógica: o /api/analytics usa exatamente o mesmo critério quando ela olha
@@ -544,10 +568,10 @@ async function initDb() {
     const atualizados = await pool.query(`
       UPDATE leads SET
         contatou = contatou OR (status_corretor IS NOT NULL AND status_corretor <> 'Novo'),
-        documentacao = documentacao OR status_corretor IN ('Aguardando documentação', 'Aguardando aprovação', 'Aprovado', 'Visita', 'Em negociação', 'Venda'),
-        aprovado = aprovado OR status_corretor IN ('Aprovado', 'Venda'),
+        documentacao = documentacao OR status_corretor IN ('Aguardando documentação', 'Aguardando aprovação', 'Aprovado', 'Visita', 'Em negociação', 'Venda', 'Aprovação / Proposta', 'Fechamento'),
+        aprovado = aprovado OR status_corretor IN ('Aprovado', 'Venda', 'Fechamento'),
         visita = visita OR status_corretor = 'Visita',
-        proposta = proposta OR status_corretor IN ('Em negociação', 'Venda'),
+        proposta = proposta OR status_corretor IN ('Em negociação', 'Venda', 'Fechamento'),
         venda = venda OR status_corretor = 'Venda',
         sem_retorno = CASE WHEN status_corretor = 'Sem retorno' THEN true ELSE sem_retorno END
       WHERE status_corretor IS NOT NULL
@@ -3134,9 +3158,9 @@ app.get('/api/analytics', basicAuthAdminOuSdr, async (req, res) => {
     // pelo campo direto (não são etapa de coluna que se arrasta por engano).
     const DWELL = `status_corretor_alterado_em <= now() - interval '12 hours'`;
     const COND_CONTATOU = `contatou`;
-    const COND_APROVADO = `(status_corretor = 'Aprovado' AND ${DWELL})`;
+    const COND_APROVADO = `(status_corretor IN ('Aprovado','Fechamento') AND ${DWELL})`;
     const COND_VISITA = `(status_corretor = 'Visita' AND ${DWELL})`;
-    const COND_EM_NEGOCIACAO = `(status_corretor = 'Em negociação' AND ${DWELL})`;
+    const COND_EM_NEGOCIACAO = `(status_corretor IN ('Em negociação','Aprovação / Proposta') AND ${DWELL})`;
     const COND_PROPOSTA = `proposta`;
     const COND_VENDA = `(status_corretor = 'Venda' AND ${DWELL})`;
     const COND_SEM_RETORNO = `sem_retorno`;
@@ -3168,7 +3192,7 @@ app.get('/api/analytics', basicAuthAdminOuSdr, async (req, res) => {
           ROUND(AVG(EXTRACT(EPOCH FROM (primeiro_contato_em - distribuido_em)) / 3600.0) FILTER (WHERE primeiro_contato_em IS NOT NULL), 1) AS horas_media_resposta
         FROM leads `;
     // "Parado": lead que já tem corretor, continua em Novo/Reaquecido e foi distribuído há mais de 2 dias.
-    const COND_PARADO = `(COALESCE(NULLIF(status_corretor,''),'Novo') IN ('Novo','Reaquecido') AND corretor IS NOT NULL AND corretor <> '' AND distribuido_em < now() - interval '2 days' AND NOT COALESCE(sem_retorno,false))`;
+    const COND_PARADO = `(COALESCE(NULLIF(status_corretor,''),'Novo') IN ('Novo','Reaquecido','Conexão') AND corretor IS NOT NULL AND corretor <> '' AND distribuido_em < now() - interval '2 days' AND NOT COALESCE(sem_retorno,false))`;
 
     const [funilQ, corretorQ, origemQ, statusQ, tendenciaQ, naoIdentQ, anteriorQ, etapasQ, horasQ, campanhasQ, alertasQ] = await Promise.all([
       pool.query(`
@@ -3266,7 +3290,7 @@ app.get('/api/analytics', basicAuthAdminOuSdr, async (req, res) => {
         SELECT
           COUNT(*) FILTER (WHERE ${COND_PARADO})::int AS parados,
           COUNT(*) FILTER (WHERE tarefa_data IS NOT NULL AND tarefa_data < now() AND COALESCE(tarefa_sdr,'') <> '')::int AS tarefas_atrasadas,
-          COUNT(*) FILTER (WHERE COALESCE(NULLIF(status_corretor,''),'Novo') IN ('Novo','Reaquecido') AND corretor IS NOT NULL AND corretor <> '' AND NOT COALESCE(sem_retorno,false))::int AS sem_movimentacao
+          COUNT(*) FILTER (WHERE COALESCE(NULLIF(status_corretor,''),'Novo') IN ('Novo','Reaquecido','Conexão') AND corretor IS NOT NULL AND corretor <> '' AND NOT COALESCE(sem_retorno,false))::int AS sem_movimentacao
         FROM leads ${whereLeads}
       `, paramsLeads),
     ]);
@@ -3700,7 +3724,7 @@ app.post('/api/leads/:id/transferir', basicAuthAdminOuSdr, async (req, res) => {
       }
     }
     const marca = modo === 'reaquecimento' ? 'SDR Reaquecimento' : CORRETOR_ABERTO_PELA_SDR;
-    const colunaDestino = modo === 'reaquecimento' ? 'Reaquecido' : (lead.status_corretor || 'Novo');
+    const colunaDestino = modo === 'reaquecimento' ? (funilAntigoDoCorretor(destino.nome) ? 'Reaquecido' : 'Conexão') : etapaParaCorretor(destino.nome, lead.status_corretor || 'Novo');
     await pool.query(
       `UPDATE leads
        SET corretor = $1,
@@ -3904,12 +3928,14 @@ app.patch('/api/leads/:id', basicAuthAdminOuSdr, async (req, res) => {
         'Aguardando aprovação': 4,
         'Aprovado': 5,
         'Em negociação': 6,
+        'Aprovação / Proposta': 4,
+        'Fechamento': 6,
         'Venda': 7,
       };
       const rank = RANK_STATUS_CORRETOR[valorFinal] || 0;
       const contatouFlag = valorFinal !== 'Novo';
       const documentacaoFlag = rank >= 3;
-      const aprovadoFlag = valorFinal === 'Aprovado' || valorFinal === 'Venda';
+      const aprovadoFlag = valorFinal === 'Aprovado' || valorFinal === 'Venda' || valorFinal === 'Fechamento';
       const visitaFlag = valorFinal === 'Visita';
       const propostaFlag = rank >= 6;
       const vendaFlag = rank >= 7;
@@ -3946,7 +3972,7 @@ app.patch('/api/leads/:id', basicAuthAdminOuSdr, async (req, res) => {
         // Quando a Juliane transfere pelo quadro DELA (não pela carteira da SDR), o
         // pedido vem com a coluna de destino: o card chega nessa coluna (padrão "Novo")
         // e NÃO é marcado como reaquecimento. Sem coluna = fluxo do reaquecimento.
-        const COLUNAS_DESTINO_JULIANE = ['Novo', 'Aguardando retorno', 'Visita', 'Aguardando documentação', 'Aguardando aprovação', 'Aprovado', 'Em negociação', 'Venda', 'Sem retorno'];
+        const COLUNAS_DESTINO_JULIANE = ['Novo', 'Aguardando retorno', 'Visita', 'Aguardando documentação', 'Aguardando aprovação', 'Aprovado', 'Em negociação', 'Venda', 'Sem retorno', 'Conexão', 'Qualificação', 'Atendimento', 'Aprovação / Proposta', 'Fechamento'];
         const colunaPedida = req.body && req.body.coluna;
         const transferenciaDireta = req.authTipo !== 'sdr' && COLUNAS_DESTINO_JULIANE.includes(colunaPedida);
         await pool.query(
@@ -3963,7 +3989,7 @@ app.patch('/api/leads/:id', basicAuthAdminOuSdr, async (req, res) => {
                reaquecido_sdr = CASE WHEN $4 THEN reaquecido_sdr ELSE true END,
                status_corretor_alterado_em = now()
            WHERE id = $2`,
-          [valorFinal, id, transferenciaDireta ? colunaPedida : 'Reaquecido', transferenciaDireta]
+          [valorFinal, id, transferenciaDireta ? etapaParaCorretor(valorFinal, colunaPedida) : (funilAntigoDoCorretor(valorFinal) ? 'Reaquecido' : 'Conexão'), transferenciaDireta]
         );
       } else {
         await pool.query(
@@ -4167,6 +4193,41 @@ app.get('/api/admin/restaurar-sem-retorno', basicAuthAdminOuSdr, semCorretor, as
     res.json({ ok: true, aplicado: aplicar, total_sdr: sdrIds.length, total_corretor: corIds.length, restauraveis_sdr: plano.sdr.length, restauraveis_corretor: plano.corretor.length, resumo });
   } catch (err) {
     console.error('Erro em restaurar-sem-retorno:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
+// Migra os leads do funil antigo do corretor pro funil novo (8 etapas). A Cyda fica de fora (continua com o funil antigo).
+// /api/admin/migrar-funil-corretor            → só mostra a prévia
+// /api/admin/migrar-funil-corretor?aplicar=1  → aplica
+app.get('/api/admin/migrar-funil-corretor', basicAuthAdminOuSdr, semCorretor, async (req, res) => {
+  try {
+    if (req.authTipo === 'sdr') return res.status(403).json({ ok: false, erro: 'Só admin.' });
+    const aplicar = String(req.query.aplicar || '') === '1';
+    const antigas = Object.keys(MAPA_ETAPA_ANTIGA_NOVA);
+    const r = await pool.query(
+      `SELECT id, corretor, status_corretor, perdido_corretor_funil FROM leads
+        WHERE status_corretor = ANY($1::text[]) OR perdido_corretor_funil = ANY($1::text[])`, [antigas]);
+    const alvo = r.rows.filter(l => !funilAntigoDoCorretor(l.corretor));
+    const resumo = {};
+    for (const l of alvo) {
+      const de = l.status_corretor, para = MAPA_ETAPA_ANTIGA_NOVA[de];
+      if (para) { const k = de + ' → ' + para; resumo[k] = (resumo[k] || 0) + 1; }
+    }
+    const ignoradosCyda = r.rows.length - alvo.length;
+    if (aplicar) {
+      for (const l of alvo) {
+        const novo = MAPA_ETAPA_ANTIGA_NOVA[l.status_corretor] || l.status_corretor;
+        const novoFunil = l.perdido_corretor_funil ? (MAPA_ETAPA_ANTIGA_NOVA[l.perdido_corretor_funil] || l.perdido_corretor_funil) : null;
+        await pool.query(
+          `UPDATE leads SET status_corretor = $1, perdido_corretor_funil = $2,
+                  reaquecido_sdr = reaquecido_sdr OR ($3 = 'Reaquecido') WHERE id = $4`,
+          [novo, novoFunil, l.status_corretor, l.id]);
+      }
+    }
+    res.json({ ok: true, aplicado: aplicar, total: alvo.length, ignorados_funil_antigo: ignoradosCyda, resumo });
+  } catch (err) {
+    console.error('Erro em migrar-funil-corretor:', err);
     res.status(500).json({ ok: false, erro: err.message });
   }
 });
@@ -5409,7 +5470,7 @@ app.post('/api/leads/:id/timeline', basicAuthAdminOuSdr, async (req, res) => {
 // levantar em qual funil cada lead foi perdido. Reativar devolve o lead pra coluna.
 // board 'sdr' = funil da SDR (campo status); board 'corretor' = funil do corretor (status_corretor).
 const FUNIS_PERDIDO = ['Novo', 'Reaquecendo', 'Aguardando retorno', 'Repassado ao corretor', 'Visita agendada', 'Compra futura', 'Já comprou', 'Venda efetuada'];
-const FUNIS_PERDIDO_CORRETOR = ['Novo', 'Reaquecido', 'Aguardando retorno', 'Visita', 'Aguardando documentação', 'Aguardando aprovação', 'Aprovado', 'Em negociação', 'Venda'];
+const FUNIS_PERDIDO_CORRETOR = ['Novo', 'Reaquecido', 'Aguardando retorno', 'Visita', 'Aguardando documentação', 'Aguardando aprovação', 'Aprovado', 'Em negociação', 'Venda', 'Conexão', 'Qualificação', 'Atendimento', 'Aprovação / Proposta', 'Fechamento'];
 app.post('/api/leads/:id/perdido', basicAuthAdminOuSdr, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
@@ -5496,7 +5557,7 @@ app.get('/api/relatorio-mensal', basicAuthAdminOuSdr, async (req, res) => {
               to_char(l.distribuido_em AT TIME ZONE 'America/Sao_Paulo', 'DD/MM') AS data_local,
               to_char(l.distribuido_em AT TIME ZONE 'America/Sao_Paulo', 'HH24:MI') AS hora_local,
               EXTRACT(day FROM l.distribuido_em AT TIME ZONE 'America/Sao_Paulo')::int AS dia_local,
-              EXISTS (SELECT 1 FROM lead_historico_status h WHERE h.lead_id = l.id AND h.status_corretor = 'Aprovado') AS passou_aprovado
+              EXISTS (SELECT 1 FROM lead_historico_status h WHERE h.lead_id = l.id AND h.status_corretor IN ('Aprovado','Fechamento')) AS passou_aprovado
          FROM leads l
         WHERE (l.distribuido_em AT TIME ZONE 'America/Sao_Paulo') >= ($1::text || '-01')::date
           AND (l.distribuido_em AT TIME ZONE 'America/Sao_Paulo') < (($1::text || '-01')::date + interval '1 month')
