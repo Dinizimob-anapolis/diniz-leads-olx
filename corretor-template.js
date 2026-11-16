@@ -32,9 +32,16 @@ const CORRETOR_HTML = `<!DOCTYPE html>
 
   .toolbar {
     display: flex;
+    flex-wrap: wrap;
+    align-items: center;
     gap: 8px;
     margin-bottom: 14px;
   }
+  .toolbar select { flex: 0 0 auto; width: auto; }
+  .topo-linha { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 10px 16px; margin-bottom: 12px; }
+  .topo-linha .stats { flex: 1 1 auto; margin-bottom: 0; }
+  .acoes-topo { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: flex-end; margin-left: auto; }
+  .toolbar input[type="text"] { min-width: 200px; }
   input[type="text"] {
     background: #fff;
     border: 1px solid var(--card-border);
@@ -474,6 +481,8 @@ const CORRETOR_HTML = `<!DOCTYPE html>
     body { padding: 12px; }
     .toolbar { flex-wrap: wrap; }
     .toolbar input[type="text"] { flex: 1 1 100%; }
+    .topo-linha { flex-direction: column; align-items: stretch; }
+    .acoes-topo { margin-left: 0; justify-content: flex-start; }
     .toolbar select { flex: 1 1 100%; max-width: none !important; }
     .add-contato-btn {
       padding: 11px 16px;
@@ -496,18 +505,42 @@ const CORRETOR_HTML = `<!DOCTYPE html>
 
 <div id="alerta-atrasadas" class="alerta-atrasadas" style="display:none;"></div>
 
+<div class="topo-linha">
 <div class="stats" id="stats"></div>
+<div class="acoes-topo">
+  <button class="add-contato-btn" id="btn-atualizar" style="background:#fff;color:var(--accent);border:1px solid var(--accent);box-shadow:none;">↻ Atualizar</button>
+  <button class="add-contato-btn" id="btn-salvar-backup" style="background:#fff;color:#17a34a;border:1px solid #17a34a;box-shadow:none;">💾 Salvar backup</button>
+  <button class="add-contato-btn" id="btn-baixar-csv" style="background:#fff;color:#3b6cf0;border:1px solid #3b6cf0;box-shadow:none;">⬇️ Baixar planilha</button>
+  <button class="add-contato-btn" id="btn-analytics" onclick="window.location.href=comParamCorretor('/analytics')" style="background:#fff;color:#7c5cff;border:1px solid #7c5cff;box-shadow:none;">📊 Meus números</button>
+  <button class="add-contato-btn" id="btn-adicionar">+ Adicionar contato</button>
+</div>
+</div>
 
 <div class="toolbar">
   <input type="text" id="busca" placeholder="Buscar por nome ou WhatsApp...">
   <select id="filtro-campanha" title="Filtrar por campanha" style="padding:8px 10px;border-radius:8px;border:1px solid var(--card-border);background:var(--card, #fff);color:inherit;font-size:13px;max-width:260px;">
     <option value="">Todas as campanhas</option>
   </select>
-  <button class="add-contato-btn" id="btn-adicionar">+ Adicionar contato</button>
-  <button class="add-contato-btn" id="btn-atualizar" style="background:#fff;color:var(--accent);border:1px solid var(--accent);box-shadow:none;">↻ Atualizar</button>
-  <button class="add-contato-btn" id="btn-salvar-backup" style="background:#fff;color:#17a34a;border:1px solid #17a34a;box-shadow:none;">💾 Salvar backup</button>
-  <button class="add-contato-btn" id="btn-baixar-csv" style="background:#fff;color:#3b6cf0;border:1px solid #3b6cf0;box-shadow:none;">⬇️ Baixar planilha</button>
-  <button class="add-contato-btn" id="btn-analytics" onclick="window.location.href=comParamCorretor('/analytics')" style="background:#fff;color:#7c5cff;border:1px solid #7c5cff;box-shadow:none;">📊 Meus números</button>
+  <select id="filtro-periodo" title="Filtrar por período" style="padding:8px 10px;border-radius:8px;border:1px solid var(--card-border);background:var(--card, #fff);color:inherit;font-size:13px;">
+    <option value="">Todo o período</option>
+    <option value="hoje">Hoje</option>
+    <option value="ontem">Ontem</option>
+    <option value="7d">Últimos 7 dias</option>
+    <option value="30d">Últimos 30 dias</option>
+    <option value="mes">Este mês</option>
+    <option value="mes_passado">Mês passado</option>
+    <option value="custom">Personalizado…</option>
+  </select>
+  <select id="filtro-periodo-base" title="Qual data usar" style="display:none;padding:8px 10px;border-radius:8px;border:1px solid var(--card-border);background:var(--card, #fff);color:inherit;font-size:13px;">
+    <option value="chegada">Pela chegada do lead</option>
+    <option value="movimentacao">Pela última movimentação</option>
+  </select>
+  <span id="periodo-custom" style="display:none;gap:6px;align-items:center;font-size:12px;">
+    <input type="date" id="periodo-de" style="padding:6px 8px;border-radius:8px;border:1px solid var(--card-border);"> até
+    <input type="date" id="periodo-ate" style="padding:6px 8px;border-radius:8px;border:1px solid var(--card-border);">
+  </span>
+
+  <button type="button" class="add-contato-btn" id="btn-limpar-filtros" style="background:#fff;color:#e0453f;border:1px solid #e0453f;box-shadow:none;">✕ Limpar filtros</button>
 </div>
 
 <div class="board" id="board"></div>
@@ -765,7 +798,49 @@ function atualizarOpcoesCampanha(base) {
   if (FILTRO_CAMPANHA && !cont[FILTRO_CAMPANHA]) FILTRO_CAMPANHA = '';
   sel.value = FILTRO_CAMPANHA;
 }
-function filtrarPorCampanha(lista) { return FILTRO_CAMPANHA ? lista.filter(l => nomeCampanhaDoLead(l) === FILTRO_CAMPANHA) : lista; }
+
+// ─── Filtro por período (chegada do lead ou última movimentação) ───
+let FILTRO_PERIODO = '', FILTRO_PERIODO_BASE = 'chegada', PERIODO_DE = '', PERIODO_ATE = '';
+function dataMovimentacaoDoLead(l) { return l.status_corretor_alterado_em || l.distribuido_em; }
+function hojeBRT() { return new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' }); }
+function somarDiasISO(iso, n) { const d = new Date(iso + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
+function intervaloDoPeriodo() {
+  const h = hojeBRT();
+  if (FILTRO_PERIODO === 'hoje') return [h, h];
+  if (FILTRO_PERIODO === 'ontem') { const o = somarDiasISO(h, -1); return [o, o]; }
+  if (FILTRO_PERIODO === '7d') return [somarDiasISO(h, -6), h];
+  if (FILTRO_PERIODO === '30d') return [somarDiasISO(h, -29), h];
+  if (FILTRO_PERIODO === 'mes') return [h.slice(0, 8) + '01', h];
+  if (FILTRO_PERIODO === 'mes_passado') { const p = somarDiasISO(h.slice(0, 8) + '01', -1); return [p.slice(0, 8) + '01', p]; }
+  if (FILTRO_PERIODO === 'custom') return [PERIODO_DE || '0000-00-00', PERIODO_ATE || '9999-99-99'];
+  return null;
+}
+function filtrarPorPeriodo(lista) {
+  const iv = intervaloDoPeriodo();
+  if (!iv) return lista;
+  return lista.filter(l => {
+    const bruto = FILTRO_PERIODO_BASE === 'movimentacao' ? dataMovimentacaoDoLead(l) : l.distribuido_em;
+    if (!bruto) return false;
+    const d = new Date(bruto);
+    if (isNaN(d.getTime())) return false;
+    const dia = d.toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
+    return dia >= iv[0] && dia <= iv[1];
+  });
+}
+function limparFiltros() {
+  FILTRO_CAMPANHA = ''; FILTRO_PERIODO = ''; FILTRO_PERIODO_BASE = 'chegada'; PERIODO_DE = ''; PERIODO_ATE = ''; BUSCA = '';
+  if (typeof FILTRO_ORIGEM !== 'undefined') FILTRO_ORIGEM = '';
+  const zera = { 'busca': '', 'filtro-campanha': '', 'filtro-periodo': '', 'filtro-periodo-base': 'chegada', 'periodo-de': '', 'periodo-ate': '', 'filtro-origem': '' };
+  Object.keys(zera).forEach(id => { const el = document.getElementById(id); if (el) el.value = zera[id]; });
+  aplicarPeriodoUI();
+}
+function aplicarPeriodoUI() {
+  document.getElementById('filtro-periodo-base').style.display = FILTRO_PERIODO ? '' : 'none';
+  document.getElementById('periodo-custom').style.display = FILTRO_PERIODO === 'custom' ? 'inline-flex' : 'none';
+  render();
+}
+// (também aplica o filtro de período)
+function filtrarPorCampanha(lista) { return filtrarPorPeriodo(FILTRO_CAMPANHA ? lista.filter(l => nomeCampanhaDoLead(l) === FILTRO_CAMPANHA) : lista); }
 function leadsFiltrados() {
   let lista = filtrarPorCampanha(SO_ATRASADAS ? TODOS_LEADS.filter(leadEstaAtrasado) : TODOS_LEADS);
   if (!BUSCA) return lista;
@@ -1592,6 +1667,12 @@ async function salvarCampo(id, campo, valor, aoTerminar) {
 
 document.getElementById('busca').addEventListener('input', e => { BUSCA = e.target.value; render(); });
 document.getElementById('filtro-campanha').addEventListener('change', e => { FILTRO_CAMPANHA = e.target.value; render(); });
+document.getElementById('filtro-periodo').addEventListener('change', e => { FILTRO_PERIODO = e.target.value; aplicarPeriodoUI(); });
+document.getElementById('filtro-periodo-base').addEventListener('change', e => { FILTRO_PERIODO_BASE = e.target.value; render(); });
+document.getElementById('periodo-de').addEventListener('change', e => { PERIODO_DE = e.target.value; render(); });
+document.getElementById('periodo-ate').addEventListener('change', e => { PERIODO_ATE = e.target.value; render(); });
+document.getElementById('btn-limpar-filtros').addEventListener('click', limparFiltros);
+
 
 carregar();
 setInterval(carregar, 60000); // atualiza sozinho a cada 1 min
