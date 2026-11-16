@@ -346,7 +346,7 @@ const JULIANE_HTML = `<!DOCTYPE html>
   @media (max-width: 860px) {
     .toolbar { flex-wrap: wrap; }
     .toolbar input[type="text"] { flex: 1 1 100%; }
-    .toolbar select { flex: 1 1 100%; }
+    .toolbar select { flex: 1 1 100%; max-width: none !important; }
     .modal.modal-largo:has(> #tl-wrap) { display: block; height: auto; max-height: 90vh; overflow-y: auto; max-width: 440px; }
     .modal.modal-largo > .mcol-esq { overflow: visible; padding-right: 0; }
     .modal.modal-largo > #tl-wrap { border-left: 0; padding-left: 0; overflow: visible; display: contents; }
@@ -546,6 +546,9 @@ const JULIANE_HTML = `<!DOCTYPE html>
 
 <div class="toolbar">
   <input type="text" id="busca" placeholder="Buscar por nome, WhatsApp ou origem...">
+    <select id="filtro-campanha" title="Filtrar por campanha" style="padding:8px 10px;border-radius:8px;border:1px solid var(--card-border);background:var(--card, #fff);color:inherit;font-size:13px;max-width:260px;">
+    <option value="">Todas as campanhas</option>
+  </select>
   <select id="filtro-origem" title="Filtrar por origem" style="padding:8px 10px;border-radius:8px;border:1px solid var(--card-border);background:var(--card, #fff);color:inherit;font-size:13px;">
     <option value="">Todas as origens</option>
     <option value="Meta Ads">📣 Só Meta Ads</option>
@@ -841,9 +844,37 @@ function trocarAba(aba) {
   render();
 }
 
+
+// ─── Filtro por campanha (usa o nome da campanha/imóvel do lead) ───
+let FILTRO_CAMPANHA = '';
+function nomeCampanhaDoLead(l) { return String((l && l.imovel_desc) || '').trim() || '(sem campanha)'; }
+function atualizarOpcoesCampanha(base) {
+  const sel = document.getElementById('filtro-campanha');
+  if (!sel) return;
+  const cont = {};
+  (base || []).forEach(l => { const c = nomeCampanhaDoLead(l); cont[c] = (cont[c] || 0) + 1; });
+  const nomes = Object.keys(cont).sort((a, b) => cont[b] - cont[a] || a.localeCompare(b));
+  const assinatura = nomes.map(n => n + '|' + cont[n]).join(';');
+  if (sel.dataset.assinatura !== assinatura) {
+    sel.innerHTML = '';
+    const todas = document.createElement('option');
+    todas.value = ''; todas.textContent = 'Todas as campanhas';
+    sel.appendChild(todas);
+    nomes.forEach(n => {
+      const o = document.createElement('option');
+      o.value = n; o.title = n;
+      o.textContent = (n.length > 42 ? n.slice(0, 41) + '…' : n) + ' (' + cont[n] + ')';
+      sel.appendChild(o);
+    });
+    sel.dataset.assinatura = assinatura;
+  }
+  if (FILTRO_CAMPANHA && !cont[FILTRO_CAMPANHA]) FILTRO_CAMPANHA = '';
+  sel.value = FILTRO_CAMPANHA;
+}
+function filtrarPorCampanha(lista) { return FILTRO_CAMPANHA ? lista.filter(l => nomeCampanhaDoLead(l) === FILTRO_CAMPANHA) : lista; }
 function leadsFiltrados() {
   const todos = leadsAtivos();
-  const porOrigem = FILTRO_ORIGEM ? todos.filter(l => (l.origem || '') === FILTRO_ORIGEM) : todos;
+  const porOrigem = filtrarPorCampanha(FILTRO_ORIGEM ? todos.filter(l => (l.origem || '') === FILTRO_ORIGEM) : todos);
   if (!BUSCA) return porOrigem;
   const b = BUSCA.toLowerCase();
   return porOrigem.filter(l => (l.nome || '').toLowerCase().includes(b) || (l.whatsapp || '').includes(b) ||
@@ -879,6 +910,7 @@ function exportarCSV() {
 }
 
 function render() {
+  atualizarOpcoesCampanha(leadsAtivos());
   const leadsBase = leadsAtivos();
   const leads = leadsFiltrados();
   const reaquecerCount = leadsBase.filter(temHistoricoDuplicado).length;
@@ -1950,6 +1982,7 @@ async function salvarCampo(id, campo, valor, aoTerminar) {
 
 document.getElementById('busca').addEventListener('input', e => { BUSCA = e.target.value; render(); });
 document.getElementById('filtro-origem').addEventListener('change', e => { FILTRO_ORIGEM = e.target.value; render(); });
+document.getElementById('filtro-campanha').addEventListener('change', e => { FILTRO_CAMPANHA = e.target.value; render(); });
 
 carregar();
 setInterval(carregar, 60000); // atualiza sozinho a cada 1 min
