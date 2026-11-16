@@ -566,13 +566,37 @@ function limparFiltroData(coluna) {
   render();
 }
 
-const COLUNAS = ['Novo', 'Reaquecido', 'Aguardando retorno', 'Visita', 'Aguardando documentação', 'Aguardando aprovação', 'Aprovado', 'Em negociação', 'Venda'];
+const ETAPAS_NOVAS = ['Novo', 'Conexão', 'Qualificação', 'Atendimento', 'Visita', 'Aprovação / Proposta', 'Fechamento', 'Venda'];
+const ETAPAS_ANTIGAS = ['Novo', 'Reaquecido', 'Aguardando retorno', 'Visita', 'Aguardando documentação', 'Aguardando aprovação', 'Aprovado', 'Em negociação', 'Venda'];
+const CORRETORES_FUNIL_ANTIGO = ['cyda', 'cida'];
+const MAPA_ETAPA_ANTIGA_NOVA = { 'Reaquecido': 'Conexão', 'Aguardando retorno': 'Conexão', 'Aguardando documentação': 'Aprovação / Proposta', 'Aguardando aprovação': 'Aprovação / Proposta', 'Aprovado': 'Fechamento', 'Em negociação': 'Fechamento' };
+const ROTULOS_ETAPA_NOVA = { 'Novo': 'Novo / Triagem', 'Visita': 'Visita / Apresentação', 'Venda': 'Venda!' };
+function funilAntigoDe(nome) {
+  const n = String(nome || '').trim().toLowerCase().normalize('NFD').replace(/[^a-z]/g, '');
+  return CORRETORES_FUNIL_ANTIGO.includes(n);
+}
+function etapasDoCorretor(nome) { return funilAntigoDe(nome) ? ETAPAS_ANTIGAS : ETAPAS_NOVAS; }
+function rotuloEtapa(etapa, nomeCorretor) { return funilAntigoDe(nomeCorretor) ? etapa : (ROTULOS_ETAPA_NOVA[etapa] || etapa); }
+function etapaNoFunil(etapa, nomeCorretor) {
+  const lista = etapasDoCorretor(nomeCorretor);
+  if (lista.includes(etapa)) return etapa;
+  if (!funilAntigoDe(nomeCorretor) && MAPA_ETAPA_ANTIGA_NOVA[etapa]) return MAPA_ETAPA_ANTIGA_NOVA[etapa];
+  return 'Novo';
+}
+const NOME_DESTE_CRM = '{{NOME_CORRETOR}}';
+const COLUNAS = etapasDoCorretor(NOME_DESTE_CRM);
+function rotulo(etapa) { return rotuloEtapa(etapa, NOME_DESTE_CRM); }
 
 // Paleta viva, uma cor por coluna — usada no cabeçalho e na barrinha
 // lateral de cada cartão daquela coluna.
 const CORES_COLUNA = {
   'Novo':                     { header: '#3b6cf0', accent: '#3b6cf0', texto: '#ffffff' },
   'Reaquecido':               { header: '#f2941c', accent: '#f2941c', texto: '#ffffff' },
+  'Conexão':                  { header: '#f2941c', accent: '#f2941c', texto: '#ffffff' },
+  'Qualificação':             { header: '#9b4de0', accent: '#9b4de0', texto: '#ffffff' },
+  'Atendimento':              { header: '#0aa5c2', accent: '#0aa5c2', texto: '#ffffff' },
+  'Aprovação / Proposta':     { header: '#2d9cdb', accent: '#2d9cdb', texto: '#ffffff' },
+  'Fechamento':               { header: '#e8479e', accent: '#e8479e', texto: '#ffffff' },
   'Aguardando retorno':       { header: '#9b4de0', accent: '#9b4de0', texto: '#ffffff' },
   'Aguardando documentação':  { header: '#0aa5c2', accent: '#0aa5c2', texto: '#ffffff' },
   'Aguardando aprovação':     { header: '#2d9cdb', accent: '#2d9cdb', texto: '#ffffff' },
@@ -584,7 +608,7 @@ const CORES_COLUNA = {
 };
 
 function statusDoLead(lead) {
-  return COLUNAS.includes(lead.status_corretor) ? lead.status_corretor : 'Novo';
+  return etapaNoFunil(lead.status_corretor, NOME_DESTE_CRM);
 }
 
 // ─── PERDIDOS: cada coluna tem uma aba retrátil "Perdidos" ─────────
@@ -593,7 +617,7 @@ let RESUMO_PERDIDOS_ABERTO = false;
 // O lead antigo da coluna "Sem retorno" (que não existe mais) conta como perdido.
 function ehPerdido(l) { return l.perdido_corretor === true || l.status_corretor === 'Sem retorno'; }
 function funilDoPerdido(l) {
-  if (l.perdido_corretor_funil) return l.perdido_corretor_funil;
+  if (l.perdido_corretor_funil) return etapaNoFunil(l.perdido_corretor_funil, NOME_DESTE_CRM);
   return l.status_corretor === 'Sem retorno' ? 'Sem retorno (antes da mudança)' : statusDoLead(l);
 }
 async function postarPerdido(id, perdido, funil) {
@@ -728,7 +752,7 @@ function exportarCSV() {
     l.tarefa_data ? new Date(l.tarefa_data).toLocaleString('pt-BR') : '',
     (l.notas_sdr || '').replace(/\\n/g, ' '), (l.buscando_sdr || '').replace(/\\n/g, ' '),
     l.distribuido_em ? new Date(l.distribuido_em).toLocaleDateString('pt-BR') : '',
-    ehPerdido(l) ? 'Sim' : '', ehPerdido(l) ? funilDoPerdido(l) : '', l.perdido_corretor_em ? new Date(l.perdido_corretor_em).toLocaleDateString('pt-BR') : ''
+    ehPerdido(l) ? 'Sim' : '', ehPerdido(l) ? rotulo(funilDoPerdido(l)) : '', l.perdido_corretor_em ? new Date(l.perdido_corretor_em).toLocaleDateString('pt-BR') : ''
   ]);
   const escapar = v => \`"\${String(v).replace(/"/g, '""')}"\`;
   const csv = [cabecalho, ...linhas].map(linha => linha.map(escapar).join(';')).join('\\r\\n');
@@ -748,7 +772,7 @@ function render() {
   const leads = leadsFiltrados();
   const MEUS = TODOS_LEADS.filter(l => !somenteLeitura(l));
   const acompanhando = TODOS_LEADS.length - MEUS.length;
-  const reaquecerCount = MEUS.filter(l => statusDoLead(l) === 'Reaquecido' && !ehPerdido(l)).length;
+  const reaquecerCount = MEUS.filter(l => statusDoLead(l) === (funilAntigoDe(NOME_DESTE_CRM) ? 'Reaquecido' : 'Conexão') && !ehPerdido(l)).length;
 
   const vgvTotal = MEUS.filter(l => !ehPerdido(l)).reduce((soma, lead) => soma + parseValorImovel(lead.valor_imovel_sdr), 0);
   const PERDIDOS = MEUS.filter(ehPerdido);
@@ -767,7 +791,7 @@ function render() {
     <div class="stat" style="color:#b5720a"><span class="num">\${reaquecerCount}</span>pra reaquecer</div>
     \${vgvTotal > 0 ? \`<div class="stat" style="color:#17a34a"><span class="num">\${formatarReais(vgvTotal)}</span>VGV total</div>\` : ''}
     \${visitasTotal > 0 ? \`<div class="stat" style="color:#1a56db"><span class="num">\${visitasTotal}</span>visitas feitas (\${clientesComVisita} cliente\${clientesComVisita > 1 ? 's' : ''})</div>\` : ''}
-    \${RESUMO_PERDIDOS_ABERTO && PERDIDOS.length > 0 ? \`<div class="resumo-perdidos"><b>Perdidos por funil:</b> \${ordemFunis.map(f => f + ' <b>' + contagemFunil[f] + '</b>').join(' · ')}</div>\` : ''}
+    \${RESUMO_PERDIDOS_ABERTO && PERDIDOS.length > 0 ? \`<div class="resumo-perdidos"><b>Perdidos por funil:</b> \${ordemFunis.map(f => rotulo(f) + ' <b>' + contagemFunil[f] + '</b>').join(' · ')}</div>\` : ''}
   \`;
 
   const board = document.getElementById('board');
@@ -784,7 +808,7 @@ function render() {
       <div class="column" data-coluna="\${coluna}">
         <div class="column-header" style="background:\${cor.header};color:\${cor.texto}">
           <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">
-            <span>\${coluna}</span>
+            <span>\${rotulo(coluna)}</span>
             <div style="display:flex;align-items:center;gap:4px;">
               <button class="lupa-filtro-btn \${filtroAtivo ? 'ativa' : ''}" title="Filtrar por período" onclick="alternarFiltroData('\${coluna}')">🔍</button>
               <span class="column-count">\${leadsColuna.length}\${filtroAtivo ? \`/\${leadsColunaSemFiltro.length}\` : ''}</span>
@@ -964,7 +988,7 @@ function abrirModalLead(id) {
   }
 
   document.getElementById('modal').innerHTML = \`
-    \${ehPerdido(lead) ? '<div class="faixa-perdido"><b>❌ LEAD PERDIDO</b><span>Funil: ' + funilDoPerdido(lead) + '</span></div>' : ''}
+    \${ehPerdido(lead) ? '<div class="faixa-perdido"><b>❌ LEAD PERDIDO</b><span>Funil: ' + rotulo(funilDoPerdido(lead)) + '</span></div>' : ''}
     <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
       <h2>\${lead.nome || 'Sem nome'}<button class="btn-ouro modal-versao \${lead.cliente_ouro ? 'ativo' : ''}" onclick="alternarClienteOuro('\${lead.id}', \${!lead.cliente_ouro})" title="\${lead.cliente_ouro ? 'Cliente Ouro — clique pra desmarcar' : 'Marcar como Cliente Ouro'}">⭐</button></h2>
       <span id="badge-valor-imovel">\${lead.valor_imovel_sdr ? \`<span class="badge" style="background:#eafcea;color:#17a34a;border:1px solid #a8ecca;white-space:nowrap;">💰 \${lead.valor_imovel_sdr}</span>\` : ''}</span>
@@ -992,7 +1016,7 @@ function abrirModalLead(id) {
 
     <label>Status</label>
     <select id="modal-status">
-      \${COLUNAS.map(c => \`<option value="\${c}" \${statusDoLead(lead) === c ? 'selected' : ''}>\${c}</option>\`).join('')}
+      \${COLUNAS.map(c => \`<option value="\${c}" \${statusDoLead(lead) === c ? 'selected' : ''}>\${rotulo(c)}</option>\`).join('')}
     </select>
     \${lead.status_corretor_alterado_em ? \`<div class="lead-meta" style="margin-top:4px;">Nessa etapa desde \${formatarData(lead.status_corretor_alterado_em)}</div>\` : ''}
 
@@ -1402,7 +1426,7 @@ async function confirmarAdicionar() {
 const LISTA_LEADS_VISITAS = { find: (fn) => TODOS_LEADS.find(fn) };
 // O campo de visitas aparece quando o card está na coluna Visita ou em qualquer
 // etapa depois dela (ou se já tem visita registrada, pra o número não sumir).
-const ETAPAS_DEPOIS_DA_VISITA = ['Aguardando documentação', 'Aguardando aprovação', 'Aprovado', 'Em negociação', 'Venda'];
+const ETAPAS_DEPOIS_DA_VISITA = ['Aguardando documentação', 'Aguardando aprovação', 'Aprovado', 'Em negociação', 'Venda', 'Aprovação / Proposta', 'Fechamento'];
 function mostrarCampoVisitas(lead) {
   if ((parseInt(lead.visitas_qtd, 10) || 0) > 0) return true;
   return lead.status_corretor === 'Visita' || ETAPAS_DEPOIS_DA_VISITA.includes(lead.status_corretor);
