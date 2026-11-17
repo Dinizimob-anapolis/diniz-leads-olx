@@ -1352,9 +1352,8 @@ function abrirModalLead(id) {
     </div>
     <button class="close-btn" id="modal-perdido" style="width:100%;margin-top:8px;color:#b42318;border-color:#f0c6c1;">\${ehPerdido(lead) ? '↩ Reativar lead (sai de Perdidos)' : '❌ Marcar como perdido'}</button>
     <button class="primary-btn" id="modal-salvar" style="width:100%;margin-top:10px;">💾 Salvar</button>
-    \${ABA_CRM === 'sdr'
-      ? '<button class="close-btn" id="modal-remover" style="width:100%;margin-top:8px;color:#b5720a;border-color:var(--warn-border);">Remover da carteira</button>'
-      : '<button class="close-btn" id="modal-excluir" style="width:100%;margin-top:8px;color:#e0453f;border-color:#e0453f;">🗑️ Excluir permanentemente</button>'}
+    \${ABA_CRM === 'sdr' ? '<button class="close-btn" id="modal-remover" style="width:100%;margin-top:8px;color:#b5720a;border-color:var(--warn-border);">Remover da carteira</button>' : ''}
+    <button class="close-btn" id="modal-excluir" style="width:100%;margin-top:8px;color:#e0453f;border-color:#e0453f;">🗑️ Excluir permanentemente</button>
   \`;
 
   document.getElementById('overlay').classList.add('show');
