@@ -3714,6 +3714,8 @@ app.post('/api/leads/:id/transferir', basicAuthAdminOuSdr, async (req, res) => {
     if (!d.rows.length) return res.status(404).json({ ok: false, erro: 'Lead não encontrado' });
     const lead = d.rows[0];
     const modo = req.body.modo === 'reaquecimento' ? 'reaquecimento' : 'novo';
+    // sem_marca: a Juliane/admin redistribui um lead que caiu na Bruna mas que ela NÃO atendeu — sem registrar a Bruna como quem atendeu.
+    const semMarca = req.authTipo !== 'sdr'; // transferência feita pela Juliane/admin: só registra a transferência, sem marca da Bruna
     if (lead.transferido_por) return res.status(409).json({ ok: false, erro: 'Esse lead já foi transferido.' });
     // SDR só transfere o que é dela: lead do CRM da Bruna (modo novo) ou da carteira de reaquecimento; admin/Juliane podem qualquer um.
     if (req.authTipo === 'sdr') {
@@ -3725,6 +3727,24 @@ app.post('/api/leads/:id/transferir', basicAuthAdminOuSdr, async (req, res) => {
     }
     const marca = modo === 'reaquecimento' ? 'SDR Reaquecimento' : CORRETOR_ABERTO_PELA_SDR;
     const colunaDestino = modo === 'reaquecimento' ? (funilAntigoDoCorretor(destino.nome) ? 'Reaquecido' : 'Conexão') : etapaParaCorretor(destino.nome, lead.status_corretor || 'Novo');
+    if (semMarca) {
+      await pool.query(
+        `UPDATE leads
+         SET corretor = $1,
+             outros_corretores = CASE
+               WHEN corretor IS NOT NULL AND corretor <> '' AND corretor <> $1 AND corretor <> 'Bruna SDR'
+                    AND (outros_corretores IS NULL OR position(corretor IN outros_corretores) = 0)
+               THEN COALESCE(outros_corretores || ', ', '') || corretor
+               ELSE outros_corretores
+             END,
+             carteira_sdr = false,
+             status_corretor = $3,
+             status_corretor_alterado_em = now(),
+             perdido_corretor = false, perdido_corretor_funil = NULL, perdido_corretor_em = NULL
+         WHERE id = $2`,
+        [destino.nome, lead.id, colunaDestino]
+      );
+    } else {
     await pool.query(
       `UPDATE leads
        SET corretor = $1,
@@ -3746,13 +3766,14 @@ app.post('/api/leads/:id/transferir', basicAuthAdminOuSdr, async (req, res) => {
        WHERE id = $2`,
       [destino.nome, lead.id, marca, colunaDestino, modo]
     );
+    }
     // Aviso no WhatsApp do corretor (e cópia pra supervisão). Falha no aviso não desfaz a transferência.
     let avisado = false;
     try {
       const fone = String(lead.whatsapp || '').replace(/\D/g, '');
       const prazo = lead.tarefa_data ? ' (' + new Date(lead.tarefa_data).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) + ')' : '';
       const blocos = [
-        modo === 'reaquecimento' ? `🔁 *LEAD REAQUECIDO PELA SDR*\n_Reaquecimento feito pela Bruna_` : `🔁 *LEAD REPASSADO PELA SDR*\n_Atendimento inicial feito pela Bruna_`,
+        semMarca ? `🔁 *NOVO LEAD*` : modo === 'reaquecimento' ? `🔁 *LEAD REAQUECIDO PELA SDR*\n_Reaquecimento feito pela Bruna_` : `🔁 *LEAD REPASSADO PELA SDR*\n_Atendimento inicial feito pela Bruna_`,
         lead.imovel_desc ? `🏠 *Imóvel / campanha*\n${lead.imovel_desc}` : null,
         `👤 *Nome*\n${lead.nome || 'Sem nome'}`,
         `📱 *WhatsApp*\n${fone ? '+' + fone : 'sem número'}`,
@@ -3760,7 +3781,7 @@ app.post('/api/leads/:id/transferir', basicAuthAdminOuSdr, async (req, res) => {
         lead.origem ? `📣 *Origem*\n${lead.origem}` : null,
         lead.valor_imovel_sdr ? `💰 *Valor do imóvel buscado*\n${lead.valor_imovel_sdr}` : null,
         lead.buscando_sdr ? `🔎 *O que está buscando*\n${String(lead.buscando_sdr).trim()}` : null,
-        lead.notas_sdr ? `📝 *Notas da SDR*\n${String(lead.notas_sdr).trim()}` : null,
+        lead.notas_sdr ? `📝 *Notas*\n${String(lead.notas_sdr).trim()}` : null,
         lead.tarefa_sdr ? `⏰ *Próximo passo*\n${lead.tarefa_sdr}${prazo}` : null,
         `📌 *Coluna no seu CRM*\n${colunaDestino}`,
         `🙋 *Corretor*\n${destino.nome}`,
@@ -3980,6 +4001,7 @@ app.patch('/api/leads/:id', basicAuthAdminOuSdr, async (req, res) => {
            SET corretor = $1,
                outros_corretores = CASE
                  WHEN corretor IS NOT NULL AND corretor <> '' AND corretor <> $1
+                      AND NOT ($4 AND corretor = 'Bruna SDR')
                       AND (outros_corretores IS NULL OR position(corretor IN outros_corretores) = 0)
                  THEN COALESCE(outros_corretores || ', ', '') || corretor
                  ELSE outros_corretores
@@ -4228,6 +4250,39 @@ app.get('/api/admin/migrar-funil-corretor', basicAuthAdminOuSdr, semCorretor, as
     res.json({ ok: true, aplicado: aplicar, total: alvo.length, ignorados_funil_antigo: ignoradosCyda, resumo });
   } catch (err) {
     console.error('Erro em migrar-funil-corretor:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
+// Tira a marca da Bruna SDR de um lead que ela NÃO atendeu (foi transferido pelo botão da SDR por engano).
+// /api/admin/limpar-marca-sdr                 → lista as transferências da Bruna dos últimos 3 dias (pra você ver o id)
+// /api/admin/limpar-marca-sdr?id=123          → prévia desse lead
+// /api/admin/limpar-marca-sdr?id=123&aplicar=1 → aplica
+app.get('/api/admin/limpar-marca-sdr', basicAuthAdminOuSdr, semCorretor, async (req, res) => {
+  try {
+    if (req.authTipo === 'sdr') return res.status(403).json({ ok: false, erro: 'Só admin ou Juliane.' });
+    const id = parseInt(req.query.id, 10);
+    if (!id) {
+      const r = await pool.query(
+        `SELECT id, nome, whatsapp, corretor, transferido_em FROM leads
+          WHERE transferido_por = $1 AND transferido_em > now() - interval '3 days' ORDER BY transferido_em DESC`, [CORRETOR_ABERTO_PELA_SDR]);
+      return res.json({ ok: true, aviso: 'Escolha o id e abra com ?id=NUMERO (prévia) ou ?id=NUMERO&aplicar=1', transferencias_recentes: r.rows });
+    }
+    const d = await pool.query('SELECT id, nome, whatsapp, corretor, transferido_por, reaquecido_sdr, outros_corretores FROM leads WHERE id = $1', [id]);
+    if (!d.rows.length) return res.status(404).json({ ok: false, erro: 'Lead não encontrado' });
+    const lead = d.rows[0];
+    const novoOutros = String(lead.outros_corretores || '').split(',').map(x => x.trim()).filter(x => x && normalizarTexto(x) !== normalizarTexto(CORRETOR_ABERTO_PELA_SDR)).join(', ');
+    const aplicar = String(req.query.aplicar || '') === '1';
+    if (aplicar) {
+      await pool.query(
+        `UPDATE leads SET transferido_por = NULL, transferido_em = NULL, reaquecido_sdr = false, carteira_sdr = false,
+                status_corretor = CASE WHEN status_corretor = 'Reaquecido' THEN $3 ELSE status_corretor END,
+                outros_corretores = NULLIF($2, '') WHERE id = $1`, [id, novoOutros, etapaParaCorretor(lead.corretor, 'Novo')]);
+      registrarPostTimeline(id, 'sistema', 'Marca da Bruna SDR removida (lead não foi atendido por ela)', autorTimeline(req)).catch(() => {});
+    }
+    res.json({ ok: true, aplicado: aplicar, lead: { id: lead.id, nome: lead.nome, whatsapp: lead.whatsapp, corretor: lead.corretor, transferido_por: lead.transferido_por }, depois: { transferido_por: null, reaquecido_sdr: false, outros_corretores: novoOutros || null } });
+  } catch (err) {
+    console.error('Erro em limpar-marca-sdr:', err);
     res.status(500).json({ ok: false, erro: err.message });
   }
 });
@@ -5598,7 +5653,7 @@ app.get('/meu-crm', basicAuthAdminOuSdr, (req, res) => {
     return res.status(403).send('Essa página é só pra login de corretor (ou admin/Juliane passando ?corretor=Nome).');
   }
   const nomeMaiusculo = nomeCorretor.toUpperCase();
-  let htmlCorretor = CORRETOR_HTML.split('{{NOME_CORRETOR}}').join(nomeMaiusculo);
+  let htmlCorretor = CORRETOR_HTML.split('{{NOME_CORRETOR}}').join(nomeMaiusculo).split('{{AUTH_TIPO}}').join(String(req.authTipo || ''));
   // CRM Bruna SDR: botão laranja de volta pro CRM - SDR REAQUECIMENTO (só nessa página).
   if (String(nomeCorretor).trim().toLowerCase() === 'bruna sdr') {
     const scriptVoltar = '<script>(function(){function p(){var t=document.querySelector(".toolbar");if(!t||document.getElementById("btn-voltar-reaquecimento"))return;var b=document.createElement("button");b.id="btn-voltar-reaquecimento";b.className="add-contato-btn";b.type="button";b.textContent="\u2B05 CRM - SDR REAQUECIMENTO";b.style.cssText="background:#f2941c;color:#fff;border:1px solid #f2941c;box-shadow:0 2px 6px rgba(242,148,28,0.35)";b.onclick=function(){window.location.href="/crm"};t.insertBefore(b,t.firstChild)}if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",p);else p()})();</script>';
