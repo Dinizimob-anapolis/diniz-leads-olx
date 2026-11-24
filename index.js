@@ -4254,6 +4254,76 @@ app.get('/api/admin/migrar-funil-corretor', basicAuthAdminOuSdr, semCorretor, as
   }
 });
 
+// Move vários cards de uma vez (ou um só) — só Juliane/admin.
+// Body: { ids:[...], para:'Junior' | '__reaquecimento__', coluna:'Novo' }
+// - para um corretor: card chega na coluna escolhida (padrão Novo), sem marca de SDR, corretor anterior vai pro histórico.
+// - '__reaquecimento__': sai do corretor e vai pro CRM - SDR REAQUECIMENTO (coluna "Reaquecendo").
+// Não manda WhatsApp (pra não disparar dezenas de avisos de uma vez).
+app.post('/api/leads/mover-em-massa', basicAuthAdminOuSdr, semCorretor, async (req, res) => {
+  try {
+    if (req.authTipo === 'sdr') return res.status(403).json({ ok: false, erro: 'Só a Juliane ou o admin.' });
+    const ids = (Array.isArray(req.body.ids) ? req.body.ids : []).map(x => parseInt(x, 10)).filter(Boolean).slice(0, 300);
+    if (!ids.length) return res.status(400).json({ ok: false, erro: 'Nenhum card selecionado.' });
+    const para = String(req.body.para || '').trim();
+    if (para === '__reaquecimento__') {
+      const r = await pool.query(
+        `UPDATE leads
+            SET outros_corretores = CASE
+                  WHEN corretor IS NOT NULL AND corretor <> '' AND corretor <> 'Bruna SDR'
+                       AND (outros_corretores IS NULL OR position(corretor IN outros_corretores) = 0)
+                  THEN COALESCE(outros_corretores || ', ', '') || corretor ELSE outros_corretores END,
+                corretor = NULL, carteira_sdr = true, status = 'Reaquecendo', status_alterado_em = now(),
+                reaquecido_em = COALESCE(reaquecido_em, now()),
+                perdido_corretor = false, perdido_corretor_funil = NULL, perdido_corretor_em = NULL
+          WHERE id = ANY($1::int[]) RETURNING id`, [ids]);
+      for (const x of r.rows) registrarPostTimeline(x.id, 'sistema', 'Enviado para o CRM - SDR REAQUECIMENTO', autorTimeline(req)).catch(() => {});
+      return res.json({ ok: true, movidos: r.rowCount, para: 'Reaquecimento da Bruna' });
+    }
+    const conhecido = TELEFONES_CORRETORES[normalizarTexto(para)];
+    let nomeDestino = conhecido ? conhecido.nome : null;
+    if (!nomeDestino && para) {
+      const e = await pool.query('SELECT 1 FROM leads WHERE corretor = $1 LIMIT 1', [para]);
+      if (e.rows.length) nomeDestino = para;
+    }
+    if (!nomeDestino || normalizarTexto(nomeDestino) === normalizarTexto(CORRETOR_ABERTO_PELA_SDR)) return res.status(400).json({ ok: false, erro: 'Corretor de destino inválido.' });
+    const coluna = String(req.body.coluna || 'Novo');
+    const r = await pool.query(
+      `UPDATE leads
+          SET outros_corretores = CASE
+                WHEN corretor IS NOT NULL AND corretor <> '' AND corretor <> $1 AND corretor <> 'Bruna SDR'
+                     AND (outros_corretores IS NULL OR position(corretor IN outros_corretores) = 0)
+                THEN COALESCE(outros_corretores || ', ', '') || corretor ELSE outros_corretores END,
+              corretor = $1, carteira_sdr = false, status_corretor = $3, status_corretor_alterado_em = now(),
+              perdido_corretor = false, perdido_corretor_funil = NULL, perdido_corretor_em = NULL
+        WHERE id = ANY($2::int[]) AND (corretor IS DISTINCT FROM $1) RETURNING id`,
+      [nomeDestino, ids, etapaParaCorretor(nomeDestino, coluna)]);
+    for (const x of r.rows) registrarPostTimeline(x.id, 'sistema', 'Transferido para ' + nomeDestino + ' (coluna ' + coluna + ')', autorTimeline(req)).catch(() => {});
+    res.json({ ok: true, movidos: r.rowCount, para: nomeDestino });
+  } catch (err) {
+    console.error('Erro em mover-em-massa:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
+// Acha um lead pelo telefone ou nome e diz ONDE ele aparece (CRM da Bruna, quadro da Juliane, Perdidos...).
+// Uso: /api/admin/buscar-lead?q=62994482318  (ou parte do nome)
+app.get('/api/admin/buscar-lead', basicAuthAdminOuSdr, semCorretor, async (req, res) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    if (q.length < 3) return res.status(400).json({ ok: false, erro: 'Informe ?q= com telefone ou nome (mín. 3 caracteres)' });
+    const dig = q.replace(/\D/g, '');
+    const r = await pool.query(
+      `SELECT id, nome, whatsapp, corretor, status, status_corretor, carteira_sdr, carteira_juliane, perdido, perdido_corretor, transferido_por, distribuido_em,
+              (${COND_BOARD_JULIANE}) AS aparece_no_quadro_juliane
+         FROM leads
+        WHERE ($1 <> '' AND regexp_replace(whatsapp, '\\D', '', 'g') LIKE '%' || $1 || '%') OR nome ILIKE '%' || $2 || '%'
+        ORDER BY distribuido_em DESC NULLS LAST LIMIT 15`, [dig.length >= 8 ? dig.slice(-9) : '', q]);
+    res.json({ ok: true, encontrados: r.rows.map(l => ({ ...l,
+      onde: [ l.carteira_sdr ? 'CRM da Bruna (aba Ver CRM da SDR)' : null, l.aparece_no_quadro_juliane ? 'Quadro da Juliane (coluna ' + (l.corretor || 'Triagem') + ')' : null,
+              (l.perdido || l.perdido_corretor) ? 'Marcado como PERDIDO (rodapé Perdidos)' : null ].filter(Boolean) })) });
+  } catch (err) { res.status(500).json({ ok: false, erro: err.message }); }
+});
+
 // Tira a marca da Bruna SDR de um lead que ela NÃO atendeu (foi transferido pelo botão da SDR por engano).
 // /api/admin/limpar-marca-sdr                 → lista as transferências da Bruna dos últimos 3 dias (pra você ver o id)
 // /api/admin/limpar-marca-sdr?id=123          → prévia desse lead
