@@ -1039,6 +1039,7 @@ function render() {
           <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">
             \${nomeColuna}
             <div style="display:flex;align-items:center;gap:4px;">
+              \${ehColunaCorretor ? \`<button class="lupa-filtro-btn" title="Mover cards parados desse corretor" onclick="abrirMoverParados('\${coluna}')">⇄</button>\` : ''}
               <button class="lupa-filtro-btn \${filtroAtivo ? 'ativa' : ''}" title="Filtrar por período" onclick="alternarFiltroData('\${coluna}')">🔍</button>
               <span class="column-count">\${leadsColuna.length}\${filtroAtivo ? \`/\${leadsColunaSemFiltro.length}\` : ''}</span>
             </div>
@@ -1284,6 +1285,7 @@ function abrirModalLead(id) {
       <select id="modal-corretor">
         <option value="" \${!lead.corretor ? 'selected' : ''}>— Novo Lead (sem corretor ainda) —</option>
         \${colunasCorretorAtual().filter(c => c !== COLUNA_TRIAGEM).map(c => \`<option value="\${c}" \${lead.corretor === c ? 'selected' : ''}>\${c}</option>\`).join('')}
+        <option value="__reaq__">♻️ Mandar pro Reaquecimento da Bruna</option>
       </select>
       <label>Ao transferir, enviar para a coluna</label>
       <select id="modal-coluna-destino">
@@ -1409,6 +1411,11 @@ function abrirModalLead(id) {
   if (selectCorretor) {
     selectCorretor.addEventListener('change', e => {
       const novoCorretor = e.target.value;
+      if (novoCorretor === '__reaq__') {
+        if (!confirm('Mandar "' + (lead.nome || 'esse card') + '" pro CRM - SDR REAQUECIMENTO da Bruna? Ele sai do corretor.')) { e.target.value = lead.corretor || ''; return; }
+        salvarBlocoTexto(id, lead, () => { moverEmMassa([id], '__reaquecimento__', 'Novo', () => { fecharModalMassa(); carregar(); document.getElementById('overlay').classList.remove('show'); }); });
+        return;
+      }
       salvarBlocoTexto(id, lead, () => {
         if (ABA_CRM !== 'sdr' && novoCorretor) {
           const selCol = document.getElementById('modal-coluna-destino');
@@ -1869,6 +1876,70 @@ async function transferirPelaJuliane(id, novoCorretor, coluna, aoTerminar) {
   } catch (err) {
     alert(err.message || 'Não consegui salvar. Confere sua internet e tenta de novo.');
   }
+}
+
+
+// ─── Mover cards (individual ou em massa) pra outro corretor ou pro Reaquecimento da Bruna ───
+function moverEmMassa(ids, para, coluna, aoTerminar) {
+  fetch('/api/leads/mover-em-massa', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: ids, para: para, coluna: coluna }) })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (!d.ok) { alert('Não consegui mover: ' + (d.erro || 'erro')); return; }
+      alert(d.movidos + ' card(s) enviado(s) para ' + d.para + '.');
+      if (aoTerminar) aoTerminar();
+    })
+    .catch(function () { alert('Não consegui mover. Confere a internet e tenta de novo.'); });
+}
+function fecharModalMassa() { var m = document.getElementById('modal-massa'); if (m) m.remove(); }
+function diasParado(l) {
+  var d = dataMovimentacaoDoLead(l);
+  if (!d) return 9999;
+  return Math.floor((Date.now() - new Date(d).getTime()) / 86400000);
+}
+function abrirMoverParados(coluna) {
+  fecharModalMassa();
+  var base = leadsAtivos().filter(function (l) { return colunaCorretorDoLead(l) === coluna && !ehPerdido(l); });
+  var m = document.createElement('div');
+  m.id = 'modal-massa';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;display:flex;align-items:center;justify-content:center;padding:12px;';
+  var opcoes = NOMES_OFICIAIS_CORRETORES.filter(function (c) { return c !== coluna && c !== 'Bruna SDR'; }).map(function (c) { return '<option value="' + c + '">' + c + '</option>'; }).join('');
+  m.innerHTML = '<div style="background:#fff;border-radius:12px;max-width:520px;width:100%;max-height:90vh;overflow:auto;padding:16px;font-family:inherit;">'
+    + '<h3 style="margin:0 0 8px;">Mover cards parados de ' + coluna + '</h3>'
+    + '<label style="font-size:12px;font-weight:700;">Parados há mais de (dias)</label>'
+    + '<input id="massa-dias" type="number" min="0" value="30" style="width:100%;padding:8px;margin:4px 0 10px;border:1px solid #ccc;border-radius:8px;">'
+    + '<label style="font-size:12px;font-weight:700;">Mandar para</label>'
+    + '<select id="massa-destino" style="width:100%;padding:8px;margin:4px 0 10px;border:1px solid #ccc;border-radius:8px;"><option value="__reaquecimento__">♻️ Reaquecimento da Bruna</option>' + opcoes + '</select>'
+    + '<div id="massa-coluna-bloco" style="display:none;"><label style="font-size:12px;font-weight:700;">Coluna de destino</label>'
+    + '<select id="massa-coluna" style="width:100%;padding:8px;margin:4px 0 10px;border:1px solid #ccc;border-radius:8px;">' + COLUNAS_DESTINO_CORRETOR.map(function (c) { return '<option value="' + c + '">' + rotuloEtapa(c, '') + '</option>'; }).join('') + '</select></div>'
+    + '<div id="massa-lista" style="border:1px solid #eee;border-radius:8px;max-height:260px;overflow:auto;padding:6px;margin-bottom:10px;"></div>'
+    + '<div style="display:flex;gap:8px;"><button id="massa-cancelar" style="flex:1;padding:10px;border:1px solid #ccc;border-radius:8px;background:#fff;cursor:pointer;">Cancelar</button>'
+    + '<button id="massa-confirmar" style="flex:2;padding:10px;border:0;border-radius:8px;background:#f2941c;color:#fff;font-weight:700;cursor:pointer;">Mover</button></div></div>';
+  document.body.appendChild(m);
+  function atualizarLista() {
+    var dias = parseInt(document.getElementById('massa-dias').value, 10) || 0;
+    var alvo = base.filter(function (l) { return diasParado(l) >= dias; }).sort(function (a, b) { return diasParado(b) - diasParado(a); });
+    document.getElementById('massa-lista').innerHTML = alvo.length
+      ? alvo.map(function (l) { return '<label style="display:flex;gap:8px;align-items:center;padding:4px;font-size:13px;"><input type="checkbox" class="massa-chk" value="' + l.id + '" checked><span style="flex:1;">' + (l.nome || 'sem nome') + '</span><span style="color:#888;">' + (diasParado(l) >= 9999 ? 'sem data' : diasParado(l) + ' dias') + '</span></label>'; }).join('')
+      : '<div style="padding:10px;color:#888;font-size:13px;">Nenhum card parado há esse tempo.</div>';
+    atualizarBotao();
+  }
+  function atualizarBotao() {
+    var n = document.querySelectorAll('.massa-chk:checked').length;
+    var b = document.getElementById('massa-confirmar');
+    b.textContent = 'Mover ' + n + ' card(s)'; b.disabled = n === 0;
+  }
+  document.getElementById('massa-dias').addEventListener('input', atualizarLista);
+  document.getElementById('massa-lista').addEventListener('change', atualizarBotao);
+  document.getElementById('massa-destino').addEventListener('change', function (e) { document.getElementById('massa-coluna-bloco').style.display = e.target.value === '__reaquecimento__' ? 'none' : 'block'; });
+  document.getElementById('massa-cancelar').addEventListener('click', fecharModalMassa);
+  document.getElementById('massa-confirmar').addEventListener('click', function () {
+    var ids = Array.prototype.map.call(document.querySelectorAll('.massa-chk:checked'), function (c) { return parseInt(c.value, 10); });
+    var para = document.getElementById('massa-destino').value;
+    var nomePara = para === '__reaquecimento__' ? 'o Reaquecimento da Bruna' : para;
+    if (!ids.length || !confirm('Mover ' + ids.length + ' card(s) de ' + coluna + ' para ' + nomePara + '?')) return;
+    moverEmMassa(ids, para, document.getElementById('massa-coluna').value, function () { fecharModalMassa(); carregar(); });
+  });
+  atualizarLista();
 }
 
 function alternarClienteOuro(id, novoValor) {
