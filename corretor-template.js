@@ -199,6 +199,13 @@ const CORRETOR_HTML = `<!DOCTYPE html>
   }
   .lead:active { cursor: grabbing; }
   .lead.dragging { opacity: 0.4; }
+  .lead.selecionado { outline: 3px solid #d4a017; outline-offset: -1px; background: #fff8e1 !important; }
+  .sel-check { position: absolute; right: 8px; bottom: 8px; width: 18px; height: 18px; cursor: pointer; accent-color: #d4a017; }
+  .barra-selecao { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 50; display: none; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: center; background: #111; color: #fff; padding: 10px 16px; border-radius: 14px; box-shadow: 0 6px 24px rgba(0,0,0,0.35); font-size: 14px; max-width: calc(100vw - 24px); }
+  .barra-selecao select { padding: 7px 8px; border-radius: 8px; border: 1px solid #555; background: #222; color: #fff; font-size: 14px; }
+  .barra-selecao button { border: 0; border-radius: 8px; padding: 8px 14px; font-weight: 700; cursor: pointer; font-size: 14px; }
+  .barra-selecao .sel-mover { background: #d4a017; color: #111; }
+  .barra-selecao .sel-limpar { background: #333; color: #fff; }
   .lead.reaquecer { border-color: var(--warn-border); background: linear-gradient(180deg, var(--warn-bg), var(--card) 32px); }
   .lead.atrasado { border-color: #e0453f !important; background: linear-gradient(180deg, #fdecec, var(--card) 32px); box-shadow: 0 0 0 2px #e0453f33; }
   .lead.cliente-ouro { border-color: #d4a017 !important; background: linear-gradient(180deg, #ffe58a, var(--card) 90px); box-shadow: 0 0 0 3px #f2c94c; }
@@ -549,6 +556,8 @@ const CORRETOR_HTML = `<!DOCTYPE html>
 
 <div class="board" id="board"></div>
 
+<div class="barra-selecao" id="barra-selecao"></div>
+
 <div class="overlay" id="overlay">
   <div class="modal" id="modal"></div>
 </div>
@@ -571,6 +580,8 @@ function somenteLeitura(lead) {
 const ORIGENS = ['OLX/Canal Pro', 'Facebook', 'Patrocinado', 'TikTok', 'Instagram', 'Comentário', 'Indicação', 'Outro'];
 let BUSCA = '';
 let LEAD_ARRASTADO = null;
+let SELECIONADOS = new Set(); // CRM da Bruna: ids (string) dos cards marcados pra mover em lote
+let DESTINO_SELECAO = '';
 let ULTIMO_ADICIONADO_ID = null;
 let FILTROS_DATA_COLUNA = {}; // { [coluna]: { de, ate } } — filtro de período por coluna
 let COLUNA_FILTRO_ABERTA = null; // qual coluna está com o painel de data aberto agora
@@ -922,6 +933,7 @@ function render() {
           <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;">
             <span>\${rotulo(coluna)}</span>
             <div style="display:flex;align-items:center;gap:4px;">
+              \${ehCrmDaSdr() ? \`<button class="lupa-filtro-btn" title="Selecionar (ou desmarcar) todos desta coluna" onclick="selecionarColuna('\${coluna}')">☑</button>\` : ''}
               <button class="lupa-filtro-btn \${filtroAtivo ? 'ativa' : ''}" title="Filtrar por período" onclick="alternarFiltroData('\${coluna}')">🔍</button>
               <span class="column-count">\${leadsColuna.length}\${filtroAtivo ? \`/\${leadsColunaSemFiltro.length}\` : ''}</span>
             </div>
@@ -956,10 +968,14 @@ function render() {
       if (ld && somenteLeitura(ld)) { e.preventDefault(); return; }
       LEAD_ARRASTADO = el.dataset.id;
       el.classList.add('dragging');
+      if (SELECIONADOS.has(String(el.dataset.id))) board.querySelectorAll('.lead.selecionado').forEach(x => x.classList.add('dragging'));
       e.dataTransfer.effectAllowed = 'move';
     });
-    el.addEventListener('dragend', () => el.classList.remove('dragging'));
-    el.addEventListener('click', () => abrirModalLead(el.dataset.id));
+    el.addEventListener('dragend', () => board.querySelectorAll('.lead.dragging').forEach(x => x.classList.remove('dragging')));
+    el.addEventListener('click', e => {
+      if (ehCrmDaSdr() && (e.ctrlKey || e.metaKey || e.shiftKey)) { e.preventDefault(); alternarSelecao(el.dataset.id); return; }
+      abrirModalLead(el.dataset.id);
+    });
   });
 
   board.querySelectorAll('.column-cards').forEach(col => {
@@ -973,7 +989,11 @@ function render() {
       col.closest('.column').classList.remove('dragover');
       if (LEAD_ARRASTADO) {
         const novoStatus = col.dataset.coluna;
-        salvarCampo(LEAD_ARRASTADO, 'status_corretor', novoStatus, () => { render(); });
+        if (SELECIONADOS.has(String(LEAD_ARRASTADO)) && SELECIONADOS.size > 1) {
+          moverSelecionados(novoStatus);
+        } else {
+          salvarCampo(LEAD_ARRASTADO, 'status_corretor', novoStatus, () => { render(); });
+        }
         LEAD_ARRASTADO = null;
       }
     });
@@ -988,11 +1008,15 @@ function render() {
       bl.classList.remove('dragover-p');
       if (!LEAD_ARRASTADO) return;
       const coluna = bl.dataset.coluna;
-      const idPerdido = LEAD_ARRASTADO;
+      let idsPerdido = [LEAD_ARRASTADO];
+      if (SELECIONADOS.has(String(LEAD_ARRASTADO)) && SELECIONADOS.size > 1) idsPerdido = Array.from(SELECIONADOS);
       LEAD_ARRASTADO = null;
-      marcarPerdidoIds([idPerdido], coluna);
+      marcarPerdidoIds(idsPerdido, coluna);
     });
   });
+
+  SELECIONADOS.forEach(id => { if (!TODOS_LEADS.some(l => String(l.id) === id)) SELECIONADOS.delete(id); });
+  atualizarBarraSelecao();
 
   if (ULTIMO_ADICIONADO_ID) {
     const cardNovo = board.querySelector(\`.lead[data-id="\${ULTIMO_ADICIONADO_ID}"]\`);
@@ -1048,11 +1072,12 @@ function cardHtml(lead, corBorda) {
   const classeDestaque = \`\${tarefaAtrasada ? 'atrasado' : ''} \${lead.cliente_ouro ? 'cliente-ouro' : ''}\`.trim();
   const botaoOuro = \`<button class="btn-ouro modal-versao \${lead.cliente_ouro ? 'ativo' : ''}" onclick="event.stopPropagation();alternarClienteOuro('\${lead.id}', \${!lead.cliente_ouro})" title="\${lead.cliente_ouro ? 'Cliente Ouro — clique pra desmarcar' : 'Marcar como Cliente Ouro'}">⭐</button>\`;
   return \`
-    <div class="lead \${classeDestaque}" draggable="\${somenteLeitura(lead) ? 'false' : 'true'}" data-id="\${lead.id}" style="\${classeDestaque.includes('atrasado') ? '' : \`border-left-color:\${corBorda}\`}">
+    <div class="lead \${classeDestaque}\${SELECIONADOS.has(String(lead.id)) ? ' selecionado' : ''}" draggable="\${somenteLeitura(lead) ? 'false' : 'true'}" data-id="\${lead.id}" style="\${classeDestaque.includes('atrasado') ? '' : \`border-left-color:\${corBorda}\`}">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:6px;">
         <div class="lead-nome">\${lead.nome || 'Sem nome'}\${botaoOuro}</div>
         \${lead.valor_imovel_sdr ? \`<span style="font-size:10px;font-weight:700;color:#17a34a;white-space:nowrap;">💰 \${lead.valor_imovel_sdr}</span>\` : ''}
       </div>
+      \${(ehCrmDaSdr() && !somenteLeitura(lead)) ? \`<input type="checkbox" class="sel-check" title="Selecionar pra mover vários de uma vez" \${SELECIONADOS.has(String(lead.id)) ? 'checked' : ''} onclick="event.stopPropagation();alternarSelecao('\${lead.id}')">\` : ''}
       <div class="lead-meta">\${lead.whatsapp || 'sem WhatsApp'}</div>
       \${(parseInt(lead.visitas_qtd, 10) || 0) > 0 ? \`<div class="selo-visitas" \${visitaContabilizada(lead) ? '' : 'style="color:#6b7280;background:#f1f3f7;border-color:#d8dce6;" title="Ainda não entra na contagem: precisa ficar mais de 10h na coluna Visita"'}>🏠 \${parseInt(lead.visitas_qtd, 10)} visita\${parseInt(lead.visitas_qtd, 10) > 1 ? 's' : ''}\${visitaContabilizada(lead) ? '' : ' · a confirmar'}</div>\` : ''}
       \${dataEtapa ? \`<div class="lead-meta">Nessa etapa desde \${dataEtapa}</div>\` : ''}
@@ -1652,6 +1677,70 @@ document.getElementById('btn-salvar-backup').addEventListener('click', () => {
     .catch(() => alert('Não consegui salvar o backup. Confere sua internet e tenta de novo.'))
     .finally(() => { btn.textContent = textoOriginal; btn.disabled = false; });
 });
+
+
+// ─── CRM da Bruna: selecionar vários cards e mover de uma vez ───
+function sincronizarSelecaoNoDom() {
+  document.querySelectorAll('#board .lead').forEach(function (el) {
+    var marcado = SELECIONADOS.has(String(el.dataset.id));
+    el.classList.toggle('selecionado', marcado);
+    var chk = el.querySelector('.sel-check');
+    if (chk) chk.checked = marcado;
+  });
+  atualizarBarraSelecao();
+}
+function alternarSelecao(id) {
+  id = String(id);
+  if (SELECIONADOS.has(id)) SELECIONADOS.delete(id); else SELECIONADOS.add(id);
+  sincronizarSelecaoNoDom();
+}
+function selecionarColuna(coluna) {
+  var els = Array.prototype.slice.call(document.querySelectorAll('#board .column-cards[data-coluna="' + coluna + '"] .lead'));
+  if (!els.length) return;
+  var todos = els.every(function (el) { return SELECIONADOS.has(String(el.dataset.id)); });
+  els.forEach(function (el) { if (todos) SELECIONADOS.delete(String(el.dataset.id)); else SELECIONADOS.add(String(el.dataset.id)); });
+  sincronizarSelecaoNoDom();
+}
+function limparSelecao() { SELECIONADOS.clear(); sincronizarSelecaoNoDom(); }
+function atualizarBarraSelecao() {
+  var barra = document.getElementById('barra-selecao');
+  if (!barra) return;
+  var n = SELECIONADOS.size;
+  if (n === 0) { barra.style.display = 'none'; barra.innerHTML = ''; return; }
+  if (!DESTINO_SELECAO || COLUNAS.indexOf(DESTINO_SELECAO) === -1) DESTINO_SELECAO = COLUNAS[0];
+  barra.style.display = 'flex';
+  barra.innerHTML = '<span><b>' + n + '</b> selecionado' + (n > 1 ? 's' : '') + '</span><span>Mover para</span>'
+    + '<select id="sel-destino" onchange="DESTINO_SELECAO = this.value">'
+    + COLUNAS.map(function (c) { return '<option value="' + c + '"' + (c === DESTINO_SELECAO ? ' selected' : '') + '>' + rotulo(c) + '</option>'; }).join('')
+    + '</select><button class="sel-mover" onclick="moverSelecionados(DESTINO_SELECAO)">Mover</button><button class="sel-limpar" onclick="limparSelecao()">Limpar</button>';
+}
+async function moverSelecionados(novoStatus) {
+  var ids = Array.from(SELECIONADOS).filter(function (id) {
+    var l = TODOS_LEADS.find(function (x) { return String(x.id) === String(id); });
+    return l && !somenteLeitura(l) && (statusDoLead(l) !== novoStatus || ehPerdido(l));
+  });
+  if (!ids.length) { limparSelecao(); return; }
+  var barra = document.getElementById('barra-selecao');
+  if (barra) { barra.style.display = 'flex'; barra.innerHTML = '<span>Movendo ' + ids.length + ' card(s) para <b>' + rotulo(novoStatus) + '</b>...</span>'; }
+  var falhas = [];
+  for (var i = 0; i < ids.length; i += 4) {
+    var lote = ids.slice(i, i + 4);
+    var resultados = await Promise.all(lote.map(function (id) { return salvarUmCampoComRetry(id, 'status_corretor', novoStatus); }));
+    resultados.forEach(function (ok, j) {
+      var id = lote[j];
+      if (ok) {
+        var l = TODOS_LEADS.find(function (x) { return String(x.id) === String(id); });
+        if (l) { l.status_corretor = novoStatus; limparPerdidoLocal(l); l.status_corretor_alterado_em = new Date().toISOString(); }
+        SELECIONADOS.delete(String(id));
+      } else { falhas.push(id); }
+    });
+  }
+  render();
+  if (falhas.length) {
+    var nomes = falhas.map(function (id) { var l = TODOS_LEADS.find(function (x) { return String(x.id) === String(id); }); return l ? (l.nome || 'Sem nome') : id; });
+    alert('⚠️ ' + falhas.length + ' card(s) NÃO foram movidos (rede instável): ' + nomes.join(', ') + '. Eles continuam marcados, tente mover de novo.');
+  }
+}
 
 async function salvarCampo(id, campo, valor, aoTerminar) {
   try {
