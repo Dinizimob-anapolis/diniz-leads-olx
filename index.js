@@ -4305,6 +4305,35 @@ app.post('/api/leads/mover-em-massa', basicAuthAdminOuSdr, semCorretor, async (r
   }
 });
 
+// Diagnóstico: repasses recentes ligados à Bruna SDR (pela linha do tempo) e como o lead está agora.
+// /api/admin/repasses-bruna              → lista (últimos 5 dias)
+// /api/admin/repasses-bruna?ids=1,2&aplicar=1 → devolve a marca da Bruna (acompanhamento) nesses leads
+app.get('/api/admin/repasses-bruna', basicAuthAdminOuSdr, semCorretor, async (req, res) => {
+  try {
+    if (req.authTipo === 'sdr') return res.status(403).json({ ok: false, erro: 'Só admin ou Juliane.' });
+    const ids = String(req.query.ids || '').split(',').map(x => parseInt(x, 10)).filter(Boolean);
+    let restaurados = 0;
+    if (ids.length && String(req.query.aplicar || '') === '1') {
+      const r = await pool.query(
+        `UPDATE leads SET transferido_por = $2, transferido_em = COALESCE(transferido_em, now()), reaquecido_sdr = true
+          WHERE id = ANY($1::int[]) AND corretor IS NOT NULL AND corretor <> '' AND corretor <> $2 RETURNING id`, [ids, CORRETOR_ABERTO_PELA_SDR]);
+      restaurados = r.rowCount;
+      for (const x of r.rows) registrarPostTimeline(x.id, 'sistema', 'Acompanhamento da Bruna SDR restaurado', autorTimeline(req)).catch(() => {});
+    }
+    const t = await pool.query(
+      `SELECT t.lead_id, t.autor, t.tipo, left(t.texto, 160) AS texto, t.criado_em,
+              l.nome, l.whatsapp, l.corretor, l.status_corretor, l.carteira_sdr, l.transferido_por, l.reaquecido_sdr
+         FROM lead_timeline t JOIN leads l ON l.id = t.lead_id
+        WHERE t.criado_em > now() - interval '5 days'
+          AND (t.texto ILIKE '%Bruna SDR%') AND (t.texto ILIKE 'Transferido%' OR t.texto ILIKE '%corretor%' OR t.texto ILIKE 'Redistribu%')
+        ORDER BY t.criado_em DESC LIMIT 60`);
+    res.json({ ok: true, restaurados, eventos: t.rows });
+  } catch (err) {
+    console.error('Erro em repasses-bruna:', err);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
 // Acha um lead pelo telefone ou nome e diz ONDE ele aparece (CRM da Bruna, quadro da Juliane, Perdidos...).
 // Uso: /api/admin/buscar-lead?q=62994482318  (ou parte do nome)
 app.get('/api/admin/buscar-lead', basicAuthAdminOuSdr, semCorretor, async (req, res) => {
